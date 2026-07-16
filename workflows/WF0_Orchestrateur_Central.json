@@ -1,0 +1,376 @@
+{
+  "name": "WF0 — Forge NEX Orchestrateur Central",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "be150095-f83a-46a9-865c-40ef27637011",
+      "name": "⏰ Déclencheur 24h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "forge-nex-orchestrateur",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "9ce62f75-634f-414f-a647-e75b5f39287c",
+      "name": "🔗 Webhook Manuel",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        160
+      ],
+      "webhookId": "24bef071-9346-411e-88e9-94f5fa6dc42f"
+    },
+    {
+      "parameters": {
+        "jsCode": "const runId = `RUN_${Date.now()}_${Math.random().toString(36).substr(2,5).toUpperCase()}`;\nreturn [{ json: { run_id: runId, timestamp: new Date().toISOString() } }];\n"
+      },
+      "id": "a710f84e-7006-4b8e-a1a1-c13ce203e996",
+      "name": "🧠 Init Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/collect",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Forge-Nex-Key",
+              "value": "forge_nex_secret_2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "f8101929-4705-4fce-b8ab-25f20abc2e7b",
+      "name": "🕷️ Collecter Offres",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        464,
+        80
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/score",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Forge-Nex-Key",
+              "value": "forge_nex_secret_2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "80b90848-e147-436f-8bbd-b149c53d4184",
+      "name": "🎯 Scorer Offres",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        80
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/notify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Forge-Nex-Key",
+              "value": "forge_nex_secret_2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "a1474080-e61a-4a93-aa8f-7a479bae11ce",
+      "name": "📤 Notifier Utilisateurs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        912,
+        80
+      ],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1pEXNY_2XdUZJkoh3FTQTbarsu0v0laZDe6_daIuXcpo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "RunHistory",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id": "={{ $('🧠 Init Run').first().json.run_id }}",
+            "statut": "COMPLETED"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp_debut",
+              "displayName": "timestamp_debut",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "timestamp_fin",
+              "displayName": "timestamp_fin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "trigger",
+              "displayName": "trigger",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "action",
+              "displayName": "action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "statut",
+              "displayName": "statut",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "offres_collectees",
+              "displayName": "offres_collectees",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "users_notifies",
+              "displayName": "users_notifies",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d423edc8-aa7f-4d18-bcfb-5e7f7a853c45",
+      "name": "📝 Log Run",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1120,
+        80
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "dpY4JsDF2QmZPCOT",
+          "name": "NexMove Google Sheets"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "⏰ Déclencheur 24h": {
+      "main": [
+        [
+          {
+            "node": "🧠 Init Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔗 Webhook Manuel": {
+      "main": [
+        [
+          {
+            "node": "🧠 Init Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Init Run": {
+      "main": [
+        [
+          {
+            "node": "🕷️ Collecter Offres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🕷️ Collecter Offres": {
+      "main": [
+        [
+          {
+            "node": "🎯 Scorer Offres",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Scorer Offres": {
+      "main": [
+        [
+          {
+            "node": "📤 Notifier Utilisateurs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Notifier Utilisateurs": {
+      "main": [
+        [
+          {
+            "node": "📝 Log Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "d1f86aca-d67e-41fa-aed2-92af00236362",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c77e41168b0abc4c9e72e3dfa70fb293d0acb289b40b847421933eadc146e082"
+  },
+  "id": "qEapPddoQVlM0C4Z",
+  "tags": [
+    {
+      "updatedAt": "2026-06-28T14:28:33.615Z",
+      "createdAt": "2026-06-28T14:28:33.615Z",
+      "id": "AsCOimwnXN7lFrgT",
+      "name": "forge-nex"
+    },
+    {
+      "updatedAt": "2026-06-28T14:28:33.622Z",
+      "createdAt": "2026-06-28T14:28:33.622Z",
+      "id": "dsHjyHfnGdEnsjzI",
+      "name": "v4"
+    },
+    {
+      "updatedAt": "2026-06-26T18:08:51.255Z",
+      "createdAt": "2026-06-26T18:08:51.255Z",
+      "id": "h3BZzfMhgOfStURU",
+      "name": "orchestrateur"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# NexMove — n8n derrière un tunnel Cloudflare NOMMÉ (URL publique FIXE)
+#
+# Pourquoi : un tunnel « quick » trycloudflare génère une URL éphémère qui change
+# à chaque redémarrage → le webhook Telegram se désynchronise → les setWebhook
+# manuels de rattrapage cassent le secret → {"message":"Provided secret is not valid"}.
+# Un tunnel NOMMÉ a un hostname stable : n8n enregistre son webhook UNE fois et
+# on n'y touche plus jamais. Voir README-webhook-fix.md.
+#
+#   docker compose -f docker-compose.n8n.yml --env-file .env up -d
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: nexmove-n8n
+    restart: unless-stopped
+    ports:
+      - "5688:5678"          # accès local/éditeur (le public passe par le tunnel)
+    environment:
+      # --- URL publique FIXE : ces 4 variables DOIVENT pointer vers le même hostname stable
+      - N8N_HOST=${N8N_PUBLIC_HOST}
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://${N8N_PUBLIC_HOST}/
+      - N8N_EDITOR_BASE_URL=https://${N8N_PUBLIC_HOST}/
+      - N8N_PORT=5678
+      # --- Autoriser {{ $env.* }} dans les nœuds (WF1 lit TELEGRAM_BOT_TOKEN)
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
+      # --- Divers
+      - N8N_RUNNERS_ENABLED=true
+    volumes:
+      - n8n_data:/home/node/.n8n     # persistance (secret du webhook inclus)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # pour joindre FastAPI sur l'hôte:8000
+    networks:
+      - nexmove
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: nexmove-cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      # Tunnel NOMMÉ via token. L'ingress (hostname -> http://n8n:5678) se règle
+      # dans le dashboard Cloudflare Zero Trust > Networks > Tunnels.
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - n8n
+    networks:
+      - nexmove
+
+volumes:
+  n8n_data:
+
+networks:
+  nexmove:
+    driver: bridge

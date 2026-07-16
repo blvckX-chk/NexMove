@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# ALTERNATIVE au tunnel par token : tunnel nommé piloté par fichier de config.
+# À utiliser SEULEMENT si tu ne veux pas gérer l'ingress depuis le dashboard.
+#
+# Prérequis (une seule fois, sur une machine avec cloudflared installé) :
+#   cloudflared tunnel login
+#   cloudflared tunnel create nexmove-n8n        # -> crée <TUNNEL_ID> + <TUNNEL_ID>.json
+#   cloudflared tunnel route dns nexmove-n8n n8n.mondomaine.com
+#
+# Puis monter ce fichier + le .json de credentials dans le conteneur cloudflared,
+# et remplacer la commande par : tunnel --config /etc/cloudflared/config.yml run
+# ─────────────────────────────────────────────────────────────────────────────
+tunnel: <TUNNEL_ID>
+credentials-file: /etc/cloudflared/<TUNNEL_ID>.json
+
+ingress:
+  # Hostname public STABLE -> n8n interne. C'est ce hostname qui va dans WEBHOOK_URL.
+  - hostname: n8n.mondomaine.com
+    service: http://n8n:5678
+  # Tout le reste -> 404
+  - service: http_status:404

@@ -1,0 +1,165 @@
+{
+  "name": "WF5 — Forge NEX OSINT Mobilité",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "496bf439-aa15-461f-a3bb-ed943d9894d4",
+      "name": "📱 Telegram /mobilite",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "forge-nex-wf5",
+      "credentials": {
+        "telegramApi": {
+          "id": "pEbrCfeE10aKpKC8",
+          "name": "NexMove Bot Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\nconst chat_id = String(msg.message?.chat?.id || '');\nconst user_id = String(msg.message?.from?.id || '');\nconst text = msg.message?.text || '';\nconst cible = text.replace('/mobilite', '').trim()\n  || 'opportunites internationales informatique';\nreturn [{ json: { chat_id, user_id, cible } }];\n"
+      },
+      "id": "9cd98552-5218-4b0b-ae2c-a018fe4efd46",
+      "name": "🔍 Parser Commande",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/osint",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Forge-Nex-Key",
+              "value": "forge_nex_secret_2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {}
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "41186698-5a6f-4efd-8690-0e0d06534a42",
+      "name": "🌍 Forge NEX OSINT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "e7303615-a38e-4a64-875c-73dac6bec53b",
+      "name": "📤 Envoyer Résultats",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        672,
+        0
+      ],
+      "webhookId": "556d378e-e771-4a16-ac4f-711203f0ce0d",
+      "credentials": {
+        "telegramApi": {
+          "id": "pEbrCfeE10aKpKC8",
+          "name": "NexMove Bot Telegram"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "📱 Telegram /mobilite": {
+      "main": [
+        [
+          {
+            "node": "🔍 Parser Commande",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Parser Commande": {
+      "main": [
+        [
+          {
+            "node": "🌍 Forge NEX OSINT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🌍 Forge NEX OSINT": {
+      "main": [
+        [
+          {
+            "node": "📤 Envoyer Résultats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b3470dec-913f-42c2-bd9f-b0c457e213a5",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c77e41168b0abc4c9e72e3dfa70fb293d0acb289b40b847421933eadc146e082"
+  },
+  "id": "PdX8X1J5USt0Blj0",
+  "tags": [
+    {
+      "updatedAt": "2026-06-28T14:28:33.615Z",
+      "createdAt": "2026-06-28T14:28:33.615Z",
+      "id": "AsCOimwnXN7lFrgT",
+      "name": "forge-nex"
+    },
+    {
+      "updatedAt": "2026-06-28T14:28:33.622Z",
+      "createdAt": "2026-06-28T14:28:33.622Z",
+      "id": "dsHjyHfnGdEnsjzI",
+      "name": "v4"
+    },
+    {
+      "updatedAt": "2026-06-28T14:28:33.567Z",
+      "createdAt": "2026-06-28T14:28:33.567Z",
+      "id": "vGBqK2jKxgQSlI8J",
+      "name": "osint"
+    }
+  ]
+}
