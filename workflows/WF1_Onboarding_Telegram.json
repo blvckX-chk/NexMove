@@ -423,6 +423,11 @@
             "node": "📤 Envoyer Telegram",
             "type": "main",
             "index": 0
+          },
+          {
+            "node": "💾 Sauvegarder Session",
+            "type": "main",
+            "index": 0
           }
         ]
       ]
@@ -434,19 +439,18 @@
             "node": "📤 Envoyer Telegram",
             "type": "main",
             "index": 0
-          }
-        ]
-      ]
-    },
-    "📤 Envoyer Telegram": {
-      "main": [
-        [
+          },
           {
             "node": "💾 Sauvegarder Session",
             "type": "main",
             "index": 0
           }
         ]
+      ]
+    },
+    "📤 Envoyer Telegram": {
+      "main": [
+        []
       ]
     }
   },

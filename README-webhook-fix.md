@@ -144,14 +144,25 @@ Repris des exports v4, avec corrections :
 **WF0 / WF5** : inchangés fonctionnellement (aucun token en dur, pas de bug de
 référence). Fournis pour garder l'ensemble cohérent et versionné.
 
-### Point de vigilance (non modifié — à confirmer côté FastAPI)
+### 🐛 Persistance de session corrigée
 
-Dans WF1, `💾 Sauvegarder Session` lit `$json.session_row.*`. Or il est placé **après**
-`📤 Envoyer Telegram`, dont la sortie est la réponse de l'API Telegram (pas `session_row`).
-Selon la forme réelle des réponses de `/api/chat` et `/api/chat-cv`, `session_row` peut être
-`undefined` à ce stade. Si la persistance des sessions échoue, il faudra référencer le nœud
-FastAPI en amont (`$('🤖 Forge NEX Chat')` / `$('🤖 Forge NEX Chat-CV')`) plutôt que `$json`.
-Je ne l'ai pas modifié faute d'accès au code FastAPI pour confirmer le schéma de réponse.
+`/api/chat` renvoie bien `session_row` au premier niveau (confirmé sur une exécution réelle) :
+
+```json
+{ "message": "...", "chat_id": "514773914",
+  "session_row": { "user_id": "...", "etape": "ATTENTE_CV", "profil": "{}", ... },
+  "etape": "ATTENTE_CV", "onboarding_complete": false }
+```
+
+Or `💾 Sauvegarder Session` lisait `$json.session_row.*` alors qu'il était branché **après**
+`📤 Envoyer Telegram`, dont la sortie est la réponse de l'API Telegram (sans `session_row`) →
+`session_row` était **`undefined`** et la session n'était jamais persistée.
+
+**Correction (topologie)** : `💾 Sauvegarder Session` est désormais branché **directement**
+sur les deux nœuds Chat (`🤖 Forge NEX Chat` et `🤖 Forge NEX Chat-CV`), en parallèle de
+`📤 Envoyer Telegram` (devenu terminal). Son `$json` est donc la réponse Chat, et
+`$json.session_row.*` est valide sur **les deux branches** — sans référence de nœud (qui
+aurait planté avec « Referenced node is unexecuted » sur la branche non empruntée).
 
 ---
 
