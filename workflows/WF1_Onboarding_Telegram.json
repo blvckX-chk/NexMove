@@ -1,0 +1,489 @@
+{
+  "name": "WF1 — Forge NEX Onboarding Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "db58f7de-348f-4755-8413-2a911498e79e",
+      "name": "📱 Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -288,
+        -16
+      ],
+      "webhookId": "forge-nex-wf1",
+      "credentials": {
+        "telegramApi": {
+          "id": "pEbrCfeE10aKpKC8",
+          "name": "NexMove Bot Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\nconst chat_id = String(msg.message?.chat?.id || '');\nconst user_id = String(msg.message?.from?.id || '');\nconst username = msg.message?.from?.username || 'utilisateur';\nconst text = msg.message?.text || '';\nconst isDoc = !!msg.message?.document;\nconst file_id = msg.message?.document?.file_id || null;\nif (!chat_id) throw new Error('chat_id manquant');\nreturn [{ json: { chat_id, user_id, username, text,\n  message_type: isDoc ? 'document' : 'text',\n  document_file_id: file_id } }];\n"
+      },
+      "id": "945b868c-2d55-4326-ad15-7c9eb910f5b8",
+      "name": "🔍 Parser Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.message_type }}",
+              "rightValue": "document",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "id": "4c3b06f1-cabe-4b58-992a-3aee1363b6e9",
+      "name": "🔀 PDF ou Texte ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        160,
+        -16
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/getFile?file_id={{ $json.document_file_id }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "b2c4a0f0-0778-4ace-a4c3-1e45abc00e00",
+      "name": "⬇️ Get File URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        368,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/file/bot{{ $env.TELEGRAM_BOT_TOKEN }}/{{ $json.result.file_path }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "b7df41dc-4b9b-4963-8774-9a052df837d9",
+      "name": "⬇️ Download CV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        592,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/chat-cv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Forge-Nex-Key",
+              "value": "forge_nex_secret_2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $('🔍 Parser Message').first().json.user_id }}"
+            },
+            {
+              "name": "chat_id",
+              "value": "={{ $('🔍 Parser Message').first().json.chat_id }}"
+            },
+            {
+              "name": "username",
+              "value": "={{ $('🔍 Parser Message').first().json.username }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "b7ce0e2e-c209-442c-bb66-77554b789995",
+      "name": "🤖 Forge NEX Chat-CV",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        816,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/chat",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Forge-Nex-Key",
+              "value": "forge_nex_secret_2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"user_id\": \"{{ $json.user_id }}\",\n  \"chat_id\": \"{{ $json.chat_id }}\",\n  \"username\": \"{{ $json.username }}\",\n  \"text\": \"{{ $json.text }}\",\n  \"message_type\": \"{{ $json.message_type }}\"\n}",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "f7023fba-4577-4cf2-8a0c-11a3ed7e7a23",
+      "name": "🤖 Forge NEX Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        368,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('🔍 Parser Message').first().json.chat_id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "fac9a5e2-1e1f-4203-ac35-d94a92d89b3a",
+      "name": "📤 Envoyer Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1072,
+        -16
+      ],
+      "webhookId": "6e9eb466-826b-48bc-b017-fdf23f08ac98",
+      "credentials": {
+        "telegramApi": {
+          "id": "pEbrCfeE10aKpKC8",
+          "name": "NexMove Bot Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "serviceAccount",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1pEXNY_2XdUZJkoh3FTQTbarsu0v0laZDe6_daIuXcpo",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sessions",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $json.session_row.user_id }}",
+            "chat_id": "={{ $json.session_row.chat_id }}",
+            "username": "={{ $json.session_row.username }}",
+            "etape": "={{ $json.session_row.etape }}",
+            "profil": "={{ $json.session_row.profil }}",
+            "historique": "={{ $json.session_row.historique }}",
+            "cv_file_id": "={{ $json.session_row.cv_file_id || '' }}",
+            "cv_parsed": "={{ $json.session_row.cv_parsed }}",
+            "onboarding_complete": "={{ $json.session_row.onboarding_complete }}",
+            "derniere_activite": "={{ $json.session_row.derniere_activite }}"
+          },
+          "matchingColumns": [
+            "user_id"
+          ],
+          "schema": [
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "chat_id",
+              "displayName": "chat_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "username",
+              "displayName": "username",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "etape",
+              "displayName": "etape",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "profil",
+              "displayName": "profil",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "historique",
+              "displayName": "historique",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cv_file_id",
+              "displayName": "cv_file_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cv_parsed",
+              "displayName": "cv_parsed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "onboarding_complete",
+              "displayName": "onboarding_complete",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "derniere_activite",
+              "displayName": "derniere_activite",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "c2fc05ff-da92-423e-a0e9-6c026de4def8",
+      "name": "💾 Sauvegarder Session",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1296,
+        -16
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "dpY4JsDF2QmZPCOT",
+          "name": "NexMove Google Sheets"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "📱 Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "🔍 Parser Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Parser Message": {
+      "main": [
+        [
+          {
+            "node": "🔀 PDF ou Texte ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔀 PDF ou Texte ?": {
+      "main": [
+        [
+          {
+            "node": "⬇️ Get File URL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "🤖 Forge NEX Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⬇️ Get File URL": {
+      "main": [
+        [
+          {
+            "node": "⬇️ Download CV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⬇️ Download CV": {
+      "main": [
+        [
+          {
+            "node": "🤖 Forge NEX Chat-CV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Forge NEX Chat-CV": {
+      "main": [
+        [
+          {
+            "node": "📤 Envoyer Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💾 Sauvegarder Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Forge NEX Chat": {
+      "main": [
+        [
+          {
+            "node": "📤 Envoyer Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "💾 Sauvegarder Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Envoyer Telegram": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "e2167352-9256-498d-80d7-1eeefc1656cc",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "c77e41168b0abc4c9e72e3dfa70fb293d0acb289b40b847421933eadc146e082"
+  },
+  "id": "4GNQZNqgtPZmmRAK",
+  "tags": [
+    {
+      "updatedAt": "2026-06-28T14:28:33.615Z",
+      "createdAt": "2026-06-28T14:28:33.615Z",
+      "id": "AsCOimwnXN7lFrgT",
+      "name": "forge-nex"
+    },
+    {
+      "updatedAt": "2026-06-26T18:55:25.827Z",
+      "createdAt": "2026-06-26T18:55:25.827Z",
+      "id": "QlqP6KXT7OpOgrw0",
+      "name": "onboarding"
+    },
+    {
+      "updatedAt": "2026-06-28T14:28:33.622Z",
+      "createdAt": "2026-06-28T14:28:33.622Z",
+      "id": "dsHjyHfnGdEnsjzI",
+      "name": "v4"
+    }
+  ]
+}
