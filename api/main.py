@@ -29,7 +29,7 @@ GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_URL        = "https://api.groq.com/openai/v1/chat/completions"
 FORGE_NEX_API_KEY = os.getenv("FORGE_NEX_API_KEY", "")
-TELEGRAM_TOKEN  = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_TOKEN  = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 
 _rate_store: dict[str, list[float]] = {}
@@ -173,6 +173,7 @@ AIDE_TXT = ("🤖 *Forge NEX — commandes*\n"
             "/start — (re)démarrer l'onboarding\n"
             "/profil — voir ton profil\n"
             "/mobilite <pays ou domaine> — analyse mobilité\n"
+            "/postuler <poste ou bourse> — CV + lettre de motivation\n"
             "/status — état de tes candidatures\n"
             "/aide — cette aide\n"
             "/supprimer — effacer mes données")
@@ -246,6 +247,40 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         except Exception as e:
             logger.error(f"Erreur mobilite: {e}")
             msg = "😕 L'analyse mobilité a échoué, réessaie dans un instant."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/postuler") or low.startswith("/candidature"):
+        parts = t.split(maxsplit=1)
+        cible_desc = parts[1].strip() if len(parts) > 1 else ""
+        profil = session.get("profil", {}) or {}
+        if not profil.get("identite"):
+            msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV en PDF."
+        elif not cible_desc:
+            msg = ("✍️ Indique la cible :\n/postuler <poste ou bourse>\n\n"
+                   "Ex : /postuler Analyste SOC chez Orange\n"
+                   "Ex : /postuler Bourse DAAD master cybersécurité")
+        else:
+            try:
+                type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
+                pack = await generate_pack(profil, cible_desc, type_cible)
+                competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
+                cv_buf = build_cv_pdf(profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
+                lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
+                chat_id = session.get("chat_id")
+                ok_cv = await _send_telegram_document(chat_id, f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
+                ok_lm = await _send_telegram_document(chat_id, f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation — {cible_desc[:60]}")
+                if ok_cv and ok_lm:
+                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n\n"
+                           "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
+                elif ok_cv or ok_lm:
+                    msg = "⚠️ Un seul document a pu être envoyé. Réessaie dans un instant."
+                else:
+                    msg = "😕 Documents générés mais l'envoi Telegram a échoué (variable TELEGRAM_BOT_TOKEN manquante côté API ?)."
+            except Exception as e:
+                logger.error(f"Erreur postuler: {e}")
+                msg = "😕 La génération des documents a échoué, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -386,6 +421,74 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list) -> io
     doc.build(els)
     return buf
 
+def _xml(s):
+    return str(s or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def _slug(s):
+    s = "".join(c for c in str(s or "candidat") if c.isalnum() or c in " -_")
+    return (s.strip().replace(" ", "_")[:40]) or "candidat"
+
+def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+    ident = profil.get("identite", {})
+    s_head = ParagraphStyle("lh", fontSize=11, fontName="Helvetica-Bold", spaceAfter=2)
+    s_small = ParagraphStyle("lsm", fontSize=9.5, textColor=GRIS, spaceAfter=1)
+    s_objet = ParagraphStyle("lo", fontSize=10.5, fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=10)
+    s_body = ParagraphStyle("lb", fontSize=10.5, fontName="Helvetica", spaceAfter=8, leading=15, alignment=TA_JUSTIFY)
+    els = []
+    els.append(Paragraph(_xml(ident.get("nom", "Candidat")), s_head))
+    for c in [ident.get("email"), ident.get("telephone"), ident.get("localisation")]:
+        if c:
+            els.append(Paragraph(_xml(c), s_small))
+    els.append(Spacer(1, 10))
+    els.append(Paragraph(datetime.now(timezone.utc).strftime("%d/%m/%Y"), s_small))
+    els.append(Paragraph(f"<b>Objet :</b> {_xml(objet)}", s_objet))
+    for para in (corps or "").split("\n\n"):
+        para = para.strip()
+        if para:
+            els.append(Paragraph(_xml(para.replace("\n", " ")), s_body))
+    els.append(Spacer(1, 12))
+    els.append(Paragraph("Cordialement,", s_body))
+    els.append(Paragraph(_xml(ident.get("nom", "")), s_head))
+    doc.build(els)
+    return buf
+
+async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
+    if not TELEGRAM_TOKEN:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
+                data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
+                files={"document": (filename, pdf_bytes, "application/pdf")},
+            )
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"sendDocument erreur: {e}")
+        return False
+
+async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
+    ident = profil.get("identite", {})
+    competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:12]
+    resume = profil.get("resume_profil", "")
+    if type_cible == "bourse":
+        consigne = ("Rédige un CV adapté ET une lettre de motivation académique (statement of purpose) pour cette bourse/programme. "
+                    "La lettre met en avant le projet d'études, la motivation, l'adéquation au programme et l'impact visé.")
+    else:
+        consigne = ("Rédige un CV adapté ET une lettre de motivation professionnelle ciblée pour ce poste. "
+                    "Structure : accroche, adéquation profil/poste, valeur ajoutée, conclusion.")
+    system = "Tu es expert en recrutement et candidatures internationales. Français impeccable, concret, sans clichés. JSON uniquement."
+    prompt = f"""{consigne}
+CANDIDAT: {ident.get('nom','')}
+RÉSUMÉ: {resume}
+COMPÉTENCES: {competences}
+CIBLE: {cible_desc}
+La lettre (lettre_corps) fait 250-320 mots, paragraphes séparés par une ligne vide, sans en-tête ni signature.
+JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
+    return await call_groq(system, prompt, temperature=0.4, max_tokens=1200)
+
 @app.post("/api/chat")
 async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     uid = request.user_id
@@ -453,13 +556,17 @@ async def generate_documents(request: GenerateDocumentsRequest, _auth: bool = De
     profil, offre = request.profil, request.offre
     titre = offre.get("title", offre.get("titre", "Poste"))
     entreprise = offre.get("company", offre.get("entreprise", "Organisation"))
-    cv_data = await call_groq("Tu adaptes un CV pour une offre. ATS-friendly. JSON uniquement.",
-        f'PROFIL: {json.dumps(profil, ensure_ascii=False)[:2000]}\nOFFRE: Titre={titre}, Entreprise={entreprise}\nJSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[]}}',
-        temperature=0.2, max_tokens=800)
+    type_cible = "bourse" if str(offre.get("type", "")).lower() in ("bourse", "fellowship", "scholarship") else "emploi"
+    cible_desc = f"{titre} — {entreprise}"
+    pack = await generate_pack(profil, cible_desc, type_cible)
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-    cv_buf = build_cv_pdf(profil, cv_data.get("titre_poste", titre), cv_data.get("resume_professionnel", ""), competences)
-    nom = profil.get("identite", {}).get("nom", "candidat").replace(" ", "_")
-    return {"success": True, "user_id": request.user_id, "cv_pdf_base64": pdf_to_b64(cv_buf), "cv_filename": f"CV_{nom}_{titre[:20].replace(' ','_')}.pdf", "generated_at": datetime.now(timezone.utc).isoformat()}
+    cv_buf = build_cv_pdf(profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
+    lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+    nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
+    return {"success": True, "user_id": request.user_id,
+            "cv_pdf_base64": pdf_to_b64(cv_buf), "cv_filename": f"CV_{nom}.pdf",
+            "lettre_pdf_base64": pdf_to_b64(lm_buf), "lettre_filename": f"LM_{nom}.pdf",
+            "generated_at": datetime.now(timezone.utc).isoformat()}
 
 VISA_DB = {
     "france":{"facilite":58,"delai":21,"refus_pct":30,"cout_usd":80,"type":"schengen"},
