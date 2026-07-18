@@ -29,7 +29,21 @@ GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_URL        = "https://api.groq.com/openai/v1/chat/completions"
 FORGE_NEX_API_KEY = os.getenv("FORGE_NEX_API_KEY", "")
-TELEGRAM_TOKEN  = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+def _read_telegram_token():
+    tok = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if tok:
+        return tok.strip()
+    for _p in ("data/telegram_token.txt", "/app/data/telegram_token.txt", "telegram_token.txt"):
+        try:
+            with open(_p) as _f:
+                _v = _f.read().strip()
+                if _v:
+                    return _v
+        except Exception:
+            pass
+    return ""
+
+TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 
 _rate_store: dict[str, list[float]] = {}
