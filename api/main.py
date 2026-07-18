@@ -182,6 +182,12 @@ def _push(session, role, content):
     h.append({"role": role, "content": content, "ts": datetime.now(timezone.utc).isoformat()})
     session["historique"] = h[-30:]
 
+def _md_clean(s):
+    s = str(s or "")
+    for c in ("*", "_", "`", "[", "]"):
+        s = s.replace(c, "")
+    return s.strip()
+
 def _resume_prefs(prefs):
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
             f"• Objectif : {prefs.get('objectif','—')}\n"
@@ -481,28 +487,51 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
     cible_lower = cible.lower()
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
-    system = "Tu es expert en mobilité internationale pour ressortissants africains. Propose des opportunités RÉELLES et actionnables (bourses, emplois, fellowships). JSON uniquement."
-    prompt = f"""Analyse les opportunités de mobilité.
+    system = ("Tu es expert en mobilité internationale et bourses pour ressortissants africains. "
+              "RÈGLES STRICTES : ne cite QUE des organismes/programmes RÉELS et vérifiables "
+              "(ex : DAAD, Campus France, Erasmus Mundus, Chevening, Commonwealth, AUF, Mastercard Foundation, "
+              "Mitacs, Fulbright, INRS, universités reconnues, grandes entreprises). "
+              "N'INVENTE JAMAIS d'URL : donne seulement le PORTAIL OFFICIEL en clair (ex : campusfrance.org, daad.de). "
+              "Si tu n'es pas certain qu'une opportunité existe, mets confiance='faible'. "
+              "Priorise selon le financement demandé. JSON uniquement.")
+    prompt = f"""Propose des opportunités de mobilité RÉELLES.
 CIBLE: {cible}
 PAYS: {pays_detecte or pays_cibles or 'Non précisé'}
 OBJECTIF: {objectif}
 PROFIL: compétences={competences}, nationalité={nationalite}, financement={financement}
-VISA: facilité={visa_info['facilite']}/100, délai={visa_info['delai']}j, coût=${visa_info['cout_usd']}
-JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","url":"","pays":"","financement":"total|partiel","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
-    result = await call_groq(system, prompt, temperature=0.2, max_tokens=1500)
+VISA: facilité={visa_info['facilite']}/100, délai={visa_info['delai']}j
+Donne 3 à 5 opportunités concrètes, du plus pertinent au moins pertinent.
+JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","portail_officiel":"","pays":"","financement":"total|partiel|aucun","deadline":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
+    result = await call_groq(system, prompt, temperature=0.15, max_tokens=1600)
     opps = result.get("opportunites", [])
-    titre_aff = cible if len(cible) <= 40 else cible[:40] + "…"
-    msg = f"🌍 *Forge NEX OSINT — {titre_aff}*\n━━━━━━━━━━━━━━━━━━━━━━\n"
+    titre_aff = _md_clean(cible)[:40]
+    conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
+    msg = f"🌍 *Forge NEX OSINT — {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
     if pays_detecte:
-        msg += f"🗺️ Visa {pays_detecte}: {visa_info['facilite']}/100, ~{visa_info['delai']}j\n\n"
+        msg += f"🗺️ Visa {pays_detecte} : {visa_info['facilite']}/100, ~{visa_info['delai']}j\n\n"
     for i, opp in enumerate(opps[:5], 1):
         score = opp.get("score_composite", 0)
         emoji = "🔥" if score >= 75 else "✅" if score >= 55 else "⚠️"
-        msg += f"{i}\\. {emoji} *{opp.get('titre','')[:50]}*\n   🏢 {opp.get('organisation','')} \\| 📊 {score}/100\n   💬 {opp.get('raison','')}\n\n"
+        conf = conf_emoji.get(str(opp.get("confiance", "")).lower(), "")
+        titre = _md_clean(opp.get("titre", ""))[:60]
+        orga = _md_clean(opp.get("organisation", ""))
+        portail = _md_clean(opp.get("portail_officiel", ""))
+        deadline = _md_clean(opp.get("deadline", ""))
+        raison = _md_clean(opp.get("raison", ""))
+        msg += f"{i}. {emoji} *{titre}*\n"
+        msg += f"   🏢 {orga} · 📊 {score}/100 {conf}\n"
+        if portail:
+            msg += f"   🔗 {portail}\n"
+        if deadline:
+            msg += f"   📅 {deadline}\n"
+        if raison:
+            msg += f"   💬 {raison}\n"
+        msg += "\n"
     if result.get("conseil_principal"):
-        msg += f"💡 *Conseil:* {result['conseil_principal']}"
+        msg += f"💡 *Conseil :* {_md_clean(result['conseil_principal'])}\n\n"
     if not opps:
-        msg += "Aucune opportunité précise trouvée. Reformule avec un pays ou un domaine (ex : /mobilite Canada cybersécurité)."
+        msg += "Aucune opportunité précise trouvée. Reformule avec un pays ou un domaine (ex : /mobilite Canada cybersécurité).\n\n"
+    msg += "⚠️ _Pistes générées par IA — à vérifier sur les sites officiels avant de postuler._"
     return {"message": msg, "opportunites": opps, "visa_info": visa_info}
 
 @app.post("/api/osint")
