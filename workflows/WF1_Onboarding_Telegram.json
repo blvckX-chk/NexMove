@@ -189,7 +189,8 @@
         "chatId": "={{ $('🔍 Parser Message').first().json.chat_id }}",
         "text": "={{ $json.message }}",
         "additionalFields": {
-          "parse_mode": "Markdown"
+          "parse_mode": "Markdown",
+          "appendAttribution": false
         }
       },
       "id": "fac9a5e2-1e1f-4203-ac35-d94a92d89b3a",
