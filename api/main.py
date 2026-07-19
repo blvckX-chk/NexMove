@@ -180,7 +180,23 @@ class OppStore:
             id TEXT PRIMARY KEY, user_id TEXT, titre TEXT, organisation TEXT, type TEXT,
             url TEXT, pays TEXT, financement TEXT, deadline TEXT, score INTEGER, raison TEXT,
             statut TEXT DEFAULT 'nouvelle', notified INTEGER DEFAULT 0, created_at TEXT)""")
+        con.execute("""CREATE TABLE IF NOT EXISTS candidatures (
+            id TEXT PRIMARY KEY, user_id TEXT, cible TEXT, deadline TEXT,
+            statut TEXT DEFAULT 'en_preparation', created_at TEXT)""")
         con.commit(); con.close()
+    def add_candidature(self, user_id, cible, deadline=""):
+        oid = hashlib.sha1(f"cand|{user_id}|{cible}".encode("utf-8", "ignore")).hexdigest()
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""INSERT INTO candidatures(id,user_id,cible,deadline,statut,created_at)
+                       VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET deadline=excluded.deadline""",
+                    (oid, str(user_id), cible, deadline, "en_preparation", datetime.now(timezone.utc).isoformat()))
+        con.commit(); con.close()
+    def list_candidatures(self, user_id):
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT cible,deadline,statut FROM candidatures WHERE user_id=? ORDER BY created_at DESC",
+                           (str(user_id),)).fetchall()
+        con.close()
+        return rows
     def add(self, user_id, opp) -> bool:
         url = opp.get("url") or opp.get("portail_officiel") or (str(opp.get("titre", "")) + str(opp.get("organisation", "")))
         oid = hashlib.sha1(f"{user_id}|{url}".encode("utf-8", "ignore")).hexdigest()
@@ -249,6 +265,7 @@ AIDE_TXT = ("🧭 *NexMove — ton prochain départ*\n"
             "/tuto — guide d'utilisation pas à pas\n"
             "/veille — chercher de nouvelles opportunités maintenant\n"
             "/campusfrance — procédure « Études en France » (bourses, dossier)\n"
+            "/dossier <bourse ou programme> — documents requis + CV + projet d'études\n"
             "/postuler <poste ou bourse> — CV + lettre de motivation\n"
             "/mobilite <pays ou domaine> — analyse mobilité ciblée\n"
             "/profil — voir ton profil\n"
@@ -264,8 +281,8 @@ TUTO_TXT = ("📖 *Guide NexMove*\n\n"
             "*3. Études en France* 🇫🇷\n"
             "• /campusfrance — la procédure « Études en France », les bourses (Eiffel…) et les documents à préparer.\n\n"
             "*4. Candidater*\n"
-            "• /postuler <cible> — je génère un *CV adapté* + une *lettre de motivation* "
-            "(ou un projet d'études pour une bourse).\n\n"
+            "• /dossier <cible> — la *liste des documents requis* + je génère ton *CV* et ton *projet d'études*.\n"
+            "• /postuler <cible> — juste le *CV adapté* + la *lettre de motivation*.\n\n"
             "*5. Suivi* — /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
             "Prêt ? Envoie ton *CV en PDF* pour démarrer. 🚀")
 
@@ -433,6 +450,61 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/dossier"):
+        parts = t.split(maxsplit=1)
+        cible_desc = parts[1].strip() if len(parts) > 1 else ""
+        profil = session.get("profil", {}) or {}
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV en PDF."
+        elif not cible_desc:
+            msg = ("🗂️ Indique la cible du dossier :\n/dossier <bourse ou programme>\n\n"
+                   "Ex : /dossier Bourse Eiffel master cybersécurité\n"
+                   "Ex : /dossier Master Université de Montréal")
+        else:
+            try:
+                grounded = await tavily_search(f"{cible_desc} documents requis dossier candidature éligibilité deadline 2026", 6)
+                sources = "\n".join(
+                    f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:200]}"
+                    for s in grounded[:6]) if grounded else "(pas de résultat web)"
+                ident = profil.get("identite", {})
+                comp = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
+                system = ("Tu es conseiller en candidatures internationales (Campus France, bourses). "
+                          "Base-toi sur les sources web pour les exigences RÉELLES, sans inventer. "
+                          "Rédige aussi un projet d'études / lettre de motivation adapté. JSON uniquement.")
+                prompt = f"""CIBLE: {cible_desc}
+CANDIDAT: {ident.get('nom','')}, résumé: {profil.get('resume_profil','')}, compétences: {comp}
+SOURCES WEB:
+{sources}
+Donne la liste EXHAUSTIVE des documents requis, ce qui est à traduire/légaliser, la deadline si connue,
+des conseils, et une lettre/projet d'études (corps 250-320 mots, paragraphes séparés par une ligne vide).
+JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","conseils":["..."],"objet":"","corps":""}}"""
+                r = await call_groq(system, prompt, temperature=0.2, max_tokens=1700)
+                docs = r.get("documents", [])
+                msg = f"🗂️ *Dossier — {_md_clean(cible_desc)}*\n━━━━━━━━━━━━━━━━━━\n\n"
+                if r.get("deadline"):
+                    msg += f"📅 *Deadline :* {_md_clean(r['deadline'])}\n\n"
+                if docs:
+                    msg += "📎 *Documents nécessaires :*\n" + "\n".join(f"⬜ {_md_clean(d)}" for d in docs[:12]) + "\n\n"
+                if r.get("a_traduire"):
+                    msg += "🌐 *À traduire / légaliser :*\n" + "\n".join(f"• {_md_clean(x)}" for x in r["a_traduire"][:6]) + "\n\n"
+                if r.get("conseils"):
+                    msg += "💡 *Conseils :*\n" + "\n".join(f"• {_md_clean(c)}" for c in r["conseils"][:5]) + "\n\n"
+                competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
+                cv_buf = build_cv_pdf(profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
+                lm_buf = build_letter_pdf(profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                nom = _slug(ident.get("nom", "candidat"))
+                chat_id = session.get("chat_id")
+                await _send_telegram_document(chat_id, f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
+                await _send_telegram_document(chat_id, f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
+                opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""))
+                msg += ("📄 CV + lettre/projet d'études envoyés. Dossier ajouté à ton suivi (/status).\n"
+                        "⚠️ _Vérifie les exigences exactes sur le site officiel._")
+            except Exception as e:
+                logger.error(f"dossier: {e}")
+                msg = "😕 La préparation du dossier a échoué, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/veille"):
         if not session.get("onboarding_complete"):
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
@@ -453,13 +525,21 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/status"):
         prefs = (session.get("profil", {}) or {}).get("preferences", {}) or {}
-        etape = session.get("etape", "WELCOME")
         if session.get("onboarding_complete"):
-            msg = ("📊 *Statut*\nProfil : ✅ complété et actif\n"
-                   f"Objectif : {prefs.get('objectif','—')} · Pays : {prefs.get('pays_cibles','—')}\n\n"
-                   "Le suivi détaillé des candidatures arrive bientôt. Utilise /mobilite pour explorer.")
+            msg = ("📊 *Ton statut NexMove*\nProfil : ✅ actif\n"
+                   f"Objectif : {prefs.get('objectif','—')} · Pays : {prefs.get('pays_cibles','—')}\n\n")
+            cands = opp_store.list_candidatures(session.get("user_id"))
+            if cands:
+                msg += "🗂️ *Tes dossiers :*\n"
+                for (cible, deadline, statut) in cands[:8]:
+                    d = f" · 📅 {_md_clean(deadline)}" if deadline else ""
+                    msg += f"• {_md_clean(cible)[:55]} — _{statut}_{d}\n"
+                msg += "\n"
+            else:
+                msg += "🗂️ Aucun dossier en cours. Lance /dossier <cible> pour en préparer un.\n\n"
+            msg += "Utilise /veille pour explorer, /campusfrance pour Études en France."
         else:
-            msg = f"📊 *Statut*\nOnboarding en cours (étape : {etape}).\nFais /start pour (re)commencer."
+            msg = f"📊 Onboarding en cours (étape : {session.get('etape','WELCOME')}). Fais /start."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
