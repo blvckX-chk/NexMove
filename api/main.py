@@ -261,7 +261,7 @@ ETAPE_INSTRUCTIONS = {
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
     "CONFIRMATION": "Résume le profil complet et demande confirmation finale (Oui pour démarrer).",
-    "ACTIF": "L'onboarding est terminé. Commandes: /mobilite [pays/domaine], /status, /profil, /aide. Réponds aux demandes de l'utilisateur de façon utile et concise."
+    "ACTIF": "L'onboarding est terminé. Réponds DIRECTEMENT et utilement à la demande (tutoie, ne re-salue PAS l'utilisateur). Selon son besoin, oriente vers : /veille (chercher des opportunités), /campusfrance (études en France), /dossier <cible> (documents + CV + projet d'études), /postuler <cible> (CV + lettre), /status (suivi)."
 }
 
 REPONSES_POSITIVES = {"oui", "yes", "ok", "correct", "exacte", "c'est bon", "parfait", "valide", "confirme"}
@@ -610,7 +610,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 ETAPE: {etape}
 PROFIL: {profil_str}
 INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: francais, ton amical et encourageant, max 120 mots, propose une action utile (ex: /veille, /campusfrance, /postuler), ne redemande jamais le CV si etape=ACTIF.
+REGLES: francais, TUTOIE l'utilisateur, ton amical et encourageant, ne le re-salue PAS en pleine conversation, max 120 mots, propose une action utile (ex: /veille, /campusfrance, /dossier, /postuler), ne redemande jamais le CV si etape=ACTIF.
 JSON: {{"message":"..."}}"""
     try:
         llm = await call_groq(system, t, temperature=0.3, max_tokens=350)
