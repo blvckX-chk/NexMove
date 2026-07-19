@@ -383,6 +383,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             prompt = f"""RÉSULTATS WEB:
 {sources}
 PROFIL: compétences={comp}
+DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()}. Donne le calendrier de la campagne EN COURS ou À VENIR (jamais une échéance déjà passée).
 Explique la procédure Études en France (inscription, étapes, bourses, documents, calendrier).
 JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadline":"","conseil":""}}"""
             r = await call_groq(system, prompt, temperature=0.1, max_tokens=1300)
@@ -496,9 +497,10 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 CANDIDAT: {ident.get('nom','')}, résumé: {profil.get('resume_profil','')}, compétences: {comp}
 SOURCES WEB:
 {sources}
+DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()}. Si l'édition de la campagne est passée, indique la PROCHAINE échéance — jamais une date déjà passée.
 Donne la liste EXHAUSTIVE des documents requis, ce qui est à traduire/légaliser, la deadline si connue,
 des conseils, et une lettre/projet d'études (corps 250-320 mots, paragraphes séparés par une ligne vide).
-Donne aussi la deadline au format ISO (deadline_iso: "AAAA-MM-JJ") si une date précise est connue, sinon "".
+Donne aussi la deadline au format ISO (deadline_iso: "AAAA-MM-JJ") si une date précise et À VENIR est connue, sinon "".
 JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":"","conseils":["..."],"objet":"","corps":""}}"""
                 r = await call_groq(system, prompt, temperature=0.2, max_tokens=1700)
                 docs = r.get("documents", [])
@@ -897,6 +899,7 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
     cible_lower = cible.lower()
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
+    today = datetime.now(timezone.utc).date().isoformat()
 
     # --- Grounding web réel (Tavily) si la clé est configurée ---
     grounded = []
@@ -919,8 +922,9 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
 CIBLE: {cible} · PAYS: {pays_detecte or pays_cibles or 'indifférent'}
 RÉSULTATS WEB (source de vérité — garde les URL telles quelles):
 {sources_txt}
-Sélectionne les 3 à 5 plus pertinents pour ce profil. Reprends l'URL exacte de chaque source retenue.
-JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","url":"","pays":"","financement":"total|partiel|aucun","deadline":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
+DATE DU JOUR: {today}. EXCLUS toute opportunité déjà clôturée (deadline passée). Pour un programme annuel dont l'édition est passée, référence la PROCHAINE édition (ou laisse deadline vide). Ne présente jamais une date passée comme ouverte.
+Sélectionne les 3 à 5 plus pertinents et ENCORE OUVERTS. Reprends l'URL exacte de chaque source retenue.
+JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","url":"","pays":"","financement":"total|partiel|aucun","deadline":"","deadline_iso":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
         result = await call_groq(system, prompt, temperature=0.1, max_tokens=1700)
         footer = "🌐 _Sources web réelles (Tavily) — vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
@@ -936,12 +940,23 @@ PAYS: {pays_detecte or pays_cibles or 'Non précisé'}
 OBJECTIF: {objectif}
 PROFIL: compétences={competences}, nationalité={nationalite}, financement={financement}
 VISA: facilité={visa_info['facilite']}/100, délai={visa_info['delai']}j
+DATE DU JOUR: {today}. Ne propose QUE des opportunités encore ouvertes ou à venir (jamais une deadline passée). Pour un programme annuel, référence la prochaine édition.
 Donne 3 à 5 opportunités concrètes, du plus pertinent au moins pertinent.
-JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","portail_officiel":"","pays":"","financement":"total|partiel|aucun","deadline":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
+JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","portail_officiel":"","pays":"","financement":"total|partiel|aucun","deadline":"","deadline_iso":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
         result = await call_groq(system, prompt, temperature=0.15, max_tokens=1600)
         footer = "⚠️ _Pistes générées par IA — à vérifier sur les sites officiels avant de postuler._"
 
     opps = result.get("opportunites", [])
+    _today_d = datetime.now(timezone.utc).date()
+    def _open(o):
+        di = str(o.get("deadline_iso", "") or "")[:10]
+        if not di:
+            return True
+        try:
+            return datetime.strptime(di, "%Y-%m-%d").date() >= _today_d
+        except Exception:
+            return True
+    opps = [o for o in opps if _open(o)]
     titre_aff = _md_clean(cible)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
     msg = f"🌍 *NexMove — Mobilité : {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
