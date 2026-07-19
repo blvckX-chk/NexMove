@@ -183,13 +183,20 @@ class OppStore:
         con.execute("""CREATE TABLE IF NOT EXISTS candidatures (
             id TEXT PRIMARY KEY, user_id TEXT, cible TEXT, deadline TEXT,
             statut TEXT DEFAULT 'en_preparation', created_at TEXT)""")
+        for ddl in ("ALTER TABLE candidatures ADD COLUMN deadline_iso TEXT DEFAULT ''",
+                    "ALTER TABLE candidatures ADD COLUMN reminders_sent TEXT DEFAULT ''"):
+            try:
+                con.execute(ddl)
+            except Exception:
+                pass
         con.commit(); con.close()
-    def add_candidature(self, user_id, cible, deadline=""):
+    def add_candidature(self, user_id, cible, deadline="", deadline_iso=""):
         oid = hashlib.sha1(f"cand|{user_id}|{cible}".encode("utf-8", "ignore")).hexdigest()
         con = sqlite3.connect(self._path, timeout=10)
-        con.execute("""INSERT INTO candidatures(id,user_id,cible,deadline,statut,created_at)
-                       VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET deadline=excluded.deadline""",
-                    (oid, str(user_id), cible, deadline, "en_preparation", datetime.now(timezone.utc).isoformat()))
+        con.execute("""INSERT INTO candidatures(id,user_id,cible,deadline,deadline_iso,statut,created_at)
+                       VALUES(?,?,?,?,?,?,?)
+                       ON CONFLICT(id) DO UPDATE SET deadline=excluded.deadline, deadline_iso=excluded.deadline_iso""",
+                    (oid, str(user_id), cible, deadline, deadline_iso, "en_preparation", datetime.now(timezone.utc).isoformat()))
         con.commit(); con.close()
     def list_candidatures(self, user_id):
         con = sqlite3.connect(self._path, timeout=10)
@@ -197,6 +204,20 @@ class OppStore:
                            (str(user_id),)).fetchall()
         con.close()
         return rows
+    def all_candidatures(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("""SELECT id,user_id,cible,deadline_iso,reminders_sent FROM candidatures
+                              WHERE deadline_iso IS NOT NULL AND deadline_iso!=''""").fetchall()
+        con.close()
+        return rows
+    def mark_reminder(self, cand_id, milestone):
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT reminders_sent FROM candidatures WHERE id=?", (cand_id,)).fetchone()
+        parts = [p for p in ((row[0] or "").split(",") if row else []) if p]
+        if str(milestone) not in parts:
+            parts.append(str(milestone))
+        con.execute("UPDATE candidatures SET reminders_sent=? WHERE id=?", (",".join(parts), cand_id))
+        con.commit(); con.close()
     def add(self, user_id, opp) -> bool:
         url = opp.get("url") or opp.get("portail_officiel") or (str(opp.get("titre", "")) + str(opp.get("organisation", "")))
         oid = hashlib.sha1(f"{user_id}|{url}".encode("utf-8", "ignore")).hexdigest()
@@ -477,7 +498,8 @@ SOURCES WEB:
 {sources}
 Donne la liste EXHAUSTIVE des documents requis, ce qui est à traduire/légaliser, la deadline si connue,
 des conseils, et une lettre/projet d'études (corps 250-320 mots, paragraphes séparés par une ligne vide).
-JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","conseils":["..."],"objet":"","corps":""}}"""
+Donne aussi la deadline au format ISO (deadline_iso: "AAAA-MM-JJ") si une date précise est connue, sinon "".
+JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":"","conseils":["..."],"objet":"","corps":""}}"""
                 r = await call_groq(system, prompt, temperature=0.2, max_tokens=1700)
                 docs = r.get("documents", [])
                 msg = f"🗂️ *Dossier — {_md_clean(cible_desc)}*\n━━━━━━━━━━━━━━━━━━\n\n"
@@ -496,7 +518,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","conseils":["..."
                 chat_id = session.get("chat_id")
                 await _send_telegram_document(chat_id, f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
                 await _send_telegram_document(chat_id, f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
-                opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""))
+                opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""), r.get("deadline_iso", ""))
                 msg += ("📄 CV + lettre/projet d'études envoyés. Dossier ajouté à ton suivi (/status).\n"
                         "⚠️ _Vérifie les exigences exactes sur le site officiel._")
             except Exception as e:
@@ -1003,8 +1025,31 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         if await _send_telegram_message(chat_id, msg):
             opp_store.mark_notified(ids)
             notified += 1
-    logger.info(f"[notify] users_notifies={notified}")
-    return {"ok": True, "users_notifies": notified}
+    # rappels de deadline (J-14 / J-7 / J-3 / J-1)
+    today = datetime.now(timezone.utc).date()
+    rappels = 0
+    for (cid, uid, cible, diso, sent) in opp_store.all_candidatures():
+        try:
+            d = datetime.strptime(str(diso)[:10], "%Y-%m-%d").date()
+        except Exception:
+            continue
+        days = (d - today).days
+        if days < 0 or days > 14:
+            continue
+        applicable = next((m for m in (1, 3, 7, 14) if days <= m), None)
+        if applicable is None or str(applicable) in [p for p in (sent or "").split(",") if p]:
+            continue
+        s2 = session_manager.get(uid)
+        chat2 = s2.get("chat_id") if s2 else None
+        if not chat2:
+            continue
+        rmsg = (f"⏰ *Rappel deadline — J-{days}*\n🗂️ {_md_clean(cible)[:70]}\n📅 {diso}\n\n"
+                "Finalise ton dossier ! /dossier pour régénérer, /status pour suivre.")
+        if await _send_telegram_message(chat2, rmsg):
+            opp_store.mark_reminder(cid, applicable)
+            rappels += 1
+    logger.info(f"[notify] users_notifies={notified} rappels={rappels}")
+    return {"ok": True, "users_notifies": notified, "rappels_deadline": rappels}
 
 @app.get("/api/session/{user_id}")
 async def get_session(user_id: str, _auth: bool = Depends(verify_api_key)):
