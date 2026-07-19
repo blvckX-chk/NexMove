@@ -45,6 +45,7 @@ def _read_telegram_token():
 
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
+TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -596,6 +597,26 @@ VISA_DB = {
     "default":{"facilite":50,"delai":60,"refus_pct":30,"cout_usd":100,"type":"inconnu"}
 }
 
+async def tavily_search(query: str, max_results: int = 7) -> list:
+    if not TAVILY_API_KEY:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post("https://api.tavily.com/search", json={
+                "api_key": TAVILY_API_KEY,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": max_results,
+                "include_answer": False,
+            })
+        if r.status_code != 200:
+            logger.error(f"Tavily {r.status_code}: {r.text[:200]}")
+            return []
+        return r.json().get("results", []) or []
+    except Exception as e:
+        logger.error(f"Tavily erreur: {e}")
+        return []
+
 async def run_osint(profil: dict, cible: str = "") -> dict:
     profil = profil or {}
     prefs = profil.get("preferences", {}) or {}
@@ -608,14 +629,40 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
     cible_lower = cible.lower()
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
-    system = ("Tu es expert en mobilité internationale et bourses pour ressortissants africains. "
-              "RÈGLES STRICTES : ne cite QUE des organismes/programmes RÉELS et vérifiables "
-              "(ex : DAAD, Campus France, Erasmus Mundus, Chevening, Commonwealth, AUF, Mastercard Foundation, "
-              "Mitacs, Fulbright, INRS, universités reconnues, grandes entreprises). "
-              "N'INVENTE JAMAIS d'URL : donne seulement le PORTAIL OFFICIEL en clair (ex : campusfrance.org, daad.de). "
-              "Si tu n'es pas certain qu'une opportunité existe, mets confiance='faible'. "
-              "Priorise selon le financement demandé. JSON uniquement.")
-    prompt = f"""Propose des opportunités de mobilité RÉELLES.
+
+    # --- Grounding web réel (Tavily) si la clé est configurée ---
+    grounded = []
+    if TAVILY_API_KEY:
+        type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
+                    "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR fellowship")
+        zone = pays_detecte or pays_cibles or ""
+        query = f"{type_mot} {cible} {zone} 2026 candidature éligibilité".strip()
+        grounded = await tavily_search(query, 7)
+
+    if grounded:
+        sources_txt = "\n".join(
+            f"- TITRE: {s.get('title','')} | URL: {s.get('url','')} | EXTRAIT: {(s.get('content','') or '')[:220]}"
+            for s in grounded[:7]
+        )
+        system = ("Tu es expert en mobilité internationale. On te fournit des RÉSULTATS WEB RÉELS. "
+                  "Sélectionne et score UNIQUEMENT parmi eux. Reprends les URL EXACTEMENT telles que fournies, "
+                  "n'invente RIEN (ni offre, ni URL). Ignore un résultat qui n'est pas une vraie opportunité. JSON uniquement.")
+        prompt = f"""PROFIL: compétences={competences}, nationalité={nationalite}, financement={financement}, objectif={objectif}
+CIBLE: {cible} · PAYS: {pays_detecte or pays_cibles or 'indifférent'}
+RÉSULTATS WEB (source de vérité — garde les URL telles quelles):
+{sources_txt}
+Sélectionne les 3 à 5 plus pertinents pour ce profil. Reprends l'URL exacte de chaque source retenue.
+JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","url":"","pays":"","financement":"total|partiel|aucun","deadline":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
+        result = await call_groq(system, prompt, temperature=0.1, max_tokens=1700)
+        footer = "🌐 _Sources web réelles (Tavily) — vérifie l'éligibilité et la deadline sur chaque lien._"
+    else:
+        system = ("Tu es expert en mobilité internationale et bourses pour ressortissants africains. "
+                  "RÈGLES STRICTES : ne cite QUE des organismes/programmes RÉELS et vérifiables "
+                  "(DAAD, Campus France, Erasmus Mundus, Chevening, Commonwealth, AUF, Mastercard Foundation, "
+                  "Mitacs, Fulbright, INRS, universités reconnues, grandes entreprises). "
+                  "N'INVENTE JAMAIS d'URL : donne seulement le PORTAIL OFFICIEL en clair (ex : campusfrance.org). "
+                  "Si tu n'es pas certain, mets confiance='faible'. Priorise selon le financement. JSON uniquement.")
+        prompt = f"""Propose des opportunités de mobilité RÉELLES.
 CIBLE: {cible}
 PAYS: {pays_detecte or pays_cibles or 'Non précisé'}
 OBJECTIF: {objectif}
@@ -623,7 +670,9 @@ PROFIL: compétences={competences}, nationalité={nationalite}, financement={fin
 VISA: facilité={visa_info['facilite']}/100, délai={visa_info['delai']}j
 Donne 3 à 5 opportunités concrètes, du plus pertinent au moins pertinent.
 JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship","portail_officiel":"","pays":"","financement":"total|partiel|aucun","deadline":"","confiance":"haute|moyenne|faible","score_composite":0,"recommandation":"PRIORITAIRE|INTERESSANT|RISQUE","raison":""}}],"conseil_principal":""}}"""
-    result = await call_groq(system, prompt, temperature=0.15, max_tokens=1600)
+        result = await call_groq(system, prompt, temperature=0.15, max_tokens=1600)
+        footer = "⚠️ _Pistes générées par IA — à vérifier sur les sites officiels avant de postuler._"
+
     opps = result.get("opportunites", [])
     titre_aff = _md_clean(cible)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
@@ -636,13 +685,13 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
         conf = conf_emoji.get(str(opp.get("confiance", "")).lower(), "")
         titre = _md_clean(opp.get("titre", ""))[:60]
         orga = _md_clean(opp.get("organisation", ""))
-        portail = _md_clean(opp.get("portail_officiel", ""))
+        lien = str(opp.get("url", "") or opp.get("portail_officiel", "")).replace("*", "").replace("`", "").strip()
         deadline = _md_clean(opp.get("deadline", ""))
         raison = _md_clean(opp.get("raison", ""))
         msg += f"{i}. {emoji} *{titre}*\n"
         msg += f"   🏢 {orga} · 📊 {score}/100 {conf}\n"
-        if portail:
-            msg += f"   🔗 {portail}\n"
+        if lien:
+            msg += f"   🔗 {lien}\n"
         if deadline:
             msg += f"   📅 {deadline}\n"
         if raison:
@@ -651,9 +700,9 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
     if result.get("conseil_principal"):
         msg += f"💡 *Conseil :* {_md_clean(result['conseil_principal'])}\n\n"
     if not opps:
-        msg += "Aucune opportunité précise trouvée. Reformule avec un pays ou un domaine (ex : /mobilite Canada cybersécurité).\n\n"
-    msg += "⚠️ _Pistes générées par IA — à vérifier sur les sites officiels avant de postuler._"
-    return {"message": msg, "opportunites": opps, "visa_info": visa_info}
+        msg += "Aucune opportunité trouvée. Reformule avec un pays et un domaine (ex : /mobilite Canada cybersécurité).\n\n"
+    msg += footer
+    return {"message": msg, "opportunites": opps, "visa_info": visa_info, "grounded": bool(grounded)}
 
 @app.post("/api/osint")
 async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_api_key)):
