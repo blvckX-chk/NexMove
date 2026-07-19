@@ -68,7 +68,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=401, detail="Clé API invalide")
     return True
 
-app = FastAPI(title="Forge NEX API", version="2.0.0")
+app = FastAPI(title="NexMove API", version="2.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 class ChatRequest(BaseModel):
@@ -219,7 +219,7 @@ class OppStore:
 opp_store = OppStore()
 
 ETAPE_INSTRUCTIONS = {
-    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente Forge NEX en 2 phrases: agent IA qui trouve des opportunités (emploi, bourses, fellowships, mobilité internationale) adaptées à son profil. Demande d'envoyer le CV en PDF.",
+    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV en PDF.",
     "ATTENTE_CV": "L'utilisateur doit envoyer son CV en PDF. Rappelle-lui brièvement.",
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
@@ -243,15 +243,31 @@ PREF_QUESTIONS = [
     ("mots_cles", "🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)"),
 ]
 
-AIDE_TXT = ("🤖 *Forge NEX — commandes*\n"
-            "/start — (re)démarrer l'onboarding\n"
-            "/profil — voir ton profil\n"
-            "/mobilite <pays ou domaine> — analyse mobilité\n"
-            "/postuler <poste ou bourse> — CV + lettre de motivation\n"
+AIDE_TXT = ("🧭 *NexMove — ton prochain départ*\n"
+            "_Études · Emploi · Bourses · Mobilité internationale_\n\n"
+            "/start — (re)démarrer et créer ton profil\n"
+            "/tuto — guide d'utilisation pas à pas\n"
             "/veille — chercher de nouvelles opportunités maintenant\n"
-            "/status — état de tes candidatures\n"
-            "/aide — cette aide\n"
+            "/campusfrance — procédure « Études en France » (bourses, dossier)\n"
+            "/postuler <poste ou bourse> — CV + lettre de motivation\n"
+            "/mobilite <pays ou domaine> — analyse mobilité ciblée\n"
+            "/profil — voir ton profil\n"
+            "/status — état de ta veille\n"
             "/supprimer — effacer mes données")
+
+TUTO_TXT = ("📖 *Guide NexMove*\n\n"
+            "*1. Ton profil* — envoie ton *CV en PDF*. Je l'analyse, puis je te pose quelques questions "
+            "(objectif, pays, financement, langue…).\n\n"
+            "*2. Trouver des opportunités*\n"
+            "• /veille — je cherche des offres RÉELLES adaptées à ton profil.\n"
+            "• /mobilite <pays ou domaine> — recherche ciblée (ex : /mobilite France bourse master).\n\n"
+            "*3. Études en France* 🇫🇷\n"
+            "• /campusfrance — la procédure « Études en France », les bourses (Eiffel…) et les documents à préparer.\n\n"
+            "*4. Candidater*\n"
+            "• /postuler <cible> — je génère un *CV adapté* + une *lettre de motivation* "
+            "(ou un projet d'études pour une bourse).\n\n"
+            "*5. Suivi* — /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
+            "Prêt ? Envoie ton *CV en PDF* pour démarrer. 🚀")
 
 def _push(session, role, content):
     h = session.get("historique", [])
@@ -263,6 +279,18 @@ def _md_clean(s):
     for c in ("*", "_", "`", "[", "]"):
         s = s.replace(c, "")
     return s.strip()
+
+def _type_label(typ):
+    tp = str(typ or "").lower()
+    if "bourse" in tp or "scholarship" in tp:
+        return "🎓 BOURSE"
+    if "fellowship" in tp:
+        return "🔬 FELLOWSHIP"
+    if any(k in tp for k in ("formation", "étude", "etude", "master", "licence", "programme", "doctorat", "phd", "universit")):
+        return "📚 FORMATION"
+    if any(k in tp for k in ("emploi", "job", "poste", "stage", "cdi", "cdd")):
+        return "💼 EMPLOI"
+    return "🌍 OPPORTUNITÉ"
 
 def _resume_prefs(prefs):
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
@@ -285,14 +313,60 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
         session["onboarding_complete"] = False; session["pref_index"] = 0
-        msg = ("👋 *Bienvenue sur Forge NEX !*\nJe t'aide à trouver emplois, bourses, fellowships et "
-               "opportunités de mobilité adaptés à ton profil.\n\n📄 Pour commencer, envoie-moi ton *CV en PDF*.")
+        msg = ("👋 *Bienvenue sur NexMove !*\n"
+               "_Ton agent IA pour préparer ton prochain départ : études, emploi, bourses et mobilité internationale._\n\n"
+               "Voici comment ça marche :\n"
+               "1️⃣ Envoie-moi ton *CV en PDF* — j'analyse ton profil.\n"
+               "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
+               "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
+               "📄 *Pour commencer, envoie ton CV en PDF.*  (ou tape /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     if low.startswith("/aide") or low.startswith("/help"):
         _push(session, "user", t); _push(session, "assistant", AIDE_TXT); session["derniere_activite"] = now
         return AIDE_TXT, session
+
+    if low.startswith("/tuto") or low.startswith("/guide"):
+        _push(session, "user", t); _push(session, "assistant", TUTO_TXT); session["derniere_activite"] = now
+        return TUTO_TXT, session
+
+    if low.startswith("/campusfrance") or low.startswith("/campus"):
+        try:
+            grounded = await tavily_search(
+                "Campus France Études en France procédure calendrier 2026 2027 bourse Eiffel dossier étudiant international", 6)
+            profil = session.get("profil", {}) or {}
+            comp = (profil.get("competences", {}).get("techniques", []))[:4]
+            sources = "\n".join(
+                f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:200]}"
+                for s in grounded[:6]) if grounded else "(pas de résultat web — appuie-toi sur ta connaissance générale)"
+            system = ("Tu es conseiller Campus France. Explique clairement la procédure 'Études en France' pour un "
+                      "étudiant africain francophone. Base les dates/étapes sur les résultats web fournis, sans inventer. JSON uniquement.")
+            prompt = f"""RÉSULTATS WEB:
+{sources}
+PROFIL: compétences={comp}
+Explique la procédure Études en France (inscription, étapes, bourses, documents, calendrier).
+JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadline":"","conseil":""}}"""
+            r = await call_groq(system, prompt, temperature=0.1, max_tokens=1300)
+            etapes, bourses, docs = r.get("etapes", []), r.get("bourses", []), r.get("documents", [])
+            msg = "🇫🇷 *Campus France — Études en France*\n━━━━━━━━━━━━━━━━━━\n\n"
+            if r.get("deadline"):
+                msg += f"📅 *Calendrier :* {_md_clean(r['deadline'])}\n\n"
+            if etapes:
+                msg += "*Étapes :*\n" + "\n".join(f"{i}. {_md_clean(e)}" for i, e in enumerate(etapes[:6], 1)) + "\n\n"
+            if bourses:
+                msg += "🎓 *Bourses :*\n" + "\n".join(f"• {_md_clean(b)}" for b in bourses[:5]) + "\n\n"
+            if docs:
+                msg += "📎 *Documents à préparer :*\n" + "\n".join(f"• {_md_clean(d)}" for d in docs[:8]) + "\n\n"
+            if r.get("conseil"):
+                msg += f"💡 {_md_clean(r['conseil'])}\n\n"
+            msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n"
+            msg += "✍️ Prêt à candidater ? Tape : /postuler Bourse Eiffel master <ton domaine>"
+        except Exception as e:
+            logger.error(f"campusfrance: {e}")
+            msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
 
     if low.startswith("/profil"):
         profil = session.get("profil", {}) or {}
@@ -430,11 +504,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     historique = session.get("historique", [])
     historique.append({"role": "user", "content": t})
     profil_str = json.dumps(session.get("profil", {}), ensure_ascii=False)[:800]
-    system = f"""Tu es Forge NEX Assistant, agent IA de recherche d'opportunités (emploi, bourses, fellowships, mobilité).
+    system = f"""Tu es NexMove, agent IA chaleureux qui aide à préparer son prochain départ (études, emploi, bourses, mobilité internationale).
 ETAPE: {etape}
 PROFIL: {profil_str}
 INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: francais, max 120 mots, chaleureux, ne redemande jamais le CV si etape=ACTIF.
+REGLES: francais, ton amical et encourageant, max 120 mots, propose une action utile (ex: /veille, /campusfrance, /postuler), ne redemande jamais le CV si etape=ACTIF.
 JSON: {{"message":"..."}}"""
     try:
         llm = await call_groq(system, t, temperature=0.3, max_tokens=350)
@@ -768,7 +842,7 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
     opps = result.get("opportunites", [])
     titre_aff = _md_clean(cible)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
-    msg = f"🌍 *Forge NEX OSINT — {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
+    msg = f"🌍 *NexMove — Mobilité : {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
     if pays_detecte:
         msg += f"🗺️ Visa {pays_detecte} : {visa_info['facilite']}/100, ~{visa_info['delai']}j\n\n"
     for i, opp in enumerate(opps[:5], 1):
@@ -780,7 +854,7 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
         lien = str(opp.get("url", "") or opp.get("portail_officiel", "")).replace("*", "").replace("`", "").strip()
         deadline = _md_clean(opp.get("deadline", ""))
         raison = _md_clean(opp.get("raison", ""))
-        msg += f"{i}. {emoji} *{titre}*\n"
+        msg += f"{i}. {_type_label(opp.get('type',''))}  {emoji}\n   *{titre}*\n"
         msg += f"   🏢 {orga} · 📊 {score}/100 {conf}\n"
         if lien:
             msg += f"   🔗 {lien}\n"
@@ -837,7 +911,7 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         for (oid, titre, orga, typ, url, fin, deadline, sc, raison) in rows[:5]:
             ids.append(oid)
             em = "🔥" if sc >= 75 else "✅"
-            ligne = f"{em} *{_md_clean(titre)[:60]}*\n   🏢 {_md_clean(orga)} · 📊 {sc}/100"
+            ligne = f"{_type_label(typ)}  {em}\n   *{_md_clean(titre)[:60]}*\n   🏢 {_md_clean(orga)} · 📊 {sc}/100"
             if url:
                 ligne += "\n   🔗 " + str(url).replace("*", "").replace("`", "")
             if deadline:
@@ -870,4 +944,4 @@ async def health():
 
 @app.get("/")
 async def root():
-    return {"service": "Forge NEX API v2.0", "endpoints": ["POST /api/chat", "POST /api/chat-cv", "POST /api/parse-cv", "POST /api/generate-documents", "POST /api/osint", "GET /api/session/{user_id}", "GET /health"]}
+    return {"service": "NexMove API v2.1", "endpoints": ["POST /api/chat", "POST /api/chat-cv", "POST /api/parse-cv", "POST /api/generate-documents", "POST /api/osint", "POST /api/collect", "POST /api/score", "POST /api/notify", "GET /api/session/{user_id}", "GET /health"]}
