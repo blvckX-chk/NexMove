@@ -1,4 +1,4 @@
-import os, io, json, base64, logging, secrets, time, asyncio, sqlite3
+import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib
 from datetime import datetime, timezone
 from typing import Optional, Any
 
@@ -154,10 +154,69 @@ class SessionManager:
         n = con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
         con.close()
         return int(n)
+    def list_active(self) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT data FROM sessions").fetchall()
+        con.close()
+        out = []
+        for (d,) in rows:
+            try:
+                s = json.loads(d)
+                if s.get("onboarding_complete"):
+                    out.append(s)
+            except Exception:
+                pass
+        return out
     def create_default(self, user_id: str, chat_id: str, username: str) -> dict:
         return {"user_id": str(user_id), "chat_id": str(chat_id), "username": username, "etape": "WELCOME", "profil": {}, "historique": [], "cv_parsed": False, "cv_file_id": None, "onboarding_complete": False, "created_at": datetime.now(timezone.utc).isoformat()}
 
 session_manager = SessionManager()
+
+class OppStore:
+    def __init__(self, path: str = "data/sessions.db"):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS offres (
+            id TEXT PRIMARY KEY, user_id TEXT, titre TEXT, organisation TEXT, type TEXT,
+            url TEXT, pays TEXT, financement TEXT, deadline TEXT, score INTEGER, raison TEXT,
+            statut TEXT DEFAULT 'nouvelle', notified INTEGER DEFAULT 0, created_at TEXT)""")
+        con.commit(); con.close()
+    def add(self, user_id, opp) -> bool:
+        url = opp.get("url") or opp.get("portail_officiel") or (str(opp.get("titre", "")) + str(opp.get("organisation", "")))
+        oid = hashlib.sha1(f"{user_id}|{url}".encode("utf-8", "ignore")).hexdigest()
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            if con.execute("SELECT 1 FROM offres WHERE id=?", (oid,)).fetchone():
+                return False
+            con.execute("""INSERT INTO offres(id,user_id,titre,organisation,type,url,pays,financement,deadline,score,raison,statut,notified,created_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (oid, str(user_id), opp.get("titre", ""), opp.get("organisation", ""), opp.get("type", ""),
+                         url, opp.get("pays", ""), opp.get("financement", ""), opp.get("deadline", ""),
+                         int(opp.get("score_composite", 0) or 0), opp.get("raison", ""), "nouvelle", 0,
+                         datetime.now(timezone.utc).isoformat()))
+            con.commit(); return True
+        finally:
+            con.close()
+    def pending(self, user_id, min_score: int = 60) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("""SELECT id,titre,organisation,type,url,financement,deadline,score,raison
+                              FROM offres WHERE user_id=? AND notified=0 AND score>=? ORDER BY score DESC""",
+                           (str(user_id), min_score)).fetchall()
+        con.close()
+        return rows
+    def mark_notified(self, ids: list):
+        if not ids:
+            return
+        con = sqlite3.connect(self._path, timeout=10)
+        con.executemany("UPDATE offres SET notified=1 WHERE id=?", [(i,) for i in ids])
+        con.commit(); con.close()
+    def count_pending(self, min_score: int = 60) -> int:
+        con = sqlite3.connect(self._path, timeout=10)
+        n = con.execute("SELECT COUNT(*) FROM offres WHERE notified=0 AND score>=?", (min_score,)).fetchone()[0]
+        con.close()
+        return int(n)
+
+opp_store = OppStore()
 
 ETAPE_INSTRUCTIONS = {
     "WELCOME": "Accueille chaleureusement l'utilisateur. Présente Forge NEX en 2 phrases: agent IA qui trouve des opportunités (emploi, bourses, fellowships, mobilité internationale) adaptées à son profil. Demande d'envoyer le CV en PDF.",
@@ -189,6 +248,7 @@ AIDE_TXT = ("🤖 *Forge NEX — commandes*\n"
             "/profil — voir ton profil\n"
             "/mobilite <pays ou domaine> — analyse mobilité\n"
             "/postuler <poste ou bourse> — CV + lettre de motivation\n"
+            "/veille — chercher de nouvelles opportunités maintenant\n"
             "/status — état de tes candidatures\n"
             "/aide — cette aide\n"
             "/supprimer — effacer mes données")
@@ -296,6 +356,24 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             except Exception as e:
                 logger.error(f"Erreur postuler: {e}")
                 msg = "😕 La génération des documents a échoué, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/veille"):
+        if not session.get("onboarding_complete"):
+            msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
+        else:
+            try:
+                res = await run_osint(session.get("profil", {}) or {}, "")
+                new = 0
+                for opp in res.get("opportunites", []):
+                    if opp_store.add(session.get("user_id"), opp):
+                        new += 1
+                msg = res.get("message") or "Aucune opportunité trouvée pour l'instant."
+                msg += f"\n\n🆕 {new} nouvelle(s) opportunité(s) ajoutée(s) à ta veille."
+            except Exception as e:
+                logger.error(f"Erreur veille: {e}")
+                msg = "😕 La veille a échoué, réessaie dans un instant."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -482,6 +560,20 @@ async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
         return r.status_code == 200
     except Exception as e:
         logger.error(f"sendDocument erreur: {e}")
+        return False
+
+async def _send_telegram_message(chat_id, text):
+    if not TELEGRAM_TOKEN:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            r = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+                data={"chat_id": str(chat_id), "text": (text or "")[:4000], "parse_mode": "Markdown"},
+            )
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"sendMessage erreur: {e}")
         return False
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
@@ -711,6 +803,54 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
     profil = session.get("profil", {}) if session else {}
     res = await run_osint(profil, request.cible)
     return {**res, "chat_id": request.chat_id}
+
+@app.post("/api/collect")
+async def collect(_auth: bool = Depends(verify_api_key)):
+    users = session_manager.list_active()
+    total_new = 0
+    for s in users[:50]:
+        try:
+            res = await run_osint(s.get("profil", {}) or {}, "")
+            for opp in res.get("opportunites", []):
+                if opp_store.add(s.get("user_id"), opp):
+                    total_new += 1
+        except Exception as e:
+            logger.error(f"[collect] user={s.get('user_id')}: {e}")
+    logger.info(f"[collect] users={len(users)} nouvelles={total_new}")
+    return {"ok": True, "users_actifs": len(users), "offres_collectees": total_new}
+
+@app.post("/api/score")
+async def score(_auth: bool = Depends(verify_api_key)):
+    # Le scoring est realise pendant la collecte (run_osint). Ici : resume.
+    return {"ok": True, "en_attente_notif": opp_store.count_pending()}
+
+@app.post("/api/notify")
+async def notify(_auth: bool = Depends(verify_api_key)):
+    users = session_manager.list_active()
+    notified = 0
+    for s in users[:50]:
+        chat_id = s.get("chat_id")
+        rows = opp_store.pending(s.get("user_id"), 60)
+        if not rows or not chat_id:
+            continue
+        lignes, ids = [], []
+        for (oid, titre, orga, typ, url, fin, deadline, sc, raison) in rows[:5]:
+            ids.append(oid)
+            em = "🔥" if sc >= 75 else "✅"
+            ligne = f"{em} *{_md_clean(titre)[:60]}*\n   🏢 {_md_clean(orga)} · 📊 {sc}/100"
+            if url:
+                ligne += "\n   🔗 " + str(url).replace("*", "").replace("`", "")
+            if deadline:
+                ligne += "\n   📅 " + _md_clean(deadline)
+            lignes.append(ligne)
+        msg = ("🔔 *Nouvelles opportunités pour toi*\n━━━━━━━━━━━━━━━━━━\n\n"
+               + "\n\n".join(lignes)
+               + "\n\n_Utilise /postuler <titre> pour générer CV + lettre._")
+        if await _send_telegram_message(chat_id, msg):
+            opp_store.mark_notified(ids)
+            notified += 1
+    logger.info(f"[notify] users_notifies={notified}")
+    return {"ok": True, "users_notifies": notified}
 
 @app.get("/api/session/{user_id}")
 async def get_session(user_id: str, _auth: bool = Depends(verify_api_key)):
