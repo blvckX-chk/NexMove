@@ -47,6 +47,15 @@ Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'
 - **Forge NEX → NexMove** partout dans l'expérience utilisateur (« ton prochain départ » : études, emploi,
   bourses, mobilité).
 
+## v2.3 → v2.5 (efficience & pré-lancement)
+- `/health` versionné (VERSION dynamique) — vrai témoin de déploiement.
+- **Anti-offres expirées** : date du jour dans les prompts + filtre déterministe des deadlines passées.
+- **Sprint efficience** : veille parallélisée (`asyncio.gather`), cache Tavily (TTL 6 h), `search_depth: advanced`.
+- **Sources structurées** : ingestion de flux RSS de bourses réels (scholars4dev, OpportunityDesk,
+  OpportunitiesForAfricans) → table `sources_offres`, matchées au profil dans la veille.
+- **`/formations <domaine>`** : recommandations de formations/certifications (grounded) pour se distinguer.
+- **Suivi Campus France par étapes** : `/parcours` (roadmap EEF jusqu'au départ) + `/etape` (valider l'étape courante).
+
 ## Reste à faire (optionnel)
 - OCR (CV scannés) + export **DOCX** (nouvelles dépendances → `requirements.txt`).
 - Sources structurées supplémentaires (RSS bourses, API emploi) en plus de Tavily.

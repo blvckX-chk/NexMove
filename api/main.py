@@ -1,4 +1,5 @@
-import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib
+import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional, Any
 
@@ -46,7 +47,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.4.0"
+VERSION         = "2.5.0"
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -190,7 +191,34 @@ class OppStore:
                 con.execute(ddl)
             except Exception:
                 pass
+        con.execute("""CREATE TABLE IF NOT EXISTS sources_offres (
+            id TEXT PRIMARY KEY, titre TEXT, url TEXT, resume TEXT, date TEXT, created_at TEXT)""")
         con.commit(); con.close()
+    def add_source(self, it) -> bool:
+        oid = hashlib.sha1(str(it.get("url", "")).encode("utf-8", "ignore")).hexdigest()
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            if con.execute("SELECT 1 FROM sources_offres WHERE id=?", (oid,)).fetchone():
+                return False
+            con.execute("INSERT INTO sources_offres(id,titre,url,resume,date,created_at) VALUES(?,?,?,?,?,?)",
+                        (oid, it.get("titre", ""), it.get("url", ""), it.get("resume", ""), it.get("date", ""),
+                         datetime.now(timezone.utc).isoformat()))
+            con.commit(); return True
+        finally:
+            con.close()
+    def search_sources(self, keywords, limit=60):
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT titre,url,resume FROM sources_offres ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        con.close()
+        kws = [str(k).lower() for k in keywords if k and len(str(k)) > 2]
+        scored = []
+        for (titre, url, resume) in rows:
+            txt = (str(titre) + " " + str(resume)).lower()
+            sc = sum(1 for k in kws if k in txt)
+            if sc > 0:
+                scored.append((sc, {"titre": titre, "url": url, "resume": resume}))
+        scored.sort(key=lambda x: -x[0])
+        return [d for _, d in scored[:8]]
     def add_candidature(self, user_id, cible, deadline="", deadline_iso=""):
         oid = hashlib.sha1(f"cand|{user_id}|{cible}".encode("utf-8", "ignore")).hexdigest()
         con = sqlite3.connect(self._path, timeout=10)
@@ -311,7 +339,9 @@ AIDE_TXT = ("🧭 *NexMove — ton prochain départ*\n"
             "/tuto — guide d'utilisation pas à pas\n"
             "/veille — chercher de nouvelles opportunités maintenant\n"
             "/campusfrance — procédure « Études en France » (bourses, dossier)\n"
+            "/parcours — ton suivi Campus France étape par étape\n"
             "/dossier <bourse ou programme> — documents requis + CV + projet d'études\n"
+            "/formations <domaine> — formations/certifs pour te distinguer\n"
             "/postuler <poste ou bourse> — CV + lettre de motivation\n"
             "/mobilite <pays ou domaine> — analyse mobilité ciblée\n"
             "/profil — voir ton profil\n"
@@ -325,12 +355,25 @@ TUTO_TXT = ("📖 *Guide NexMove*\n\n"
             "• /veille — je cherche des offres RÉELLES adaptées à ton profil.\n"
             "• /mobilite <pays ou domaine> — recherche ciblée (ex : /mobilite France bourse master).\n\n"
             "*3. Études en France* 🇫🇷\n"
-            "• /campusfrance — la procédure « Études en France », les bourses (Eiffel…) et les documents à préparer.\n\n"
+            "• /campusfrance — la procédure, les bourses (Eiffel…) et les documents.\n"
+            "• /parcours — suis ton avancement étape par étape jusqu'au départ (/etape pour valider une étape).\n"
+            "• /formations <domaine> — des formations/certifs pour te démarquer.\n\n"
             "*4. Candidater*\n"
             "• /dossier <cible> — la *liste des documents requis* + je génère ton *CV* et ton *projet d'études*.\n"
             "• /postuler <cible> — juste le *CV adapté* + la *lettre de motivation*.\n\n"
             "*5. Suivi* — /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
             "Prêt ? Envoie ton *CV en PDF* pour démarrer. 🚀")
+
+CF_STAGES = [
+    "Créer ton compte « Études en France » (EEF)",
+    "Choisir tes formations et remplir ton dossier (projet d'études)",
+    "Payer les frais Campus France",
+    "Passer l'entretien Campus France",
+    "Recevoir les réponses des établissements",
+    "Accepter une offre et confirmer ton inscription",
+    "Demander ton visa étudiant",
+    "Préparer ton départ (logement, billet, assurance)",
+]
 
 def _push(session, role, content):
     h = session.get("historique", [])
@@ -429,6 +472,92 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         except Exception as e:
             logger.error(f"campusfrance: {e}")
             msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/parcours"):
+        stage = int(session.get("cf_stage", 0) or 0)
+        lines = []
+        for i, st in enumerate(CF_STAGES):
+            if i < stage:
+                lines.append(f"✅ {st}")
+            elif i == stage:
+                lines.append(f"▶️ *{st}*")
+            else:
+                lines.append(f"⬜ {st}")
+        pos = min(stage + 1, len(CF_STAGES))
+        msg = ("🇫🇷 *Ton parcours Campus France*\n━━━━━━━━━━━━━━━━━━\n\n" + "\n".join(lines) +
+               f"\n\nÉtape {pos}/{len(CF_STAGES)}. Tape /etape quand tu as terminé l'étape en cours.\n"
+               "/campusfrance pour les détails · /dossier <cible> pour préparer les documents.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/etape"):
+        stage = int(session.get("cf_stage", 0) or 0)
+        if stage < len(CF_STAGES):
+            done = CF_STAGES[stage]
+            stage += 1
+            session["cf_stage"] = stage
+            if stage >= len(CF_STAGES):
+                msg = f"🎉 Étape validée : {done}\n\nTon parcours Campus France est *complet* ! Bon départ ✈️"
+            else:
+                msg = (f"✅ Étape validée : {done}\n\n▶️ Prochaine étape : *{CF_STAGES[stage]}*\n\n"
+                       "/parcours pour voir l'ensemble.")
+        else:
+            msg = "Ton parcours est déjà complet 🎉. /parcours pour revoir."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/formations") or low.startswith("/formation"):
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        parts = t.split(maxsplit=1)
+        domaine = parts[1].strip() if len(parts) > 1 else (
+            prefs.get("mots_cles") or " ".join((profil.get("competences", {}).get("techniques", []))[:3]) or "informatique")
+        try:
+            grounded = await tavily_search(
+                f"meilleures formations certifications en ligne {domaine} {prefs.get('objectif','')} pour se distinguer", 6)
+            sources = "\n".join(
+                f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:180]}"
+                for s in grounded[:6]) if grounded else "(pas de résultat web)"
+            system = ("Tu es conseiller en développement de carrière. Recommande des formations/certifications RÉELLES "
+                      "(Coursera, edX, OpenClassrooms, Google, AWS, Cisco, (ISC)²...) qui aident à se distinguer. "
+                      "Base-toi sur les sources web, garde les URL exactes. JSON uniquement.")
+            prompt = f"""DOMAINE: {domaine}
+PROFIL: compétences={(profil.get('competences', {}).get('techniques', []))[:8]}
+SOURCES WEB:
+{sources}
+Recommande 3 à 5 formations/certifications pour renforcer ce profil et se démarquer.
+JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|diplôme","url":"","duree":"","cout":"gratuit|payant","raison":""}}],"conseil":""}}"""
+            r = await call_groq(system, prompt, temperature=0.2, max_tokens=1300)
+            forms = r.get("formations", [])
+            msg = f"🎓 *Formations pour te distinguer — {_md_clean(domaine)[:40]}*\n━━━━━━━━━━━━━━━━━━\n\n"
+            for i, f in enumerate(forms[:5], 1):
+                titre = _md_clean(f.get("titre", ""))[:60]
+                org = _md_clean(f.get("organisme", ""))
+                url = str(f.get("url", "")).replace("*", "").replace("`", "")
+                cout = _md_clean(f.get("cout", ""))
+                duree = _md_clean(f.get("duree", ""))
+                msg += f"{i}. 📘 *{titre}*\n   🏫 {org}"
+                if duree:
+                    msg += f" · ⏱️ {duree}"
+                if cout:
+                    msg += f" · 💶 {cout}"
+                msg += "\n"
+                if url:
+                    msg += f"   🔗 {url}\n"
+                if f.get("raison"):
+                    msg += f"   💬 {_md_clean(f.get('raison', ''))}\n"
+                msg += "\n"
+            if r.get("conseil"):
+                msg += f"💡 {_md_clean(r['conseil'])}\n\n"
+            if not forms:
+                msg = f"Aucune formation trouvée pour « {_md_clean(domaine)} ». Précise un domaine : /formations data science"
+            else:
+                msg += "🌐 _Vérifie les infos sur les sites officiels._"
+        except Exception as e:
+            logger.error(f"formations: {e}")
+            msg = "😕 La recherche de formations a échoué, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -918,6 +1047,42 @@ async def tavily_search(query: str, max_results: int = 7) -> list:
         logger.error(f"Tavily erreur: {e}")
         return []
 
+# Flux RSS de bourses / opportunités (sources réelles, sans clé API)
+SOURCE_FEEDS = [
+    "https://www.scholars4dev.com/feed/",
+    "https://opportunitydesk.org/feed/",
+    "https://www.opportunitiesforafricans.com/feed/",
+]
+
+async def fetch_rss(url: str) -> list:
+    try:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            r = await client.get(url, headers={"User-Agent": "NexMoveBot/1.0"})
+        if r.status_code != 200:
+            return []
+        root = ET.fromstring(r.content)
+        items = []
+        for it in root.iter("item"):
+            titre = (it.findtext("title") or "").strip()
+            link = (it.findtext("link") or "").strip()
+            desc = re.sub("<[^>]+>", " ", (it.findtext("description") or ""))
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            pub = (it.findtext("pubDate") or "").strip()
+            if titre and link:
+                items.append({"titre": titre, "url": link, "resume": desc, "date": pub})
+        return items[:30]
+    except Exception as e:
+        logger.error(f"RSS {url}: {e}")
+        return []
+
+async def ingest_feeds() -> int:
+    total = 0
+    for url in SOURCE_FEEDS:
+        for it in await fetch_rss(url):
+            if opp_store.add_source(it):
+                total += 1
+    return total
+
 async def run_osint(profil: dict, cible: str = "") -> dict:
     profil = profil or {}
     prefs = profil.get("preferences", {}) or {}
@@ -1028,24 +1193,38 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
 
 @app.post("/api/collect")
 async def collect(_auth: bool = Depends(verify_api_key)):
+    ingested = await ingest_feeds()
     users = session_manager.list_active()
     sem = asyncio.Semaphore(5)
     async def _one(s):
         async with sem:
+            n = 0
+            profil = s.get("profil", {}) or {}
+            prefs = profil.get("preferences", {}) or {}
             try:
-                res = await run_osint(s.get("profil", {}) or {}, "")
-                n = 0
+                res = await run_osint(profil, "")
                 for opp in res.get("opportunites", []):
                     if opp_store.add(s.get("user_id"), opp):
                         n += 1
-                return n
             except Exception as e:
-                logger.error(f"[collect] user={s.get('user_id')}: {e}")
-                return 0
+                logger.error(f"[collect] osint user={s.get('user_id')}: {e}")
+            try:
+                kws = []
+                for key in ("mots_cles", "objectif", "pays_cibles"):
+                    kws += str(prefs.get(key, "")).replace(",", " ").split()
+                kws += (profil.get("competences", {}).get("techniques", []))[:6]
+                for src in opp_store.search_sources(kws):
+                    opp = {"titre": src["titre"], "organisation": "Source vérifiée", "type": "bourse",
+                           "url": src["url"], "raison": (src.get("resume") or "")[:150], "score_composite": 62}
+                    if opp_store.add(s.get("user_id"), opp):
+                        n += 1
+            except Exception as e:
+                logger.error(f"[collect] sources user={s.get('user_id')}: {e}")
+            return n
     counts = await asyncio.gather(*[_one(s) for s in users[:100]])
     total_new = sum(counts)
-    logger.info(f"[collect] users={len(users)} nouvelles={total_new}")
-    return {"ok": True, "users_actifs": len(users), "offres_collectees": total_new}
+    logger.info(f"[collect] users={len(users)} sources_ingerees={ingested} nouvelles={total_new}")
+    return {"ok": True, "users_actifs": len(users), "sources_ingerees": ingested, "offres_collectees": total_new}
 
 @app.post("/api/score")
 async def score(_auth: bool = Depends(verify_api_key)):
