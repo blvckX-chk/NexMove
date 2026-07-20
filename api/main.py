@@ -46,7 +46,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.3.0"
+VERSION         = "2.4.0"
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -255,6 +255,30 @@ class OppStore:
         return int(n)
 
 opp_store = OppStore()
+
+class Cache:
+    def __init__(self, path: str = "data/sessions.db"):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, v TEXT, expires REAL)")
+        con.commit(); con.close()
+    def get(self, key):
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT v,expires FROM cache WHERE k=?", (key,)).fetchone()
+        con.close()
+        if row and row[1] > time.time():
+            try:
+                return json.loads(row[0])
+            except Exception:
+                return None
+        return None
+    def set(self, key, value, ttl: int = 21600):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("INSERT INTO cache(k,v,expires) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, expires=excluded.expires",
+                    (key, json.dumps(value, ensure_ascii=False), time.time() + ttl))
+        con.commit(); con.close()
+
+cache = Cache()
 
 ETAPE_INSTRUCTIONS = {
     "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV en PDF.",
@@ -871,19 +895,25 @@ VISA_DB = {
 async def tavily_search(query: str, max_results: int = 7) -> list:
     if not TAVILY_API_KEY:
         return []
+    ck = "tav:" + hashlib.sha1(f"{query}|{max_results}".encode("utf-8", "ignore")).hexdigest()
+    cached = cache.get(ck)
+    if cached is not None:
+        return cached
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=25.0) as client:
             r = await client.post("https://api.tavily.com/search", json={
                 "api_key": TAVILY_API_KEY,
                 "query": query,
-                "search_depth": "basic",
+                "search_depth": "advanced",
                 "max_results": max_results,
                 "include_answer": False,
             })
         if r.status_code != 200:
             logger.error(f"Tavily {r.status_code}: {r.text[:200]}")
             return []
-        return r.json().get("results", []) or []
+        results = r.json().get("results", []) or []
+        cache.set(ck, results, 21600)
+        return results
     except Exception as e:
         logger.error(f"Tavily erreur: {e}")
         return []
@@ -999,15 +1029,21 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
 @app.post("/api/collect")
 async def collect(_auth: bool = Depends(verify_api_key)):
     users = session_manager.list_active()
-    total_new = 0
-    for s in users[:50]:
-        try:
-            res = await run_osint(s.get("profil", {}) or {}, "")
-            for opp in res.get("opportunites", []):
-                if opp_store.add(s.get("user_id"), opp):
-                    total_new += 1
-        except Exception as e:
-            logger.error(f"[collect] user={s.get('user_id')}: {e}")
+    sem = asyncio.Semaphore(5)
+    async def _one(s):
+        async with sem:
+            try:
+                res = await run_osint(s.get("profil", {}) or {}, "")
+                n = 0
+                for opp in res.get("opportunites", []):
+                    if opp_store.add(s.get("user_id"), opp):
+                        n += 1
+                return n
+            except Exception as e:
+                logger.error(f"[collect] user={s.get('user_id')}: {e}")
+                return 0
+    counts = await asyncio.gather(*[_one(s) for s in users[:100]])
+    total_new = sum(counts)
     logger.info(f"[collect] users={len(users)} nouvelles={total_new}")
     return {"ok": True, "users_actifs": len(users), "offres_collectees": total_new}
 
