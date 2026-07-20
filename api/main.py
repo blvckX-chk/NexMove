@@ -47,7 +47,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.5.0"
+VERSION         = "2.5.1"
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -333,20 +333,17 @@ PREF_QUESTIONS = [
     ("mots_cles", "🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)"),
 ]
 
-AIDE_TXT = ("🧭 *NexMove — ton prochain départ*\n"
-            "_Études · Emploi · Bourses · Mobilité internationale_\n\n"
-            "/start — (re)démarrer et créer ton profil\n"
-            "/tuto — guide d'utilisation pas à pas\n"
-            "/veille — chercher de nouvelles opportunités maintenant\n"
-            "/campusfrance — procédure « Études en France » (bourses, dossier)\n"
-            "/parcours — ton suivi Campus France étape par étape\n"
-            "/dossier <bourse ou programme> — documents requis + CV + projet d'études\n"
-            "/formations <domaine> — formations/certifs pour te distinguer\n"
-            "/postuler <poste ou bourse> — CV + lettre de motivation\n"
-            "/mobilite <pays ou domaine> — analyse mobilité ciblée\n"
-            "/profil — voir ton profil\n"
-            "/status — état de ta veille\n"
-            "/supprimer — effacer mes données")
+AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
+            "🔎 *Trouver des opportunités*\n"
+            "/veille · /mobilite <pays ou domaine>\n\n"
+            "🇫🇷 *Étudier en France*\n"
+            "/campusfrance (procédure) · /parcours (ton suivi étape par étape)\n\n"
+            "📄 *Candidater*\n"
+            "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
+            "/formations <domaine> (te distinguer)\n\n"
+            "📊 *Mon espace*\n"
+            "/profil · /status · /supprimer\n\n"
+            "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
             "*1. Ton profil* — envoie ton *CV en PDF*. Je l'analyse, puis je te pose quelques questions "
