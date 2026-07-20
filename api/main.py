@@ -47,7 +47,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.5.1"
+VERSION         = "2.6.0"
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -80,6 +80,9 @@ class ChatRequest(BaseModel):
     text: str = Field(default="", max_length=4096)
     message_type: str = Field(default="text")
     document_file_id: Optional[str] = None
+    callback_data: str = Field(default="", max_length=100)
+    callback_id: str = Field(default="", max_length=100)
+    message_id: str = Field(default="", max_length=40)
 
     @validator('user_id', 'chat_id')
     def sanitize_ids(cls, v):
@@ -891,19 +894,113 @@ async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
         logger.error(f"sendDocument erreur: {e}")
         return False
 
-async def _send_telegram_message(chat_id, text):
+async def _tg(method, payload):
     if not TELEGRAM_TOKEN:
         return False
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
-            r = await client.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-                data={"chat_id": str(chat_id), "text": (text or "")[:4000], "parse_mode": "Markdown"},
-            )
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            r = await client.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}", json=payload)
+        if r.status_code != 200:
+            logger.error(f"tg {method} {r.status_code}: {r.text[:150]}")
         return r.status_code == 200
     except Exception as e:
-        logger.error(f"sendMessage erreur: {e}")
+        logger.error(f"tg {method}: {e}")
         return False
+
+async def send_message(chat_id, text, keyboard=None):
+    payload = {"chat_id": str(chat_id), "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
+    if keyboard:
+        payload["reply_markup"] = keyboard
+    return await _tg("sendMessage", payload)
+
+async def _send_telegram_message(chat_id, text):
+    return await send_message(chat_id, text)
+
+async def edit_message(chat_id, message_id, text, keyboard=None):
+    try:
+        mid = int(message_id)
+    except Exception:
+        return await send_message(chat_id, text, keyboard)
+    payload = {"chat_id": str(chat_id), "message_id": mid, "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
+    if keyboard:
+        payload["reply_markup"] = keyboard
+    return await _tg("editMessageText", payload)
+
+async def answer_callback(cb_id, text=""):
+    return await _tg("answerCallbackQuery", {"callback_query_id": str(cb_id), "text": text[:180]})
+
+def _btn(text, data):
+    return {"text": text, "callback_data": data}
+
+def _kb(rows):
+    return {"inline_keyboard": rows}
+
+MAIN_MENU = _kb([
+    [_btn("🔎 Trouver", "m:find"), _btn("🇫🇷 Procédures", "m:cf")],
+    [_btn("📄 Candidater", "m:apply"), _btn("🎓 Formations", "act:formations")],
+    [_btn("📊 Mon espace", "m:space"), _btn("❓ Aide", "act:aide")],
+])
+
+def menu_for(session, key):
+    if key == "find":
+        return "🔎 *Trouver des opportunités*", _kb([
+            [_btn("🔔 Lancer ma veille", "act:veille")],
+            [_btn("🌍 Recherche ciblée", "act:mobilite_help")],
+            [_btn("⬅️ Retour", "m:root")],
+        ])
+    if key == "cf":
+        rows = [[_btn("🇫🇷 Campus France (parcours)", "act:parcours")]]
+        try:
+            for (cible, deadline, statut) in (opp_store.list_candidatures(session.get("user_id")) or [])[:5]:
+                rows.append([_btn(("🗂️ " + str(cible))[:38], "act:status")])
+        except Exception:
+            pass
+        rows.append([_btn("➕ Nouvelle candidature", "act:dossier_help")])
+        rows.append([_btn("⬅️ Retour", "m:root")])
+        return "🇫🇷 *Procédures & candidatures*", _kb(rows)
+    if key == "apply":
+        return "📄 *Candidater*", _kb([
+            [_btn("🗂️ Préparer un dossier", "act:dossier_help")],
+            [_btn("✉️ CV + lettre", "act:postuler_help")],
+            [_btn("🎓 Formations", "act:formations")],
+            [_btn("⬅️ Retour", "m:root")],
+        ])
+    if key == "space":
+        return "📊 *Mon espace*", _kb([
+            [_btn("👤 Mon profil", "act:profil")],
+            [_btn("📊 Mon suivi", "act:status")],
+            [_btn("🗑️ Effacer mes données", "act:supprimer")],
+            [_btn("⬅️ Retour", "m:root")],
+        ])
+    return "🧭 *NexMove* — que veux-tu faire ?", MAIN_MENU
+
+_ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "profil": "/profil",
+            "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
+            "formations": "/formations", "supprimer": "/supprimer"}
+_ACT_HELP = {
+    "mobilite_help": "🌍 Tape : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
+    "dossier_help": "🗂️ Tape : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
+    "postuler_help": "✉️ Tape : /postuler <poste ou bourse>\nEx : /postuler Analyste SOC chez Orange",
+}
+
+async def handle_callback(session, data, chat_id, message_id, cb_id):
+    await answer_callback(cb_id)
+    if data.startswith("m:"):
+        title, kb = menu_for(session, data[2:])
+        await edit_message(chat_id, message_id, title, kb)
+        return session
+    if data.startswith("act:"):
+        act = data[4:]
+        if act in _ACT_HELP:
+            await send_message(chat_id, _ACT_HELP[act], MAIN_MENU)
+            return session
+        cmd = _ACT_CMD.get(act)
+        if cmd:
+            msg, session = await process_text_message(session, cmd)
+            await send_message(chat_id, msg, MAIN_MENU)
+            return session
+    await send_message(chat_id, "🧭 Menu :", MAIN_MENU)
+    return session
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})
@@ -928,15 +1025,24 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
 @app.post("/api/chat")
 async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     uid = request.user_id
-    logger.info(f"[chat] user={uid} text={request.text[:50]!r}")
-    if not check_rate_limit(uid):
-        return {"message": "⚠️ Trop de messages. Attends 1 minute.", "chat_id": request.chat_id, "session_row": {}}
     session = session_manager.get(uid) or session_manager.create_default(uid, request.chat_id, request.username)
     session["chat_id"] = request.chat_id
     session["username"] = request.username
+    # Clic sur un bouton
+    if request.callback_data:
+        session = await handle_callback(session, request.callback_data, request.chat_id, request.message_id, request.callback_id)
+        session_manager.set(uid, session)
+        return {"ok": True, "callback": request.callback_data}
+    # Message texte
+    if not check_rate_limit(uid):
+        await send_message(request.chat_id, "⚠️ Trop de messages. Attends 1 minute.")
+        return {"ok": True}
+    logger.info(f"[chat] user={uid} text={request.text[:50]!r}")
     message, session = await process_text_message(session, request.text)
     session_manager.set(uid, session)
-    return {"message": message, "chat_id": request.chat_id, "session_row": session_to_sheets_row(session), "etape": session["etape"], "onboarding_complete": session["onboarding_complete"]}
+    kb = MAIN_MENU if session.get("onboarding_complete") else None
+    await send_message(request.chat_id, message, kb)
+    return {"ok": True, "sent": True, "etape": session["etape"]}
 
 @app.post("/api/chat-cv")
 async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), chat_id: str = Form("0"), username: str = Form("utilisateur"), _auth: bool = Depends(verify_api_key)):
@@ -949,7 +1055,9 @@ async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), 
     cv_text = extract_text_pdf(pdf_bytes)
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
     if not cv_text or len(cv_text.strip()) < 50:
-        return {"success": False, "message": "❌ PDF vide ou scanné sans OCR.\n\nEnvoie un PDF avec texte sélectionnable (généré depuis Word ou LibreOffice).", "chat_id": chat_id, "session_row": session_to_sheets_row(session)}
+        vide = "❌ PDF vide ou scanné sans OCR.\n\nEnvoie un PDF avec texte sélectionnable (généré depuis Word ou LibreOffice)."
+        await send_message(chat_id, vide)
+        return {"ok": True, "success": False, "message": vide, "chat_id": chat_id}
     system = "Tu es expert en analyse de CV. Extrais toutes les informations. JSON uniquement."
     prompt = f"""Analyse ce CV:
 {{"identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
@@ -968,7 +1076,8 @@ CV: {cv_text[:6000]}"""
     session["historique"] = historique[-30:]
     session_manager.set(user_id, session)
     logger.info(f"[chat-cv] OK — {nom} → CV_RECU")
-    return {"success": True, "message": message, "chat_id": chat_id, "profil": profil, "session_row": session_to_sheets_row(session), "parsed_at": datetime.now(timezone.utc).isoformat()}
+    await send_message(chat_id, message)
+    return {"ok": True, "success": True, "message": message, "chat_id": chat_id, "parsed_at": datetime.now(timezone.utc).isoformat()}
 
 @app.post("/api/parse-cv")
 async def parse_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), _auth: bool = Depends(verify_api_key)):
