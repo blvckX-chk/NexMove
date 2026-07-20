@@ -46,6 +46,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
+VERSION         = "2.3.0"
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -68,7 +69,7 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=401, detail="Clé API invalide")
     return True
 
-app = FastAPI(title="NexMove API", version="2.1.0")
+app = FastAPI(title="NexMove API", version=VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 class ChatRequest(BaseModel):
@@ -1080,8 +1081,8 @@ async def set_session(user_id: str, session_data: dict, _auth: bool = Depends(ve
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "2.0.0", "service": "forge-nex-api", "groq_configured": bool(GROQ_API_KEY), "api_key_configured": bool(FORGE_NEX_API_KEY), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "groq_configured": bool(GROQ_API_KEY), "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():
-    return {"service": "NexMove API v2.1", "endpoints": ["POST /api/chat", "POST /api/chat-cv", "POST /api/parse-cv", "POST /api/generate-documents", "POST /api/osint", "POST /api/collect", "POST /api/score", "POST /api/notify", "GET /api/session/{user_id}", "GET /health"]}
+    return {"service": f"NexMove API v{VERSION}", "endpoints": ["POST /api/chat", "POST /api/chat-cv", "POST /api/parse-cv", "POST /api/generate-documents", "POST /api/osint", "POST /api/collect", "POST /api/score", "POST /api/notify", "GET /api/session/{user_id}", "GET /health"]}
