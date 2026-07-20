@@ -5,7 +5,7 @@ from typing import Optional, Any
 
 import fitz
 import httpx
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Security, Depends, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Security, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field, validator
@@ -47,7 +47,12 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.6.1"
+VERSION         = "2.7.0"
+WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
+WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
+MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
+MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -612,8 +617,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
-                ok_cv = await _send_telegram_document(chat_id, f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
-                ok_lm = await _send_telegram_document(chat_id, f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation — {cible_desc[:60]}")
+                ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
+                ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation — {cible_desc[:60]}")
                 if ok_cv and ok_lm:
                     msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
@@ -673,8 +678,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 lm_buf = build_letter_pdf(profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
                 nom = _slug(ident.get("nom", "candidat"))
                 chat_id = session.get("chat_id")
-                await _send_telegram_document(chat_id, f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
-                await _send_telegram_document(chat_id, f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
+                await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
+                await deliver_file(session,f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
                 opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""), r.get("deadline_iso", ""))
                 msg += ("📄 CV + lettre/projet d'études envoyés. Dossier ajouté à ton suivi (/status).\n"
                         "⚠️ _Vérifie les exigences exactes sur le site officiel._")
@@ -936,72 +941,310 @@ def _btn(text, data):
 def _kb(rows):
     return {"inline_keyboard": rows}
 
-MAIN_MENU = _kb([
-    [_btn("🔎 Trouver", "m:find"), _btn("🇫🇷 Procédures", "m:cf")],
-    [_btn("📄 Candidater", "m:apply"), _btn("🎓 Formations", "act:formations")],
-    [_btn("📊 Mon espace", "m:space"), _btn("❓ Aide", "act:aide")],
-])
-
-def menu_for(session, key):
+def get_menu(session, key):
     if key == "find":
-        return "🔎 *Trouver des opportunités*", _kb([
-            [_btn("🔔 Lancer ma veille", "act:veille")],
-            [_btn("🌍 Recherche ciblée", "act:mobilite_help")],
-            [_btn("⬅️ Retour", "m:root")],
-        ])
+        return ("🔎 *Trouver des opportunités*", [
+            ("🔔 Ma veille", "act:veille"),
+            ("🌍 Recherche ciblée", "act:mobilite_help"),
+            ("⬅️ Retour", "m:root")])
     if key == "cf":
-        rows = [[_btn("🇫🇷 Campus France — Études en France", "act:parcours")]]
+        opts = [("🇫🇷 Campus France", "act:parcours")]
         try:
-            for (cible, deadline, statut) in (opp_store.list_candidatures(session.get("user_id")) or [])[:5]:
-                rows.append([_btn(("🗂️ " + str(cible))[:38], "act:status")])
+            for (cible, dl, st) in (opp_store.list_candidatures(session.get("user_id")) or [])[:4]:
+                opts.append((("🗂️ " + str(cible))[:20], "act:status"))
         except Exception:
             pass
-        rows.append([_btn("➕ Nouvelle procédure de candidature", "act:dossier_help")])
-        rows.append([_btn("⬅️ Retour", "m:root")])
-        return ("🗂️ *Tes procédures de candidature*\nCampus France, bourses, emplois… chaque candidature est suivie ici.", _kb(rows))
+        opts.append(("➕ Nouvelle candid.", "act:dossier_help"))
+        opts.append(("⬅️ Retour", "m:root"))
+        return ("🗂️ *Tes procédures de candidature*", opts)
     if key == "apply":
-        return "📄 *Candidater*", _kb([
-            [_btn("🗂️ Préparer un dossier", "act:dossier_help")],
-            [_btn("✉️ CV + lettre", "act:postuler_help")],
-            [_btn("🎓 Formations", "act:formations")],
-            [_btn("⬅️ Retour", "m:root")],
-        ])
+        return ("📄 *Candidater*", [
+            ("🗂️ Dossier complet", "act:dossier_help"),
+            ("✉️ CV + lettre", "act:postuler_help"),
+            ("🎓 Formations", "act:formations"),
+            ("⬅️ Retour", "m:root")])
     if key == "space":
-        return "📊 *Mon espace*", _kb([
-            [_btn("👤 Mon profil", "act:profil")],
-            [_btn("📊 Mon suivi", "act:status")],
-            [_btn("🗑️ Effacer mes données", "act:supprimer")],
-            [_btn("⬅️ Retour", "m:root")],
-        ])
-    return "🧭 *NexMove* — que veux-tu faire ?", MAIN_MENU
+        return ("📊 *Mon espace*", [
+            ("👤 Mon profil", "act:profil"),
+            ("📊 Mon suivi", "act:status"),
+            ("🗑️ Effacer données", "act:supprimer"),
+            ("⬅️ Retour", "m:root")])
+    return ("🧭 *NexMove* — que veux-tu faire ?", [
+        ("🔎 Trouver", "m:find"), ("🇫🇷 Procédures", "m:cf"),
+        ("📄 Candidater", "m:apply"), ("🎓 Formations", "act:formations"),
+        ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
+
+def _tg_keyboard(options):
+    rows, cur = [], []
+    for (lbl, aid) in options:
+        cur.append(_btn(lbl, aid))
+        if len(cur) == 2:
+            rows.append(cur); cur = []
+    if cur:
+        rows.append(cur)
+    return _kb(rows)
+
+# ---------- WhatsApp Cloud API ----------
+async def wa_send(payload):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as c:
+            r = await c.post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages",
+                             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, json=payload)
+        if r.status_code != 200:
+            logger.error(f"wa {r.status_code}: {r.text[:200]}")
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"wa send: {e}")
+        return False
+
+async def wa_text(to, text):
+    return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "text",
+                          "text": {"body": (text or "")[:4000], "preview_url": True}})
+
+async def wa_menu(to, title, options):
+    opts = [(l[:20], a) for (l, a) in options][:10]
+    if len(opts) <= 3:
+        inter = {"type": "button", "body": {"text": (title or "Menu")[:1000]},
+                 "action": {"buttons": [{"type": "reply", "reply": {"id": a[:200], "title": l}} for (l, a) in opts]}}
+    else:
+        inter = {"type": "list", "body": {"text": (title or "Menu")[:1000]},
+                 "action": {"button": "Choisir", "sections": [{"title": "Options",
+                            "rows": [{"id": a[:200], "title": l} for (l, a) in opts]}]}}
+    return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "interactive", "interactive": inter})
+
+async def wa_document(to, filename, data, caption=""):
+    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as c:
+            up = await c.post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/media",
+                              headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+                              data={"messaging_product": "whatsapp", "type": "application/pdf"},
+                              files={"file": (filename, data, "application/pdf")})
+            if up.status_code != 200:
+                logger.error(f"wa media {up.status_code}: {up.text[:200]}")
+                return False
+            mid = up.json().get("id")
+        return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "document",
+                              "document": {"id": mid, "filename": filename, "caption": (caption or "")[:900]}})
+    except Exception as e:
+        logger.error(f"wa doc: {e}")
+        return False
+
+async def wa_get_media(media_id):
+    if not WHATSAPP_TOKEN:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as c:
+            meta = await c.get(f"https://graph.facebook.com/v21.0/{media_id}",
+                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+            url = meta.json().get("url")
+            if not url:
+                return None
+            r = await c.get(url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+        return r.content if r.status_code == 200 else None
+    except Exception as e:
+        logger.error(f"wa get_media: {e}")
+        return None
+
+# ---------- Messenger (Facebook Page) ----------
+async def fb_send(payload):
+    if not MESSENGER_TOKEN:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as c:
+            r = await c.post("https://graph.facebook.com/v21.0/me/messages",
+                             params={"access_token": MESSENGER_TOKEN}, json=payload)
+        if r.status_code != 200:
+            logger.error(f"fb {r.status_code}: {r.text[:200]}")
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"fb send: {e}")
+        return False
+
+async def fb_text(to, text):
+    return await fb_send({"recipient": {"id": str(to)}, "message": {"text": (text or "")[:1900]}})
+
+async def fb_menu(to, text, options):
+    qrs = [{"content_type": "text", "title": l[:20], "payload": a[:900]} for (l, a) in options[:13]]
+    return await fb_send({"recipient": {"id": str(to)}, "message": {"text": (text or "Menu")[:640], "quick_replies": qrs}})
+
+async def fb_document(to, filename, data, caption=""):
+    if not MESSENGER_TOKEN:
+        return False
+    try:
+        if caption:
+            await fb_text(to, caption)
+        async with httpx.AsyncClient(timeout=45.0) as c:
+            r = await c.post("https://graph.facebook.com/v21.0/me/messages", params={"access_token": MESSENGER_TOKEN},
+                             data={"recipient": json.dumps({"id": str(to)}),
+                                   "message": json.dumps({"attachment": {"type": "file", "payload": {"is_reusable": False}}})},
+                             files={"filedata": (filename, data, "application/pdf")})
+        return r.status_code == 200
+    except Exception as e:
+        logger.error(f"fb doc: {e}")
+        return False
+
+# ---------- Couche canal (dispatch) ----------
+async def deliver_menu(session, title, options):
+    ch = session.get("channel", "telegram"); to = session.get("chat_id")
+    if ch == "whatsapp":
+        return await wa_menu(to, title, options)
+    if ch == "messenger":
+        return await fb_menu(to, title, options)
+    return await send_message(to, title, _tg_keyboard(options))
+
+async def deliver_text(session, text, with_menu=False):
+    ch = session.get("channel", "telegram"); to = session.get("chat_id")
+    if ch == "whatsapp":
+        await wa_text(to, text)
+        if with_menu:
+            await wa_menu(to, "👉 Que veux-tu faire ?", get_menu(session, "root")[1])
+        return True
+    if ch == "messenger":
+        if with_menu:
+            return await fb_menu(to, text, get_menu(session, "root")[1])
+        return await fb_text(to, text)
+    kb = _tg_keyboard(get_menu(session, "root")[1]) if with_menu else None
+    return await send_message(to, text, kb)
+
+async def deliver_file(session, filename, data, caption=""):
+    ch = session.get("channel", "telegram"); to = session.get("chat_id")
+    if ch == "whatsapp":
+        return await wa_document(to, filename, data, caption)
+    if ch == "messenger":
+        return await fb_document(to, filename, data, caption)
+    return await _send_telegram_document(to, filename, data, caption)
 
 _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "profil": "/profil",
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
             "formations": "/formations", "supprimer": "/supprimer"}
 _ACT_HELP = {
-    "mobilite_help": "🌍 Tape : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
-    "dossier_help": "🗂️ Tape : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
-    "postuler_help": "✉️ Tape : /postuler <poste ou bourse>\nEx : /postuler Analyste SOC chez Orange",
+    "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
+    "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
+    "postuler_help": "✉️ Écris : /postuler <poste ou bourse>\nEx : /postuler Analyste SOC chez Orange",
 }
 
-async def handle_callback(session, data, chat_id, message_id, cb_id):
-    await answer_callback(cb_id)
+async def handle_action(session, data):
     if data.startswith("m:"):
-        title, kb = menu_for(session, data[2:])
-        await edit_message(chat_id, message_id, title, kb)
+        title, opts = get_menu(session, data[2:])
+        await deliver_menu(session, title, opts)
         return session
     if data.startswith("act:"):
         act = data[4:]
         if act in _ACT_HELP:
-            await send_message(chat_id, _ACT_HELP[act], MAIN_MENU)
+            await deliver_text(session, _ACT_HELP[act], with_menu=True)
             return session
         cmd = _ACT_CMD.get(act)
         if cmd:
             msg, session = await process_text_message(session, cmd)
-            await send_message(chat_id, msg, MAIN_MENU)
+            await deliver_text(session, msg, with_menu=True)
             return session
-    await send_message(chat_id, "🧭 Menu :", MAIN_MENU)
+    title, opts = get_menu(session, "root")
+    await deliver_menu(session, title, opts)
     return session
+
+async def process_cv(session, pdf_bytes, filename="cv.pdf"):
+    if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
+        await deliver_text(session, "❌ PDF illisible ou trop lourd (max 20 Mo).")
+        return
+    try:
+        cv_text = extract_text_pdf(pdf_bytes)
+    except Exception:
+        cv_text = ""
+    if not cv_text or len(cv_text.strip()) < 50:
+        await deliver_text(session, "❌ PDF vide ou scanné sans OCR.\n\nEnvoie un PDF avec texte sélectionnable (Word/LibreOffice).")
+        return
+    system = "Tu es expert en analyse de CV. Extrais toutes les informations. JSON uniquement."
+    prompt = f"""Analyse ce CV:
+{{"identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
+CV: {cv_text[:6000]}"""
+    profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+    nom = profil.get("identite", {}).get("nom", "N/A")
+    diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
+    skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
+    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formation :* {diplome}\n💻 *Compétences :* {', '.join(skills)}\n\nCes informations sont-elles correctes ? Réponds *Oui* pour continuer."
+    session["etape"] = "CV_RECU"
+    session["profil"] = profil
+    session["cv_parsed"] = True
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _push(session, "assistant", message)
+    session_manager.set(session.get("user_id"), session)
+    logger.info(f"[cv] {session.get('channel')} {nom} -> CV_RECU")
+    await deliver_text(session, message)
+
+def _extract_incoming(channel, raw):
+    text, callback, doc = None, None, None
+    if channel == "whatsapp":
+        t = raw.get("type")
+        if t == "text":
+            text = raw.get("text", {}).get("body", "")
+        elif t == "interactive":
+            inter = raw.get("interactive", {})
+            br = inter.get("button_reply") or inter.get("list_reply") or {}
+            callback = br.get("id")
+        elif t == "document":
+            d = raw.get("document", {})
+            doc = {"id": d.get("id"), "filename": d.get("filename", "cv.pdf")}
+        elif t == "button":
+            callback = raw.get("button", {}).get("payload")
+    elif channel == "messenger":
+        pb = raw.get("postback"); msg = raw.get("message")
+        if pb:
+            callback = pb.get("payload")
+        elif msg:
+            if msg.get("quick_reply"):
+                callback = msg["quick_reply"].get("payload")
+            elif msg.get("attachments"):
+                for a in msg["attachments"]:
+                    if a.get("type") == "file":
+                        doc = {"url": a.get("payload", {}).get("url"), "filename": "cv.pdf"}
+                        break
+                if not doc:
+                    text = ""
+            elif "text" in msg:
+                text = msg.get("text", "")
+    return text, callback, doc
+
+async def _download_doc(channel, doc):
+    if channel == "whatsapp":
+        return await wa_get_media(doc.get("id"))
+    if channel == "messenger":
+        url = doc.get("url")
+        if not url:
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as c:
+                r = await c.get(url)
+            return r.content if r.status_code == 200 else None
+        except Exception:
+            return None
+    return None
+
+async def route_incoming(channel, user_id, chat_id, username, raw):
+    session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
+    session["channel"] = channel
+    session["chat_id"] = chat_id
+    if username and username != "utilisateur":
+        session["username"] = username
+    text, callback, doc = _extract_incoming(channel, raw)
+    if doc:
+        pdf = await _download_doc(channel, doc)
+        await process_cv(session, pdf, doc.get("filename", "cv.pdf"))
+        return
+    if callback:
+        session = await handle_action(session, callback)
+        session_manager.set(user_id, session)
+        return
+    if text is not None:
+        if not check_rate_limit(user_id):
+            await deliver_text(session, "⚠️ Trop de messages. Attends une minute.")
+            return
+        msg, session = await process_text_message(session, text)
+        session_manager.set(user_id, session)
+        await deliver_text(session, msg, with_menu=session.get("onboarding_complete"))
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})
@@ -1027,58 +1270,36 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
 async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     uid = request.user_id
     session = session_manager.get(uid) or session_manager.create_default(uid, request.chat_id, request.username)
+    session["channel"] = "telegram"
     session["chat_id"] = request.chat_id
     session["username"] = request.username
-    # Clic sur un bouton
     if request.callback_data:
-        session = await handle_callback(session, request.callback_data, request.chat_id, request.message_id, request.callback_id)
+        if request.callback_id:
+            await answer_callback(request.callback_id)
+        session = await handle_action(session, request.callback_data)
         session_manager.set(uid, session)
-        return {"ok": True, "callback": request.callback_data}
-    # Message texte
-    if not check_rate_limit(uid):
-        await send_message(request.chat_id, "⚠️ Trop de messages. Attends 1 minute.")
         return {"ok": True}
-    logger.info(f"[chat] user={uid} text={request.text[:50]!r}")
+    if not check_rate_limit(uid):
+        await deliver_text(session, "⚠️ Trop de messages. Attends 1 minute.")
+        return {"ok": True}
+    logger.info(f"[chat] tg user={uid} text={request.text[:50]!r}")
     message, session = await process_text_message(session, request.text)
     session_manager.set(uid, session)
-    kb = MAIN_MENU if session.get("onboarding_complete") else None
-    await send_message(request.chat_id, message, kb)
-    return {"ok": True, "sent": True, "etape": session["etape"]}
+    await deliver_text(session, message, with_menu=session.get("onboarding_complete"))
+    return {"ok": True}
 
 @app.post("/api/chat-cv")
 async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), chat_id: str = Form("0"), username: str = Form("utilisateur"), _auth: bool = Depends(verify_api_key)):
-    logger.info(f"[chat-cv] user={user_id} file={file.filename}")
-    if not (file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")):
-        raise HTTPException(415, "PDF requis.")
-    pdf_bytes = await file.read()
-    if len(pdf_bytes) > 20 * 1024 * 1024:
-        raise HTTPException(413, "Max 20MB.")
-    cv_text = extract_text_pdf(pdf_bytes)
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
-    if not cv_text or len(cv_text.strip()) < 50:
-        vide = "❌ PDF vide ou scanné sans OCR.\n\nEnvoie un PDF avec texte sélectionnable (généré depuis Word ou LibreOffice)."
-        await send_message(chat_id, vide)
-        return {"ok": True, "success": False, "message": vide, "chat_id": chat_id}
-    system = "Tu es expert en analyse de CV. Extrais toutes les informations. JSON uniquement."
-    prompt = f"""Analyse ce CV:
-{{"identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
-CV: {cv_text[:6000]}"""
-    profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
-    nom = profil.get("identite", {}).get("nom", "N/A")
-    diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
-    skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
-    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formation :* {diplome}\n💻 *Compétences :* {', '.join(skills)}\n\nCes informations sont-elles correctes ? Réponds *Oui* pour continuer."
-    session["etape"] = "CV_RECU"
-    session["profil"] = profil
-    session["cv_parsed"] = True
-    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
-    historique = session.get("historique", [])
-    historique.append({"role": "assistant", "content": message, "ts": datetime.now(timezone.utc).isoformat()})
-    session["historique"] = historique[-30:]
-    session_manager.set(user_id, session)
-    logger.info(f"[chat-cv] OK — {nom} → CV_RECU")
-    await send_message(chat_id, message)
-    return {"ok": True, "success": True, "message": message, "chat_id": chat_id, "parsed_at": datetime.now(timezone.utc).isoformat()}
+    session["channel"] = "telegram"
+    session["chat_id"] = chat_id
+    session["username"] = username
+    if not (file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")):
+        await deliver_text(session, "❌ Envoie ton CV en PDF.")
+        return {"ok": True}
+    pdf_bytes = await file.read()
+    await process_cv(session, pdf_bytes, file.filename or "cv.pdf")
+    return {"ok": True}
 
 @app.post("/api/parse-cv")
 async def parse_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), _auth: bool = Depends(verify_api_key)):
@@ -1381,7 +1602,7 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         msg = ("🔔 *Nouvelles opportunités pour toi*\n━━━━━━━━━━━━━━━━━━\n\n"
                + "\n\n".join(lignes)
                + "\n\n_Utilise /postuler <titre> pour générer CV + lettre._")
-        if await _send_telegram_message(chat_id, msg):
+        if await deliver_text(s, msg):
             opp_store.mark_notified(ids)
             notified += 1
     # rappels de deadline (J-14 / J-7 / J-3 / J-1)
@@ -1404,7 +1625,7 @@ async def notify(_auth: bool = Depends(verify_api_key)):
             continue
         rmsg = (f"⏰ *Rappel deadline — J-{days}*\n🗂️ {_md_clean(cible)[:70]}\n📅 {diso}\n\n"
                 "Finalise ton dossier ! /dossier pour régénérer, /status pour suivre.")
-        if await _send_telegram_message(chat2, rmsg):
+        if s2 and await deliver_text(s2, rmsg):
             opp_store.mark_reminder(cid, applicable)
             rappels += 1
     logger.info(f"[notify] users_notifies={notified} rappels={rappels}")
@@ -1422,9 +1643,52 @@ async def set_session(user_id: str, session_data: dict, _auth: bool = Depends(ve
     session_manager.set(user_id, session_data)
     return {"ok": True}
 
+@app.get("/webhook/whatsapp")
+async def wa_verify(request: Request):
+    p = request.query_params
+    if p.get("hub.mode") == "subscribe" and p.get("hub.verify_token") == WHATSAPP_VERIFY_TOKEN:
+        return Response(content=p.get("hub.challenge", ""), media_type="text/plain")
+    raise HTTPException(403, "verify failed")
+
+@app.post("/webhook/whatsapp")
+async def wa_webhook(request: Request):
+    try:
+        body = await request.json()
+        for entry in body.get("entry", []):
+            for ch in entry.get("changes", []):
+                val = ch.get("value", {})
+                names = {c.get("wa_id"): (c.get("profile", {}) or {}).get("name", "utilisateur") for c in val.get("contacts", [])}
+                for m in val.get("messages", []):
+                    frm = m.get("from")
+                    if frm:
+                        await route_incoming("whatsapp", frm, frm, names.get(frm, "utilisateur"), m)
+    except Exception as e:
+        logger.error(f"wa webhook: {e}")
+    return {"ok": True}
+
+@app.get("/webhook/messenger")
+async def fb_verify(request: Request):
+    p = request.query_params
+    if p.get("hub.mode") == "subscribe" and p.get("hub.verify_token") == MESSENGER_VERIFY_TOKEN:
+        return Response(content=p.get("hub.challenge", ""), media_type="text/plain")
+    raise HTTPException(403, "verify failed")
+
+@app.post("/webhook/messenger")
+async def fb_webhook(request: Request):
+    try:
+        body = await request.json()
+        for entry in body.get("entry", []):
+            for ev in entry.get("messaging", []):
+                psid = (ev.get("sender", {}) or {}).get("id")
+                if psid:
+                    await route_incoming("messenger", psid, psid, "utilisateur", ev)
+    except Exception as e:
+        logger.error(f"fb webhook: {e}")
+    return {"ok": True}
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "groq_configured": bool(GROQ_API_KEY), "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "groq_configured": bool(GROQ_API_KEY), "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():
