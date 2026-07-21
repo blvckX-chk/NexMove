@@ -1,0 +1,18 @@
+# forge-nex-api — déploiement durable
+#   cd ~/infra/forge-nex-api && docker compose up -d --build
+#
+# L'image embarque main.py (COPY dans le Dockerfile) → plus de docker cp.
+# Le volume ./data conserve sessions.db (et tout état) entre les rebuilds.
+# Les variables (dont TELEGRAM_TOKEN) viennent de .env.
+services:
+  forge-nex-api:
+    build: .
+    image: forge-nex-api:latest
+    container_name: forge-nex-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data

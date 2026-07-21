@@ -1,31 +1,46 @@
 # NexMove
 
-Agent IA d'automatisation de recherche d'emploi, de bourses et de mobilité
-internationale, piloté via **Telegram**, avec scoring LLM des opportunités et
-génération automatique de documents.
+**Agent IA de mobilité internationale sur messageries** — études, emploi, bourses, fellowships.
+Grounding web réel (Tavily), scoring LLM (Groq), génération de documents (CV + lettre/projet d'études)
+et veille proactive. Multi-canal : **Telegram** (en production), **WhatsApp** & **Messenger** (code prêt).
 
-## Architecture (v4)
-
-n8n sert de **couche de transport** ; toute la logique métier vit dans **FastAPI**.
+## Architecture (v2.7)
 
 ```
-Telegram → n8n (webhook) → FastAPI → n8n → Telegram
-                                  └── Google Sheets (persistance)
+Utilisateur ─(Telegram / WhatsApp / Messenger)─▶ FastAPI (toute la logique)
+                                                   ├─ SQLite (sessions, offres, candidatures, cache)
+                                                   ├─ Tavily (recherche web réelle)
+                                                   └─ Groq LLM (analyse, scoring, rédaction)
+n8n : WF1 (transport Telegram) · WF0 (veille 24 h)
 ```
 
-- **FastAPI** (port 8000) — endpoints `/api/chat`, `/api/chat-cv`, `/api/parse-cv`,
-  `/api/generate-documents`, `/api/osint`, `/api/session/{id}`, `/health`.
-  Auth par header custom `X-Forge-Nex-Key`.
-- **n8n** — WF0 (orchestrateur, scheduler 24 h), WF1 (onboarding Telegram),
-  WF5 (OSINT mobilité). Voir `workflows/`.
-- **Google Sheets** — classeur « NexMove Database » (Users, Sessions, Offres, …).
+Toute la logique vit dans `api/main.py` ; une **couche canal** (`deliver_text/menu/file`) route vers
+Telegram / WhatsApp / Messenger. Les canaux sont **indépendants** et partagent les mêmes fonctions.
 
-## Correctif webhook Telegram
+## Commandes
 
-Le problème `{"message":"Provided secret is not valid"}` (URL publique éphémère du
-tunnel + `setWebhook` manuels qui cassent le secret) est traité dans
-**[README-webhook-fix.md](./README-webhook-fix.md)** :
+`/start` · `/tuto` · `/veille` · `/mobilite <pays/domaine>` · `/campusfrance` · `/parcours` · `/etape` ·
+`/dossier <cible>` · `/postuler <cible>` · `/formations <domaine>` · `/profil` · `/status` · `/supprimer`
+(menu à boutons : Trouver · Procédures · Candidater · Formations · Mon espace · Aide).
 
-- cause racine et procédure de récupération ;
-- kit URL fixe (`infra/` : tunnel Cloudflare nommé, variables n8n) ;
-- workflows corrigés (`workflows/`).
+## Fonctionnalités clés
+- Onboarding déterministe (CV + 8 critères d'éligibilité).
+- **Veille** : offres réelles (RSS + Tavily), scoring, notifications proactives, rappels de deadline J-14/7/3/1.
+- **Campus France** : procédure + suivi en 8 étapes jusqu'au départ.
+- **Dossiers** : documents requis + CV adapté + lettre/projet d'études (PDF), avec suivi.
+- Qualité : liens fiables (par index), profil complet (reconversions), anti-offres expirées, formations gratuites d'abord.
+
+## Déploiement
+```bash
+cd api/          # sur le VPS : ~/infra/forge-nex-api/
+cp .env.example .env   # GROQ_API_KEY, TELEGRAM_TOKEN, TAVILY_API_KEY, GOOGLE_SHEET_ID, WHATSAPP_*/MESSENGER_*...
+docker compose up -d --build
+curl -s http://localhost:8000/health   # affiche version + flags *_configured
+```
+URL publique fixe via ngrok (webhooks + Telegram). Voir `README-webhook-fix.md`.
+
+## Documentation
+- **[docs/SPECIFICATIONS.md](docs/SPECIFICATIONS.md)** — spécifications complètes (archi, canaux, données, endpoints, roadmap).
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) — journal des évolutions.
+- [docs/roadmap-mobilite.md](docs/roadmap-mobilite.md) — analyse experte & roadmap mobilité.
+- [README-webhook-fix.md](README-webhook-fix.md) — URL fixe & correctif webhook.
