@@ -1,48 +1,46 @@
 # NexMove
 
-**Agent IA de mobilité internationale sur Telegram** — ton prochain départ : études, emploi, bourses et fellowships.
-Scoring LLM des opportunités (grounding web réel) et génération automatique de documents (CV + lettre de motivation).
+**Agent IA de mobilité internationale sur messageries** — études, emploi, bourses, fellowships.
+Grounding web réel (Tavily), scoring LLM (Groq), génération de documents (CV + lettre/projet d'études)
+et veille proactive. Multi-canal : **Telegram** (en production), **WhatsApp** & **Messenger** (code prêt).
 
-## Architecture (v2.1)
-
-n8n sert de **couche de transport** ; toute la logique vit dans **FastAPI**.
+## Architecture (v2.7)
 
 ```
-Telegram → n8n (WF1) → FastAPI → n8n → Telegram
-                          ├── SQLite (sessions + offres)
-                          ├── Tavily (grounding web réel)
-                          └── Groq LLM (analyse & scoring)
-WF0 (24h) → /api/collect → /api/score → /api/notify   (veille proactive)
+Utilisateur ─(Telegram / WhatsApp / Messenger)─▶ FastAPI (toute la logique)
+                                                   ├─ SQLite (sessions, offres, candidatures, cache)
+                                                   ├─ Tavily (recherche web réelle)
+                                                   └─ Groq LLM (analyse, scoring, rédaction)
+n8n : WF1 (transport Telegram) · WF0 (veille 24 h)
 ```
 
-- **FastAPI** (`api/main.py`, port 8000) — endpoints `/api/chat`, `/api/chat-cv`, `/api/parse-cv`,
-  `/api/generate-documents`, `/api/osint`, `/api/collect`, `/api/score`, `/api/notify`, `/api/session`, `/health`.
-- **n8n** — WF1 (onboarding + toutes les commandes), WF0 (orchestrateur 24 h). *(WF5 déprécié : `/mobilite` est
-  géré dans FastAPI.)*
-- **Déploiement** — `api/docker-compose.yml` (image + `.env` + volume `./data`).
+Toute la logique vit dans `api/main.py` ; une **couche canal** (`deliver_text/menu/file`) route vers
+Telegram / WhatsApp / Messenger. Les canaux sont **indépendants** et partagent les mêmes fonctions.
 
-## Commandes du bot
+## Commandes
 
-| Commande | Rôle |
-|---|---|
-| `/start` | Démarrer / recommencer + créer le profil (envoi du CV) |
-| `/tuto` | Guide d'utilisation pas à pas |
-| `/veille` | Chercher de nouvelles opportunités maintenant |
-| `/campusfrance` | Procédure « Études en France » (étapes, bourses, documents) |
-| `/postuler <cible>` | Générer CV adapté + lettre de motivation (PDF) |
-| `/mobilite <pays/domaine>` | Analyse mobilité ciblée |
-| `/profil` · `/status` · `/supprimer` | Profil · veille · effacement (RGPD) |
+`/start` · `/tuto` · `/veille` · `/mobilite <pays/domaine>` · `/campusfrance` · `/parcours` · `/etape` ·
+`/dossier <cible>` · `/postuler <cible>` · `/formations <domaine>` · `/profil` · `/status` · `/supprimer`
+(menu à boutons : Trouver · Procédures · Candidater · Formations · Mon espace · Aide).
+
+## Fonctionnalités clés
+- Onboarding déterministe (CV + 8 critères d'éligibilité).
+- **Veille** : offres réelles (RSS + Tavily), scoring, notifications proactives, rappels de deadline J-14/7/3/1.
+- **Campus France** : procédure + suivi en 8 étapes jusqu'au départ.
+- **Dossiers** : documents requis + CV adapté + lettre/projet d'études (PDF), avec suivi.
+- Qualité : liens fiables (par index), profil complet (reconversions), anti-offres expirées, formations gratuites d'abord.
 
 ## Déploiement
-
 ```bash
-cd api/            # (sur le VPS : ~/infra/forge-nex-api/)
-cp .env.example .env   # renseigner GROQ_API_KEY, TELEGRAM_TOKEN, TAVILY_API_KEY, GOOGLE_SHEET_ID...
+cd api/          # sur le VPS : ~/infra/forge-nex-api/
+cp .env.example .env   # GROQ_API_KEY, TELEGRAM_TOKEN, TAVILY_API_KEY, GOOGLE_SHEET_ID, WHATSAPP_*/MESSENGER_*...
 docker compose up -d --build
-curl -s http://localhost:8000/health
+curl -s http://localhost:8000/health   # affiche version + flags *_configured
 ```
+URL publique fixe via ngrok (webhooks + Telegram). Voir `README-webhook-fix.md`.
 
 ## Documentation
-- [`docs/CHANGELOG.md`](docs/CHANGELOG.md) — journal des évolutions.
-- [`docs/roadmap-mobilite.md`](docs/roadmap-mobilite.md) — analyse experte & roadmap.
-- [`README-webhook-fix.md`](README-webhook-fix.md) — correctif webhook + URL fixe.
+- **[docs/SPECIFICATIONS.md](docs/SPECIFICATIONS.md)** — spécifications complètes (archi, canaux, données, endpoints, roadmap).
+- [docs/CHANGELOG.md](docs/CHANGELOG.md) — journal des évolutions.
+- [docs/roadmap-mobilite.md](docs/roadmap-mobilite.md) — analyse experte & roadmap mobilité.
+- [README-webhook-fix.md](README-webhook-fix.md) — URL fixe & correctif webhook.
