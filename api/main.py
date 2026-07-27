@@ -29,6 +29,8 @@ logger.setLevel(logging.INFO)
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
 GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_URL        = "https://api.groq.com/openai/v1/chat/completions"
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
 FORGE_NEX_API_KEY = os.getenv("FORGE_NEX_API_KEY", "")
 def _read_telegram_token():
     tok = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -47,7 +49,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.7.0"
+VERSION         = "2.8.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -105,41 +107,94 @@ class MobilityRequest(BaseModel):
     cible: str = Field(default="opportunites internationales informatique")
     contraintes: dict = Field(default={})
 
-async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1000, json_mode: bool = True, retries: int = 3) -> Any:
-    if not GROQ_API_KEY:
-        raise HTTPException(500, "GROQ_API_KEY manquante")
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        "temperature": temperature,
-        "max_tokens": max_tokens
-    }
+# ── Routeur LLM multi-fournisseurs : Cerebras → Groq → Gemini (bascule auto) ──
+_LLM_PROVIDERS = [
+    {"name": "cerebras", "url": "https://api.cerebras.ai/v1/chat/completions",
+     "key": CEREBRAS_API_KEY, "model": "llama-3.3-70b", "api": "openai", "max_ctx": 8192},
+    {"name": "groq", "url": GROQ_URL, "key": GROQ_API_KEY,
+     "model": GROQ_MODEL, "api": "openai", "max_ctx": 32000},
+    {"name": "gemini", "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+     "key": GEMINI_API_KEY, "model": "gemini-2.0-flash", "api": "gemini", "max_ctx": 1000000},
+]
+_LLM_FALLBACK_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
+
+class _LLMFallback(Exception):
+    pass
+
+def _llm_parse_json(raw):
+    try:
+        return json.loads(raw)
+    except Exception:
+        c = (raw or "").strip()
+        if c.startswith("```"):
+            c = c.lstrip("`")
+            if c[:4].lower() == "json":
+                c = c[4:]
+            c = c.strip("`").strip()
+        return json.loads(c)
+
+async def _llm_openai(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode):
+    payload = {"model": prov["model"],
+               "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
+               "temperature": temperature, "max_tokens": max_tokens}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    last_error = None
-    for attempt in range(retries):
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                r = await client.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, json=payload)
-            if r.status_code == 429:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            if r.status_code != 200:
-                raise HTTPException(502, f"Groq erreur {r.status_code}")
-            raw = r.json()["choices"][0]["message"]["content"]
-            if json_mode:
-                try:
-                    return json.loads(raw)
-                except:
-                    return json.loads(raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip())
-            return raw
-        except HTTPException:
-            raise
-        except Exception as e:
-            last_error = e
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
-    raise HTTPException(502, f"Groq indisponible: {last_error}")
+    async with httpx.AsyncClient(timeout=28.0) as client:
+        r = await client.post(prov["url"], headers={"Authorization": f"Bearer {prov['key']}"}, json=payload)
+    if r.status_code in _LLM_FALLBACK_STATUS:
+        raise _LLMFallback(f"{prov['name']} {r.status_code}")
+    if r.status_code != 200:
+        raise RuntimeError(f"{prov['name']} {r.status_code}: {r.text[:150]}")
+    return r.json()["choices"][0]["message"]["content"]
+
+async def _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode):
+    gen = {"temperature": temperature, "maxOutputTokens": max_tokens}
+    if json_mode:
+        gen["responseMimeType"] = "application/json"
+    payload = {"contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}], "generationConfig": gen}
+    async with httpx.AsyncClient(timeout=28.0) as client:
+        r = await client.post(f"{prov['url']}?key={prov['key']}", json=payload)
+    if r.status_code in _LLM_FALLBACK_STATUS:
+        raise _LLMFallback(f"gemini {r.status_code}")
+    if r.status_code != 200:
+        raise RuntimeError(f"gemini {r.status_code}: {r.text[:150]}")
+    cands = r.json().get("candidates") or []
+    if not cands:
+        raise _LLMFallback("gemini vide")
+    return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", []))
+
+async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1000, json_mode: bool = True, retries: int = 2) -> Any:
+    approx = (len(system_prompt) + len(user_prompt)) // 4 + max_tokens
+    last = None
+    tried = False
+    for prov in _LLM_PROVIDERS:
+        if not prov["key"]:
+            continue
+        if approx > prov["max_ctx"] * 0.95:
+            continue  # prompt trop grand pour ce fournisseur → suivant
+        tried = True
+        for attempt in range(max(1, min(retries, 2))):
+            try:
+                if prov["api"] == "gemini":
+                    raw = await _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode)
+                else:
+                    raw = await _llm_openai(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode)
+                logger.info(f"[llm] via {prov['name']}")
+                return _llm_parse_json(raw) if json_mode else raw
+            except _LLMFallback as f:
+                last = f
+                if attempt < 1:
+                    await asyncio.sleep(1.0)
+                else:
+                    logger.warning(f"[llm] bascule {prov['name']}: {f}")
+            except Exception as e:
+                last = e
+                logger.error(f"[llm] {prov['name']} erreur: {e}")
+                break
+    if not tried:
+        raise HTTPException(500, "Aucun fournisseur LLM configuré (clés manquantes).")
+    logger.error(f"[llm] tous indisponibles: {last}")
+    raise HTTPException(503, "Service IA temporairement surchargé. Réessaie dans un instant.")
 
 class SessionManager:
     def __init__(self, path: str = "data/sessions.db"):
@@ -1688,7 +1743,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "groq_configured": bool(GROQ_API_KEY), "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():
