@@ -16,6 +16,17 @@ from reportlab.lib.colors import HexColor
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
 from reportlab.lib.enums import TA_JUSTIFY
 
+# OCR optionnel (CV scannés / images). Nécessite le binaire tesseract-ocr + pytesseract.
+# Import tolérant : si tesseract n'est pas installé, l'app démarre quand même (OCR désactivé).
+try:
+    import pytesseract
+    from PIL import Image
+    _OCR_IMPORTED = True
+except Exception:
+    pytesseract = None
+    Image = None
+    _OCR_IMPORTED = False
+
 class JSONFormatter(logging.Formatter):
     def format(self, record):
         return json.dumps({"ts": datetime.now(timezone.utc).isoformat(), "level": record.levelname, "service": "forge-nex-api", "msg": record.getMessage(), "module": record.module})
@@ -31,6 +42,19 @@ GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_URL        = "https://api.groq.com/openai/v1/chat/completions"
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
+OCR_LANG        = os.getenv("OCR_LANG", "fra+eng")   # packs tesseract requis: tesseract-ocr-fra tesseract-ocr-eng
+OCR_MAX_PAGES   = int(os.getenv("OCR_MAX_PAGES", "8"))
+OCR_ZOOM        = float(os.getenv("OCR_ZOOM", "2.5")) # facteur de rendu (≈216 dpi) pour une meilleure reconnaissance
+
+def _ocr_available() -> bool:
+    """Vrai si pytesseract est importé ET le binaire tesseract est présent."""
+    if not _OCR_IMPORTED:
+        return False
+    try:
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
 FORGE_NEX_API_KEY = os.getenv("FORGE_NEX_API_KEY", "")
 def _read_telegram_token():
     tok = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -49,7 +73,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.8.0"
+VERSION         = "2.9.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -853,14 +877,48 @@ def session_to_sheets_row(session: dict) -> dict:
         "derniere_activite": session.get("derniere_activite", datetime.now(timezone.utc).isoformat())
     }
 
+def _ocr_pdf(pdf_bytes: bytes) -> str:
+    """OCR de secours pour PDF scannés/images : rend chaque page en image puis tesseract."""
+    if not _ocr_available():
+        return ""
+    parts = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        mat = fitz.Matrix(OCR_ZOOM, OCR_ZOOM)
+        for i, page in enumerate(doc):
+            if i >= OCR_MAX_PAGES:
+                break
+            try:
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                txt = pytesseract.image_to_string(img, lang=OCR_LANG)
+                if txt and txt.strip():
+                    parts.append(txt.strip())
+            except Exception as pe:
+                logger.warning(f"[ocr] page {i} échouée: {pe}")
+        doc.close()
+    except Exception as e:
+        logger.warning(f"[ocr] échec global: {e}")
+        return ""
+    out = "\n".join(parts).strip()
+    if out:
+        logger.info(f"[ocr] {len(out)} caractères extraits (lang={OCR_LANG})")
+    return out
+
 def extract_text_pdf(pdf_bytes: bytes) -> str:
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         text = "\n".join(p.get_text("text") for p in doc if p.get_text("text").strip())
         doc.close()
-        return text.strip()
+        text = text.strip()
     except Exception as e:
         raise HTTPException(422, f"Lecture PDF impossible: {e}")
+    # PDF scanné / image : le texte embarqué est vide ou trop court -> bascule OCR
+    if len(text) < 50:
+        ocr_text = _ocr_pdf(pdf_bytes)
+        if len(ocr_text) > len(text):
+            return ocr_text
+    return text
 
 def pdf_to_b64(buf: io.BytesIO) -> str:
     buf.seek(0)
@@ -1210,7 +1268,10 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
     except Exception:
         cv_text = ""
     if not cv_text or len(cv_text.strip()) < 50:
-        await deliver_text(session, "❌ PDF vide ou scanné sans OCR.\n\nEnvoie un PDF avec texte sélectionnable (Word/LibreOffice).")
+        if not _ocr_available():
+            await deliver_text(session, "❌ Ce PDF semble scanné (image) et l'OCR n'est pas disponible.\n\nEnvoie un PDF avec texte sélectionnable (Word/LibreOffice).")
+        else:
+            await deliver_text(session, "❌ Impossible de lire ce PDF, même après OCR.\n\nVérifie que le document est lisible (bonne qualité) ou envoie un PDF avec texte sélectionnable.")
         return
     system = "Tu es expert en analyse de CV. Extrais toutes les informations. JSON uniquement."
     prompt = f"""Analyse ce CV:
@@ -1743,7 +1804,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():

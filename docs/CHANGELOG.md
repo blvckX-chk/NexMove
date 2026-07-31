@@ -2,6 +2,19 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.9 — OCR des CV scannés
+- **OCR automatique** (`tesseract-ocr` + `pytesseract`) : quand un PDF ne contient pas de texte
+  sélectionnable (CV scanné / photographié), `extract_text_pdf` bascule sur un rendu image page par page
+  (`fitz` pixmap, zoom ≈216 dpi) puis reconnaissance `image_to_string` en **fra+eng**. Garde-fous
+  `OCR_MAX_PAGES` / `OCR_ZOOM`. Import **tolérant** : sans le binaire tesseract, l'app démarre quand même
+  (OCR désactivé, message d'erreur adapté). `/health` expose `ocr_configured`.
+- Ajout de `api/requirements.txt` et `api/Dockerfile` au dépôt (paquets système
+  `tesseract-ocr-fra`/`tesseract-ocr-eng` + `pytesseract`/`Pillow`).
+
+## v2.8 — Résilience LLM multi-fournisseurs
+- Routeur de repli **Cerebras → Groq → Gemini** (mêmes appels, bascule auto sur quota/erreur) pour tenir
+  la charge de 100+ testeurs sur quotas gratuits. `/health` expose `llm_providers`.
+
 ## Infrastructure & fiabilité
 - **Webhook Telegram stabilisé** : URL publique fixe via **ngrok domaine statique** (fin de la boucle
   `{"message":"Provided secret is not valid"}` causée par le tunnel trycloudflare éphémère). Règle d'or :

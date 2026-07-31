@@ -1,0 +1,10 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.10.4
+python-multipart==0.0.20
+PyMuPDF==1.25.1
+reportlab==4.2.5
+# OCR pour les CV scannés (nécessite les paquets système tesseract-ocr* du Dockerfile)
+pytesseract==0.3.13
+Pillow==11.0.0

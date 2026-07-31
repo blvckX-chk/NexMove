@@ -102,7 +102,7 @@ Le sous-menu « Procédures » liste Campus France + les candidatures en cours (
 ### Variables d'environnement
 `GROQ_API_KEY`, `FORGE_NEX_API_KEY` (= header X-Forge-Nex-Key), `TELEGRAM_TOKEN`, `GOOGLE_SHEET_ID`,
 `TAVILY_API_KEY`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `MESSENGER_TOKEN`,
-`MESSENGER_VERIFY_TOKEN`.
+`MESSENGER_VERIFY_TOKEN`, `CEREBRAS_API_KEY`, `GEMINI_API_KEY` (repli LLM), `OCR_LANG`/`OCR_MAX_PAGES`/`OCR_ZOOM` (OCR, optionnels).
 
 ## 10. Sécurité / RGPD
 - Auth API par header custom. Secrets en `.env` (à terme : hors image).
@@ -111,7 +111,8 @@ Le sous-menu « Procédures » liste Campus France + les candidatures en cours (
 ## 11. Roadmap / reste à faire
 - **WhatsApp & Messenger** : obtenir tokens permanents (System User WhatsApp), config webhooks Meta, App Review.
   Puis **templates** pour les notifs proactives hors 24 h.
-- **OCR** (CV scannés) : `tesseract-ocr` + `pytesseract` (ajout `requirements.txt` → rebuild).
+- ~~**OCR** (CV scannés) : `tesseract-ocr` + `pytesseract`~~ ✅ **fait (v2.9)** — repli OCR automatique
+  dans `extract_text_pdf` quand le PDF n'a pas de texte sélectionnable.
 - **DOCX** : export modifiable (`python-docx`).
 - **Sources structurées +** : API emploi (Adzuna free), EURAXESS, RSS additionnels.
 - **Matching sémantique** (embeddings) + **routing de modèle** (petit modèle pour tâches simples).
