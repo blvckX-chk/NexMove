@@ -1,4 +1,4 @@
-import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re
+import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re, math
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Optional, Any
@@ -26,6 +26,15 @@ except Exception:
     pytesseract = None
     Image = None
     _OCR_IMPORTED = False
+
+# Export Word (.docx) optionnel — python-docx est pur Python (aucune dépendance système).
+try:
+    from docx import Document as _DocxDocument
+    from docx.shared import Pt as _DocxPt, RGBColor as _DocxRGB
+    _DOCX_OK = True
+except Exception:
+    _DocxDocument = None
+    _DOCX_OK = False
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -73,7 +82,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.11.0"
+VERSION         = "2.12.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -411,6 +420,62 @@ class Cache:
 
 cache = Cache()
 
+# ─────────────── Matching sémantique (embeddings) ───────────────
+# Pertinence des offres par similarité de sens, pas seulement par mots-clés.
+# Fournisseur : API d'embeddings Gemini (text-embedding-004, multilingue, quota gratuit,
+# réutilise GEMINI_API_KEY — zéro dépendance lourde côté image). Repli gracieux : si aucune
+# clé/erreur, on retombe sur l'ordre existant (mots-clés + LLM). Vecteurs mis en cache 7 jours
+# (les titres d'offres se répètent entre utilisateurs → cache partagé, quotas préservés).
+EMBED_MODEL = "text-embedding-004"
+
+def _embeddings_available() -> bool:
+    return bool(GEMINI_API_KEY)
+
+async def embed_text(text: str):
+    text = (text or "").strip()
+    if not text or not GEMINI_API_KEY:
+        return None
+    key = "emb:" + hashlib.sha1(text[:2000].encode("utf-8", "ignore")).hexdigest()
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBED_MODEL}:embedContent?key={GEMINI_API_KEY}"
+        payload = {"model": f"models/{EMBED_MODEL}", "content": {"parts": [{"text": text[:2000]}]}}
+        r = await http().post(url, json=payload, timeout=20.0)
+        if r.status_code != 200:
+            logger.warning(f"[embed] {r.status_code}: {r.text[:120]}")
+            return None
+        vec = (r.json().get("embedding") or {}).get("values")
+        if vec:
+            cache.set(key, vec, 7 * 24 * 3600)
+        return vec
+    except Exception as e:
+        logger.warning(f"[embed] {e}")
+        return None
+
+def _cosine(a, b) -> float:
+    if not a or not b:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0 or nb == 0:
+        return 0.0
+    return dot / (na * nb)
+
+async def semantic_scores(profil_txt: str, items: list, text_of) -> Optional[list]:
+    """Renvoie une liste de similarités [0..1] alignée sur `items`, ou None si indisponible.
+    `text_of(item) -> str` fournit le texte représentatif de chaque item. Embeddings calculés
+    en parallèle (client HTTP partagé) et mis en cache."""
+    if not items or not _embeddings_available():
+        return None
+    pv = await embed_text(profil_txt)
+    if not pv:
+        return None
+    vecs = await asyncio.gather(*[embed_text(text_of(it) or "") for it in items])
+    return [_cosine(pv, v) if v else 0.0 for v in vecs]
+
 ETAPE_INSTRUCTIONS = {
     "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV en PDF.",
     "ATTENTE_CV": "L'utilisateur doit envoyer son CV en PDF. Rappelle-lui brièvement.",
@@ -747,8 +812,17 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 chat_id = session.get("chat_id")
                 ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
                 ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation — {cible_desc[:60]}")
+                if _DOCX_OK:
+                    try:
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
+                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                        await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
+                        await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
+                    except Exception as de:
+                        logger.warning(f"[docx] postuler: {de}")
                 if ok_cv and ok_lm:
-                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n\n"
+                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n"
+                           "📄 PDF (à envoyer) + 📝 Word (à personnaliser).\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
                 elif ok_cv or ok_lm:
                     msg = "⚠️ Un seul document a pu être envoyé. Réessaie dans un instant."
@@ -808,8 +882,16 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 chat_id = session.get("chat_id")
                 await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
                 await deliver_file(session,f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
+                if _DOCX_OK:
+                    try:
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
+                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                        await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 CV Word (modifiable)")
+                        await deliver_file(session, f"Projet_{nom}.docx", pr_dx.getvalue(), "📝 Projet Word (modifiable)")
+                    except Exception as de:
+                        logger.warning(f"[docx] dossier: {de}")
                 opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""), r.get("deadline_iso", ""))
-                msg += ("📄 CV + lettre/projet d'études envoyés. Dossier ajouté à ton suivi (/status).\n"
+                msg += ("📄 CV + lettre/projet d'études envoyés (PDF + 📝 Word modifiable). Dossier ajouté à ton suivi (/status).\n"
                         "⚠️ _Vérifie les exigences exactes sur le site officiel._")
             except Exception as e:
                 logger.error(f"dossier: {e}")
@@ -1056,6 +1138,69 @@ def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
     doc.build(els)
     return buf
 
+# ---------- Export Word (.docx) : versions modifiables du CV et de la lettre ----------
+_BLEU_RGB = (0x1a, 0x23, 0x7e)
+_GRIS_RGB = (0x54, 0x6e, 0x7a)
+
+def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
+    d = _DocxDocument()
+    ident = profil.get("identite", {})
+    p = d.add_paragraph(); r = p.add_run(ident.get("nom", "Candidat") or "Candidat")
+    r.bold = True; r.font.size = _DocxPt(19); r.font.color.rgb = _DocxRGB(*_BLEU_RGB)
+    if titre:
+        p = d.add_paragraph(); r = p.add_run(titre); r.italic = True
+        r.font.size = _DocxPt(11); r.font.color.rgb = _DocxRGB(*_GRIS_RGB)
+    contacts = [x for x in [ident.get("email"), ident.get("telephone"), ident.get("localisation")] if x]
+    if contacts:
+        d.add_paragraph(" · ".join(contacts))
+    def section(t):
+        p = d.add_paragraph(); r = p.add_run(t.upper())
+        r.bold = True; r.font.size = _DocxPt(11); r.font.color.rgb = _DocxRGB(*_BLEU_RGB)
+    if resume:
+        section("Profil"); d.add_paragraph(resume)
+    if competences:
+        section("Compétences"); d.add_paragraph(" · ".join(competences[:16]))
+    exp = profil.get("experience", [])
+    if exp:
+        section("Expérience")
+        for e in exp[:5]:
+            p = d.add_paragraph(); r = p.add_run(f"{e.get('poste','')} — {e.get('organisation','')}"); r.bold = True
+            for m in (e.get("missions", []) or [])[:4]:
+                d.add_paragraph(str(m), style="List Bullet")
+    form = profil.get("formation", [])
+    if form:
+        section("Formation")
+        for f in form[:4]:
+            p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} — {f.get('etablissement','')}"); r.bold = True
+    buf = io.BytesIO(); d.save(buf); return buf
+
+def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
+    d = _DocxDocument()
+    ident = profil.get("identite", {})
+    p = d.add_paragraph(); r = p.add_run(ident.get("nom", "Candidat") or "Candidat"); r.bold = True
+    for c in [ident.get("email"), ident.get("telephone"), ident.get("localisation")]:
+        if c:
+            d.add_paragraph(str(c))
+    d.add_paragraph("")
+    d.add_paragraph(datetime.now(timezone.utc).strftime("%d/%m/%Y"))
+    p = d.add_paragraph(); r = p.add_run(f"Objet : {objet}"); r.bold = True
+    for para in (corps or "").split("\n\n"):
+        para = para.strip()
+        if para:
+            d.add_paragraph(para.replace("\n", " "))
+    d.add_paragraph("")
+    d.add_paragraph("Cordialement,")
+    p = d.add_paragraph(); r = p.add_run(ident.get("nom", "") or ""); r.bold = True
+    buf = io.BytesIO(); d.save(buf); return buf
+
+def _mime_for(filename: str) -> str:
+    fn = (filename or "").lower()
+    if fn.endswith(".docx"):
+        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    if fn.endswith(".pdf"):
+        return "application/pdf"
+    return "application/octet-stream"
+
 async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
     if not TELEGRAM_TOKEN:
         return False
@@ -1063,7 +1208,7 @@ async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
         r = await http().post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
             data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
-            files={"document": (filename, pdf_bytes, "application/pdf")},
+            files={"document": (filename, pdf_bytes, _mime_for(filename))},
             timeout=45.0,
         )
         return r.status_code == 200
@@ -1197,10 +1342,11 @@ async def wa_document(to, filename, data, caption=""):
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
         return False
     try:
+        _mt = _mime_for(filename)
         up = await http().post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/media",
                                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                               data={"messaging_product": "whatsapp", "type": "application/pdf"},
-                               files={"file": (filename, data, "application/pdf")}, timeout=45.0)
+                               data={"messaging_product": "whatsapp", "type": _mt},
+                               files={"file": (filename, data, _mt)}, timeout=45.0)
         if up.status_code != 200:
             logger.error(f"wa media {up.status_code}: {up.text[:200]}")
             return False
@@ -1257,7 +1403,7 @@ async def fb_document(to, filename, data, caption=""):
         r = await http().post("https://graph.facebook.com/v21.0/me/messages", params={"access_token": MESSENGER_TOKEN},
                               data={"recipient": json.dumps({"id": str(to)}),
                                     "message": json.dumps({"attachment": {"type": "file", "payload": {"is_reusable": False}}})},
-                              files={"filedata": (filename, data, "application/pdf")}, timeout=45.0)
+                              files={"filedata": (filename, data, _mime_for(filename))}, timeout=45.0)
         return r.status_code == 200
     except Exception as e:
         logger.error(f"fb doc: {e}")
@@ -1662,8 +1808,15 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
         grounded = await tavily_search(query, 8)
 
     if grounded:
+        # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
+        sims = await semantic_scores(profil_txt, grounded, lambda s: f"{s.get('title','')} {(s.get('content','') or '')[:300]}")
+        if sims:
+            for s, sim in zip(grounded, sims):
+                s["_sim"] = sim
+            grounded = sorted(grounded, key=lambda s: s.get("_sim", 0.0), reverse=True)
+        grounded = grounded[:8]
         sources_txt = "\n".join(f"[{i}] {s.get('title','')} — {(s.get('content','') or '')[:200]}"
-                                for i, s in enumerate(grounded[:8]))
+                                for i, s in enumerate(grounded))
         system = ("Tu es expert en orientation et mobilité internationale. On te fournit des RÉSULTATS WEB numérotés. "
                   "Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du candidat (respecte une éventuelle "
                   "reconversion : cible son domaine ACTUEL/visé, pas ses anciens diplômes). Réponds avec l'INDEX du résultat "
@@ -1687,7 +1840,15 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                 o["titre"] = src.get("title", "")
                 o["url"] = src.get("url", "")
                 o["organisation"] = _domain(src.get("url", ""))
+                o["_sim"] = src.get("_sim")
                 clean.append(o)
+        # Mélange du score LLM avec la similarité sémantique (quand disponible)
+        for o in clean:
+            sim = o.get("_sim")
+            if isinstance(sim, (int, float)):
+                base = o.get("score_composite") or 0
+                o["score_composite"] = int(round(0.6 * base + 0.4 * sim * 100))
+        clean.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles — vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
@@ -1774,9 +1935,21 @@ async def collect(_auth: bool = Depends(verify_api_key)):
                 for key in ("mots_cles", "objectif", "pays_cibles"):
                     kws += str(prefs.get(key, "")).replace(",", " ").split()
                 kws += (profil.get("competences", {}).get("techniques", []))[:6]
-                for src in opp_store.search_sources(kws):
+                srcs = opp_store.search_sources(kws)
+                comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
+                profil_txt = (f"{profil.get('resume_profil','')} | objectif: {prefs.get('objectif','')} | "
+                              f"domaine: {prefs.get('mots_cles','')} | pays: {prefs.get('pays_cibles','')} | compétences: {comps}")
+                sims = await semantic_scores(profil_txt, srcs, lambda x: f"{x.get('titre','')} {(x.get('resume') or '')[:300]}") if srcs else None
+                for i, src in enumerate(srcs):
+                    if sims:
+                        sim = sims[i]
+                        if sim < 0.5:   # trop éloigné du profil → on n'inonde pas l'utilisateur
+                            continue
+                        score = int(round(45 + sim * 55))
+                    else:
+                        score = 62
                     opp = {"titre": src["titre"], "organisation": "Source vérifiée", "type": "bourse",
-                           "url": src["url"], "raison": (src.get("resume") or "")[:150], "score_composite": 62}
+                           "url": src["url"], "raison": (src.get("resume") or "")[:150], "score_composite": score}
                     if opp_store.add(s.get("user_id"), opp):
                         n += 1
             except Exception as e:
@@ -1900,7 +2073,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():

@@ -2,6 +2,19 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.12 — Export Word & matching sémantique
+- **Export Word (.docx)** : `/postuler` et `/dossier` envoient désormais, en plus des PDF, des versions
+  **Word modifiables** du CV et de la lettre/projet (demande des testeurs : « pouvoir modifier direct »).
+  `python-docx` (pur Python, zéro dépendance système). Le type MIME des envois est déduit de l'extension
+  (Telegram/WhatsApp/Messenger).
+- **Matching sémantique des offres (embeddings)** : la pertinence ne repose plus seulement sur les mots-clés.
+  On calcule la **similarité de sens** entre le profil et chaque offre (embeddings `text-embedding-004`,
+  multilingue, via la clé Gemini déjà en place). Utilisé pour (a) re-trier les résultats web avant sélection
+  LLM dans `/mobilite`, (b) mélanger score LLM + similarité (60/40), (c) filtrer/scorer les sources RSS de la
+  veille (fini le score fixe à 62). Vecteurs mis en cache 7 j (quotas préservés). **Repli gracieux** : sans
+  clé Gemini, on garde le classement mots-clés + LLM. `/health` expose `docx_configured` et
+  `semantic_matching`.
+
 ## v2.11 — Performance & robustesse (passe senior)
 - **Client HTTP partagé** : un seul `httpx.AsyncClient` avec pool keep-alive pour *tous* les appels
   sortants (LLM, Tavily, Telegram, WhatsApp, Messenger) au lieu d'un nouveau client (handshake TCP/TLS) à
