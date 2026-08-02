@@ -82,12 +82,17 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.12.0"
+VERSION         = "2.13.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
 MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
 MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
+# Sources d'emplois structurées (open data). arbeitnow = sans clé ; Adzuna = clés gratuites optionnelles.
+ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
+ADZUNA_COUNTRY  = os.getenv("ADZUNA_COUNTRY", "fr")
+ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -161,11 +166,11 @@ class MobilityRequest(BaseModel):
 # ── Routeur LLM multi-fournisseurs : Cerebras → Groq → Gemini (bascule auto) ──
 _LLM_PROVIDERS = [
     {"name": "cerebras", "url": "https://api.cerebras.ai/v1/chat/completions",
-     "key": CEREBRAS_API_KEY, "model": "llama-3.3-70b", "api": "openai", "max_ctx": 8192},
+     "key": CEREBRAS_API_KEY, "model": "llama-3.3-70b", "model_fast": "llama-3.1-8b", "api": "openai", "max_ctx": 8192},
     {"name": "groq", "url": GROQ_URL, "key": GROQ_API_KEY,
-     "model": GROQ_MODEL, "api": "openai", "max_ctx": 32000},
+     "model": GROQ_MODEL, "model_fast": "llama-3.1-8b-instant", "api": "openai", "max_ctx": 32000},
     {"name": "gemini", "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-     "key": GEMINI_API_KEY, "model": "gemini-2.0-flash", "api": "gemini", "max_ctx": 1000000},
+     "key": GEMINI_API_KEY, "model": "gemini-2.0-flash", "model_fast": "gemini-2.0-flash", "api": "gemini", "max_ctx": 1000000},
 ]
 _LLM_FALLBACK_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 
@@ -184,8 +189,8 @@ def _llm_parse_json(raw):
             c = c.strip("`").strip()
         return json.loads(c)
 
-async def _llm_openai(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode):
-    payload = {"model": prov["model"],
+async def _llm_openai(prov, model, system_prompt, user_prompt, temperature, max_tokens, json_mode):
+    payload = {"model": model,
                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
                "temperature": temperature, "max_tokens": max_tokens}
     if json_mode:
@@ -212,7 +217,9 @@ async def _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens,
         raise _LLMFallback("gemini vide")
     return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", []))
 
-async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1000, json_mode: bool = True, retries: int = 2) -> Any:
+async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1000, json_mode: bool = True, retries: int = 2, tier: str = "smart") -> Any:
+    # tier="fast" -> petit modèle rapide (tâches simples : conversation, reformulation) ;
+    # tier="smart" -> modèle 70B (analyse CV, sélection d'offres, rédaction de documents).
     approx = (len(system_prompt) + len(user_prompt)) // 4 + max_tokens
     last = None
     tried = False
@@ -222,13 +229,14 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
         if approx > prov["max_ctx"] * 0.95:
             continue  # prompt trop grand pour ce fournisseur → suivant
         tried = True
+        model = prov.get("model_fast", prov["model"]) if tier == "fast" else prov["model"]
         for attempt in range(max(1, min(retries, 2))):
             try:
                 if prov["api"] == "gemini":
                     raw = await _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode)
                 else:
-                    raw = await _llm_openai(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode)
-                logger.info(f"[llm] via {prov['name']}")
+                    raw = await _llm_openai(prov, model, system_prompt, user_prompt, temperature, max_tokens, json_mode)
+                logger.info(f"[llm] via {prov['name']} ({model})")
                 return _llm_parse_json(raw) if json_mode else raw
             except _LLMFallback as f:
                 last = f
@@ -305,6 +313,10 @@ class OppStore:
                 pass
         con.execute("""CREATE TABLE IF NOT EXISTS sources_offres (
             id TEXT PRIMARY KEY, titre TEXT, url TEXT, resume TEXT, date TEXT, created_at TEXT)""")
+        try:
+            con.execute("ALTER TABLE sources_offres ADD COLUMN type TEXT DEFAULT 'bourse'")
+        except Exception:
+            pass
         con.commit(); con.close()
     def add_source(self, it) -> bool:
         oid = hashlib.sha1(str(it.get("url", "")).encode("utf-8", "ignore")).hexdigest()
@@ -312,25 +324,25 @@ class OppStore:
         try:
             if con.execute("SELECT 1 FROM sources_offres WHERE id=?", (oid,)).fetchone():
                 return False
-            con.execute("INSERT INTO sources_offres(id,titre,url,resume,date,created_at) VALUES(?,?,?,?,?,?)",
+            con.execute("INSERT INTO sources_offres(id,titre,url,resume,date,type,created_at) VALUES(?,?,?,?,?,?,?)",
                         (oid, it.get("titre", ""), it.get("url", ""), it.get("resume", ""), it.get("date", ""),
-                         datetime.now(timezone.utc).isoformat()))
+                         it.get("type", "bourse"), datetime.now(timezone.utc).isoformat()))
             con.commit(); return True
         finally:
             con.close()
-    def search_sources(self, keywords, limit=60):
+    def search_sources(self, keywords, limit=80):
         con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("SELECT titre,url,resume FROM sources_offres ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = con.execute("SELECT titre,url,resume,type FROM sources_offres ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         con.close()
         kws = [str(k).lower() for k in keywords if k and len(str(k)) > 2]
         scored = []
-        for (titre, url, resume) in rows:
+        for (titre, url, resume, typ) in rows:
             txt = (str(titre) + " " + str(resume)).lower()
             sc = sum(1 for k in kws if k in txt)
             if sc > 0:
-                scored.append((sc, {"titre": titre, "url": url, "resume": resume}))
+                scored.append((sc, {"titre": titre, "url": url, "resume": resume, "type": typ or "bourse"}))
         scored.sort(key=lambda x: -x[0])
-        return [d for _, d in scored[:8]]
+        return [d for _, d in scored[:10]]
     def add_candidature(self, user_id, cible, deadline="", deadline_iso=""):
         oid = hashlib.sha1(f"cand|{user_id}|{cible}".encode("utf-8", "ignore")).hexdigest()
         con = sqlite3.connect(self._path, timeout=10)
@@ -393,8 +405,30 @@ class OppStore:
         n = con.execute("SELECT COUNT(*) FROM offres WHERE notified=0 AND score>=?", (min_score,)).fetchone()[0]
         con.close()
         return int(n)
+    def _ensure_feedback(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS feedback (
+            user_id TEXT, signal TEXT, score INTEGER DEFAULT 0, updated_at TEXT,
+            PRIMARY KEY(user_id, signal))""")
+        con.commit(); con.close()
+    def add_feedback(self, user_id, signal, vote):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""INSERT INTO feedback(user_id,signal,score,updated_at) VALUES(?,?,?,?)
+                       ON CONFLICT(user_id,signal) DO UPDATE SET score=score+excluded.score, updated_at=excluded.updated_at""",
+                    (str(user_id), str(signal), int(vote), datetime.now(timezone.utc).isoformat()))
+        con.commit(); con.close()
+    def feedback_delta(self, user_id, signal) -> int:
+        # Signal appris : +👍/-👎 cumulés → ajustement borné du score (±25).
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT score FROM feedback WHERE user_id=? AND signal=?",
+                          (str(user_id), str(signal))).fetchone()
+        con.close()
+        if not row:
+            return 0
+        return max(-25, min(25, int(row[0]) * 8))
 
 opp_store = OppStore()
+opp_store._ensure_feedback()
 
 class Cache:
     def __init__(self, path: str = "data/sessions.db"):
@@ -490,6 +524,13 @@ REPONSES_POSITIVES = {"oui", "yes", "ok", "correct", "exacte", "c'est bon", "par
 def detecter_reponse_positive(text: str) -> bool:
     return any(r in text.lower().strip() for r in REPONSES_POSITIVES)
 
+JOURS = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4, "samedi": 5, "dimanche": 6}
+
+def _get_notif(session: dict) -> dict:
+    """Préférences de notification de l'utilisateur (défaut : activées, quotidien)."""
+    n = session.get("notif") or {}
+    return {"enabled": n.get("enabled", True), "freq": n.get("freq", "quotidien"), "jour": n.get("jour", "lundi")}
+
 PREF_QUESTIONS = [
     ("objectif", "🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)"),
     ("nationalite", "🛂 Quelle est ta nationalité (pays du passeport) ?"),
@@ -542,7 +583,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n\n"
             "📊 *Mon espace*\n"
-            "/profil · /status · /supprimer\n\n"
+            "/profil · /status · /rappels · /digest · /supprimer\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
@@ -783,8 +824,9 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
         try:
-            res = await run_osint(session.get("profil", {}) or {}, cible)
+            res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"))
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
+            _attach_feedback(session, res.get("opportunites", []))
         except Exception as e:
             logger.error(f"Erreur mobilite: {e}")
             msg = "😕 L'analyse mobilité a échoué, réessaie dans un instant."
@@ -904,13 +946,14 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
         else:
             try:
-                res = await run_osint(session.get("profil", {}) or {}, "")
+                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
                 new = 0
                 for opp in res.get("opportunites", []):
                     if opp_store.add(session.get("user_id"), opp):
                         new += 1
                 msg = res.get("message") or "Aucune opportunité trouvée pour l'instant."
                 msg += f"\n\n🆕 {new} nouvelle(s) opportunité(s) ajoutée(s) à ta veille."
+                _attach_feedback(session, res.get("opportunites", []))
             except Exception as e:
                 logger.error(f"Erreur veille: {e}")
                 msg = "😕 La veille a échoué, réessaie dans un instant."
@@ -934,6 +977,40 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             msg += "Utilise /veille pour explorer, /campusfrance pour Études en France."
         else:
             msg = f"📊 Onboarding en cours (étape : {session.get('etape','WELCOME')}). Fais /start."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/rappels") or low.startswith("/notifications"):
+        n = _get_notif(session)
+        sp = t.split(maxsplit=1)
+        arg = sp[1].strip().lower() if len(sp) > 1 else ""
+        if arg in ("on", "oui", "activer", "active", "1"):
+            n["enabled"] = True; msg = "🔔 Notifications *activées*."
+        elif arg in ("off", "non", "desactiver", "désactiver", "stop", "0"):
+            n["enabled"] = False
+            msg = "🔕 Notifications d'opportunités *désactivées*.\n_(Les rappels de deadline de tes dossiers restent actifs.)_"
+        else:
+            etat = "activées 🔔" if n["enabled"] else "désactivées 🔕"
+            freq = "quotidien" if n["freq"] == "quotidien" else f"hebdo (chaque {n['jour']})"
+            msg = (f"⚙️ *Tes notifications*\nÉtat : {etat}\nFréquence : {freq}\n\n"
+                   "Modifier :\n• /rappels on · /rappels off\n• /digest quotidien · /digest hebdo <jour>")
+        session["notif"] = n
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/digest"):
+        n = _get_notif(session)
+        parts = low.split()
+        if len(parts) >= 2 and parts[1] in ("quotidien", "quotidienne", "jour", "daily"):
+            n["freq"] = "quotidien"; msg = "🗓️ Digest *quotidien* activé."
+        elif len(parts) >= 2 and parts[1] in ("hebdo", "hebdomadaire", "semaine", "weekly"):
+            jour = next((p for p in parts[2:] if p in JOURS), "lundi")
+            n["freq"] = "hebdo"; n["jour"] = jour
+            msg = f"🗓️ Digest *hebdomadaire* activé (chaque *{jour}*)."
+        else:
+            msg = ("🗓️ *Fréquence du digest*\n• /digest quotidien\n• /digest hebdo <jour>\n\nEx : /digest hebdo lundi")
+        n["enabled"] = True
+        session["notif"] = n
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -993,7 +1070,7 @@ INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
 REGLES: francais, TUTOIE l'utilisateur, ton amical et encourageant, ne le re-salue PAS en pleine conversation, max 120 mots, propose une action utile (ex: /veille, /campusfrance, /dossier, /postuler), ne redemande jamais le CV si etape=ACTIF.
 JSON: {{"message":"..."}}"""
     try:
-        llm = await call_groq(system, t, temperature=0.3, max_tokens=350)
+        llm = await call_groq(system, t, temperature=0.3, max_tokens=350, tier="fast")
         message = llm.get("message", "Je suis là pour t'aider.")
     except Exception as e:
         logger.error(f"Erreur LLM: {e}")
@@ -1449,7 +1526,25 @@ _ACT_HELP = {
     "postuler_help": "✉️ Écris : /postuler <poste ou bourse>\nEx : /postuler Analyste SOC chez Orange",
 }
 
-async def handle_action(session, data):
+async def handle_action(session, data, callback_id=None):
+    if data.startswith("fb:"):
+        # feedback offre : fb:u:<i> (👍) / fb:d:<i> (👎)
+        try:
+            _, v, idx = data.split(":", 2)
+            i = int(idx)
+        except Exception:
+            v, i = "", -1
+        offers = session.get("last_offers", []) or []
+        if 0 <= i < len(offers):
+            vote = 1 if v == "u" else -1
+            opp_store.add_feedback(session.get("user_id"), offers[i].get("sig", ""), vote)
+            if callback_id:
+                await answer_callback(callback_id, "👍 Noté, merci !" if vote > 0 else "👎 Compris, j'en tiendrai compte.")
+        elif callback_id:
+            await answer_callback(callback_id)
+        return session
+    if callback_id:
+        await answer_callback(callback_id)
     if data.startswith("m:"):
         title, opts = get_menu(session, data[2:])
         await deliver_menu(session, title, opts)
@@ -1580,8 +1675,11 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
             return
         msg, session = await process_text_message(session, text)
         show_menu = session.pop("_show_menu", False)
+        fb_kb = session.pop("_feedback_kb", None)
         session_manager.set(user_id, session)
         await deliver_text(session, msg, with_menu=show_menu)
+        if fb_kb:
+            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})
@@ -1633,9 +1731,7 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     session["chat_id"] = request.chat_id
     session["username"] = request.username
     if request.callback_data:
-        if request.callback_id:
-            await answer_callback(request.callback_id)
-        session = await handle_action(session, request.callback_data)
+        session = await handle_action(session, request.callback_data, request.callback_id)
         session_manager.set(uid, session)
         return {"ok": True}
     if not check_rate_limit(uid):
@@ -1644,8 +1740,11 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     logger.info(f"[chat] tg user={uid} text={request.text[:50]!r}")
     message, session = await process_text_message(session, request.text)
     show_menu = session.pop("_show_menu", False)
+    fb_kb = session.pop("_feedback_kb", None)
     session_manager.set(uid, session)
     await deliver_text(session, message, with_menu=show_menu)
+    if fb_kb:
+        await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
     return {"ok": True}
 
 @app.post("/api/chat-cv")
@@ -1769,11 +1868,95 @@ async def ingest_feeds() -> int:
                 total += 1
     return total
 
+# ---------- Sources d'emplois structurées (APIs open data) ----------
+async def fetch_arbeitnow() -> list:
+    """Job board ouvert (EU/tech, sans clé API). https://www.arbeitnow.com/api/job-board-api"""
+    try:
+        r = await http().get("https://www.arbeitnow.com/api/job-board-api",
+                             headers={"User-Agent": "NexMoveBot/1.0"}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("data") or [])[:40]:
+            titre = (j.get("title") or "").strip()
+            url = (j.get("url") or "").strip()
+            comp = (j.get("company_name") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            tags = ", ".join((j.get("tags") or [])[:5])
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": (desc or tags)[:300], "type": "emploi", "date": ""})
+        return out
+    except Exception as e:
+        logger.error(f"arbeitnow: {e}")
+        return []
+
+async def fetch_adzuna(query: str) -> list:
+    """API emploi Adzuna (clés gratuites). Ne fait rien si non configurée."""
+    if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
+        return []
+    try:
+        url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/1"
+        r = await http().get(url, params={"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY,
+                                          "results_per_page": 20, "what": query, "content-type": "application/json"},
+                             timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            logger.warning(f"adzuna {r.status_code}: {r.text[:120]}")
+            return []
+        out = []
+        for j in (r.json().get("results") or [])[:20]:
+            titre = (j.get("title") or "").strip()
+            link = (j.get("redirect_url") or "").strip()
+            comp = ((j.get("company") or {}).get("display_name") or "").strip()
+            desc = re.sub(r"\s+", " ", j.get("description") or "").strip()[:300]
+            if titre and link:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": link,
+                            "resume": desc, "type": "emploi", "date": (j.get("created") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"adzuna: {e}")
+        return []
+
+async def ingest_structured() -> int:
+    """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré) dans le pool."""
+    total = 0
+    for it in await fetch_arbeitnow():
+        if opp_store.add_source(it):
+            total += 1
+    if ADZUNA_APP_ID and ADZUNA_APP_KEY:
+        for q in ADZUNA_QUERIES:
+            for it in await fetch_adzuna(q):
+                if opp_store.add_source(it):
+                    total += 1
+    return total
+
 def _domain(url):
     d = re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0]
     return d[:40]
 
-async def run_osint(profil: dict, cible: str = "") -> dict:
+_STOP_SIG = {"pour", "avec", "dans", "les", "des", "une", "chez", "sur", "the", "and",
+             "for", "master", "bourse", "offre", "emploi", "stage", "junior", "senior"}
+
+def _offer_signal(opp, domaine="") -> str:
+    """Signature apprenante d'une offre : type + 1er mot-clé significatif (pour agréger le feedback)."""
+    typ = str(opp.get("type", "") or "opp").lower().strip()[:12]
+    base = f"{opp.get('titre','')} {domaine}".lower()
+    toks = [w for w in re.findall(r"[a-zàâçéèêëîïôûùüÿñ]{4,}", base) if w not in _STOP_SIG]
+    return f"{typ}|{toks[0] if toks else 'general'}"
+
+def _attach_feedback(session, opps):
+    """Prépare les boutons 👍/👎 pour les offres affichées et mémorise leur signature."""
+    lo, kb = [], []
+    for i, o in enumerate((opps or [])[:5]):
+        lo.append({"sig": _offer_signal(o), "titre": (o.get("titre") or "")[:40]})
+        kb.append((f"👍 {i+1}", f"fb:u:{i}"))
+        kb.append((f"👎 {i+1}", f"fb:d:{i}"))
+    if lo:
+        session["last_offers"] = lo
+        session["_feedback_kb"] = kb
+
+async def run_osint(profil: dict, cible: str = "", user_id: str = "") -> dict:
     profil = profil or {}
     prefs = profil.get("preferences", {}) or {}
     nationalite = prefs.get("nationalite") or "béninoise"
@@ -1842,12 +2025,16 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                 o["organisation"] = _domain(src.get("url", ""))
                 o["_sim"] = src.get("_sim")
                 clean.append(o)
-        # Mélange du score LLM avec la similarité sémantique (quand disponible)
+        # Mélange du score LLM avec la similarité sémantique + feedback appris de l'utilisateur
         for o in clean:
             sim = o.get("_sim")
             if isinstance(sim, (int, float)):
                 base = o.get("score_composite") or 0
                 o["score_composite"] = int(round(0.6 * base + 0.4 * sim * 100))
+            if user_id:
+                d = opp_store.feedback_delta(user_id, _offer_signal(o, domaine))
+                if d:
+                    o["score_composite"] = max(0, min(100, (o.get("score_composite") or 0) + d))
         clean.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles — vérifie l'éligibilité et la deadline sur chaque lien._"
@@ -1910,12 +2097,12 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
     logger.info(f"[osint] user={request.user_id} cible={request.cible}")
     session = session_manager.get(request.user_id)
     profil = session.get("profil", {}) if session else {}
-    res = await run_osint(profil, request.cible)
+    res = await run_osint(profil, request.cible, request.user_id)
     return {**res, "chat_id": request.chat_id}
 
 @app.post("/api/collect")
 async def collect(_auth: bool = Depends(verify_api_key)):
-    ingested = await ingest_feeds()
+    ingested = await ingest_feeds() + await ingest_structured()
     users = session_manager.list_active()
     sem = asyncio.Semaphore(5)
     async def _one(s):
@@ -1924,7 +2111,7 @@ async def collect(_auth: bool = Depends(verify_api_key)):
             profil = s.get("profil", {}) or {}
             prefs = profil.get("preferences", {}) or {}
             try:
-                res = await run_osint(profil, "")
+                res = await run_osint(profil, "", s.get("user_id"))
                 for opp in res.get("opportunites", []):
                     if opp_store.add(s.get("user_id"), opp):
                         n += 1
@@ -1948,8 +2135,14 @@ async def collect(_auth: bool = Depends(verify_api_key)):
                         score = int(round(45 + sim * 55))
                     else:
                         score = 62
-                    opp = {"titre": src["titre"], "organisation": "Source vérifiée", "type": "bourse",
+                    styp = src.get("type", "bourse")
+                    orga = "Offre d'emploi" if styp == "emploi" else "Source vérifiée"
+                    opp = {"titre": src["titre"], "organisation": orga, "type": styp,
                            "url": src["url"], "raison": (src.get("resume") or "")[:150], "score_composite": score}
+                    delta = opp_store.feedback_delta(s.get("user_id"), _offer_signal(opp))
+                    if delta <= -20:      # l'utilisateur a rejeté ce type d'offres à répétition
+                        continue
+                    opp["score_composite"] = max(0, min(100, score + delta))
                     if opp_store.add(s.get("user_id"), opp):
                         n += 1
             except Exception as e:
@@ -1969,8 +2162,14 @@ async def score(_auth: bool = Depends(verify_api_key)):
 async def notify(_auth: bool = Depends(verify_api_key)):
     users = session_manager.list_active()
     notified = 0
+    weekday_today = datetime.now(timezone.utc).weekday()
     for s in users[:50]:
         chat_id = s.get("chat_id")
+        n = _get_notif(s)
+        if not n["enabled"]:
+            continue
+        if n["freq"] == "hebdo" and weekday_today != JOURS.get(n["jour"], 0):
+            continue  # digest hebdomadaire : seulement le jour choisi
         rows = opp_store.pending(s.get("user_id"), 60)
         if not rows or not chat_id:
             continue
@@ -2073,7 +2272,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():

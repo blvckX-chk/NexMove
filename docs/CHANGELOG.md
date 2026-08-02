@@ -2,6 +2,20 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.13 — Routing de modèle · sources emploi · rappels programmables · feedback 👍/👎
+- **Routing de modèle** : les tâches simples (conversation libre en mode actif) partent sur un **petit
+  modèle rapide** (llama-3.1-8b / gemini-flash) ; l'analyse CV, la sélection d'offres et la rédaction de
+  documents gardent le **70B**. Moins de latence, quotas mieux préservés. (`call_groq(..., tier="fast")`).
+- **Sources d'emploi structurées** : ingestion d'**arbeitnow** (sans clé) et **Adzuna** (clés gratuites
+  optionnelles) dans le pool d'offres, en plus des flux RSS bourses. Les offres portent leur vrai **type**
+  (emploi/bourse) et passent par le scoring sémantique par profil.
+- **Rappels & digest programmables** : `/rappels on|off` et `/digest quotidien | hebdo <jour>`. La veille
+  proactive respecte le choix de chaque utilisateur (fréquence, jour). Les rappels de deadline des dossiers
+  restent toujours actifs.
+- **Feedback 👍/👎 sur les offres** : boutons sous les résultats `/mobilite` et `/veille`. Les votes sont
+  **appris par signature d'offre** (type + domaine) et **réinjectés dans le score** (±25) — le bot propose
+  moins ce que l'utilisateur rejette, plus ce qu'il valide. `/health` : `adzuna_configured`.
+
 ## v2.12 — Export Word & matching sémantique
 - **Export Word (.docx)** : `/postuler` et `/dossier` envoient désormais, en plus des PDF, des versions
   **Word modifiables** du CV et de la lettre/projet (demande des testeurs : « pouvoir modifier direct »).

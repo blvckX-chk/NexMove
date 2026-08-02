@@ -56,6 +56,7 @@ financement, certifs_langue, langues_opportunite, niveau, mots_cles`.
 | `/dossier <cible>` | liste des documents requis + CV + projet d'études (PDF) + suivi |
 | `/postuler <cible>` | CV adapté + lettre de motivation (PDF) |
 | `/formations <domaine>` | formations/certifs pour se distinguer (gratuites d'abord) |
+| `/rappels on\|off`, `/digest quotidien\|hebdo <jour>` | notifications proactives programmables |
 | `/profil`, `/status`, `/supprimer` | profil · dossiers/veille · effacement RGPD |
 
 Menu à boutons (tous canaux) : Trouver · Procédures · Candidater · Formations · Mon espace · Aide.
@@ -114,9 +115,10 @@ Le sous-menu « Procédures » liste Campus France + les candidatures en cours (
 - ~~**OCR** (CV scannés) : `tesseract-ocr` + `pytesseract`~~ ✅ **fait (v2.9)** — repli OCR automatique
   dans `extract_text_pdf` quand le PDF n'a pas de texte sélectionnable.
 - ~~**DOCX** : export modifiable (`python-docx`).~~ ✅ **fait (v2.12)** — CV + lettre en Word.
-- **Sources structurées +** : API emploi (Adzuna free), EURAXESS, RSS additionnels.
-- ~~**Matching sémantique** (embeddings)~~ ✅ **fait (v2.12)** — similarité de sens profil↔offres
-  (`text-embedding-004`, repli mots-clés). Reste : **routing de modèle** (petit modèle pour tâches simples).
+- ~~**Sources structurées +** : API emploi (Adzuna free)~~ ✅ **fait (v2.13)** — arbeitnow + Adzuna.
+  Reste : EURAXESS, RSS additionnels.
+- ~~**Matching sémantique** (embeddings)~~ ✅ **fait (v2.12)** · ~~**routing de modèle**~~ ✅ **fait (v2.13)**.
+- ~~Rappels programmables · feedback 👍/👎~~ ✅ **fait (v2.13)**.
 - **Boutons inline avancés / sous-menus** enrichis, multilingue (EN).
 - **Sécurité** : sortir `.env` de l'image (env runtime uniquement).
 

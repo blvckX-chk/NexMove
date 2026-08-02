@@ -20,7 +20,7 @@ Telegram / WhatsApp / Messenger. Les canaux sont **indépendants** et partagent 
 ## Commandes
 
 `/start` · `/tuto` · `/veille` · `/mobilite <pays/domaine>` · `/campusfrance` · `/parcours` · `/etape` ·
-`/dossier <cible>` · `/postuler <cible>` · `/formations <domaine>` · `/profil` · `/status` · `/supprimer`
+`/dossier <cible>` · `/postuler <cible>` · `/formations <domaine>` · `/rappels` · `/digest` · `/profil` · `/status` · `/supprimer`
 (menu à boutons : Trouver · Procédures · Candidater · Formations · Mon espace · Aide).
 
 ## Fonctionnalités clés
