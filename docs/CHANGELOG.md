@@ -2,6 +2,18 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.11 — Performance & robustesse (passe senior)
+- **Client HTTP partagé** : un seul `httpx.AsyncClient` avec pool keep-alive pour *tous* les appels
+  sortants (LLM, Tavily, Telegram, WhatsApp, Messenger) au lieu d'un nouveau client (handshake TCP/TLS) à
+  chaque requête. Gain de latence et de sockets sous forte charge (100+ testeurs), fermé proprement au
+  shutdown.
+- **Travail bloquant hors boucle asyncio** : l'OCR (tesseract), l'extraction PDF et la génération des PDF
+  (reportlab) passent par `asyncio.to_thread`. Un CV scanné lourd ne gèle plus les autres utilisateurs du
+  worker pendant plusieurs secondes.
+- **Anti-message perdu (Telegram)** : si un `*`/`_`/`[` déséquilibré (texte LLM ou utilisateur) fait
+  échouer l'envoi Markdown (400 « can't parse entities »), on renvoie automatiquement en texte brut — le
+  message arrive toujours.
+
 ## v2.10.1 — Menu à la demande (moins de bruit)
 - Le **menu à boutons ne se ré-affiche plus à chaque réponse** (onboarding comme mode actif). Il apparaît
   seulement quand c'est utile : **une fois** à la validation du profil, et sur demande via **`/menu`**

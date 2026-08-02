@@ -73,7 +73,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.10.1"
+VERSION         = "2.11.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -103,6 +103,24 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 
 app = FastAPI(title="NexMove API", version=VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Client HTTP unique et partagé (pool de connexions keep-alive) : évite un handshake TCP/TLS
+# à chaque appel sortant (LLM, Tavily, Telegram, WhatsApp, Messenger). Le timeout est passé par requête.
+_http_client: Optional[httpx.AsyncClient] = None
+
+def http() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30.0,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+        )
+    return _http_client
+
+@app.on_event("shutdown")
+async def _shutdown_http():
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
 
 class ChatRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=50)
@@ -163,8 +181,7 @@ async def _llm_openai(prov, system_prompt, user_prompt, temperature, max_tokens,
                "temperature": temperature, "max_tokens": max_tokens}
     if json_mode:
         payload["response_format"] = {"type": "json_object"}
-    async with httpx.AsyncClient(timeout=28.0) as client:
-        r = await client.post(prov["url"], headers={"Authorization": f"Bearer {prov['key']}"}, json=payload)
+    r = await http().post(prov["url"], headers={"Authorization": f"Bearer {prov['key']}"}, json=payload, timeout=28.0)
     if r.status_code in _LLM_FALLBACK_STATUS:
         raise _LLMFallback(f"{prov['name']} {r.status_code}")
     if r.status_code != 200:
@@ -176,8 +193,7 @@ async def _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens,
     if json_mode:
         gen["responseMimeType"] = "application/json"
     payload = {"contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}], "generationConfig": gen}
-    async with httpx.AsyncClient(timeout=28.0) as client:
-        r = await client.post(f"{prov['url']}?key={prov['key']}", json=payload)
+    r = await http().post(f"{prov['url']}?key={prov['key']}", json=payload, timeout=28.0)
     if r.status_code in _LLM_FALLBACK_STATUS:
         raise _LLMFallback(f"gemini {r.status_code}")
     if r.status_code != 200:
@@ -725,8 +741,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
                 pack = await generate_pack(profil, cible_desc, type_cible)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = build_cv_pdf(profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
@@ -786,8 +802,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if r.get("conseils"):
                     msg += "💡 *Conseils :*\n" + "\n".join(f"• {_md_clean(c)}" for c in r["conseils"][:5]) + "\n\n"
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = build_cv_pdf(profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                lm_buf = build_letter_pdf(profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
                 nom = _slug(ident.get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
@@ -1044,12 +1060,12 @@ async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
     if not TELEGRAM_TOKEN:
         return False
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
-                data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
-                files={"document": (filename, pdf_bytes, "application/pdf")},
-            )
+        r = await http().post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
+            data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
+            files={"document": (filename, pdf_bytes, "application/pdf")},
+            timeout=45.0,
+        )
         return r.status_code == 200
     except Exception as e:
         logger.error(f"sendDocument erreur: {e}")
@@ -1059,8 +1075,7 @@ async def _tg(method, payload):
     if not TELEGRAM_TOKEN:
         return False
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            r = await client.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}", json=payload)
+        r = await http().post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}", json=payload, timeout=25.0)
         if r.status_code != 200:
             logger.error(f"tg {method} {r.status_code}: {r.text[:150]}")
         return r.status_code == 200
@@ -1072,7 +1087,13 @@ async def send_message(chat_id, text, keyboard=None):
     payload = {"chat_id": str(chat_id), "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
     if keyboard:
         payload["reply_markup"] = keyboard
-    return await _tg("sendMessage", payload)
+    ok = await _tg("sendMessage", payload)
+    if not ok:
+        # Repli sans Markdown : un * _ [ ] déséquilibré (texte LLM/utilisateur) provoque un 400
+        # "can't parse entities" et le message serait perdu. On renvoie en texte brut.
+        payload.pop("parse_mode", None)
+        ok = await _tg("sendMessage", payload)
+    return ok
 
 async def _send_telegram_message(chat_id, text):
     return await send_message(chat_id, text)
@@ -1085,7 +1106,11 @@ async def edit_message(chat_id, message_id, text, keyboard=None):
     payload = {"chat_id": str(chat_id), "message_id": mid, "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
     if keyboard:
         payload["reply_markup"] = keyboard
-    return await _tg("editMessageText", payload)
+    ok = await _tg("editMessageText", payload)
+    if not ok:
+        payload.pop("parse_mode", None)
+        ok = await _tg("editMessageText", payload)
+    return ok
 
 async def answer_callback(cb_id, text=""):
     return await _tg("answerCallbackQuery", {"callback_query_id": str(cb_id), "text": text[:180]})
@@ -1144,9 +1169,8 @@ async def wa_send(payload):
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
         return False
     try:
-        async with httpx.AsyncClient(timeout=25.0) as c:
-            r = await c.post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages",
-                             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, json=payload)
+        r = await http().post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages",
+                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, json=payload, timeout=25.0)
         if r.status_code != 200:
             logger.error(f"wa {r.status_code}: {r.text[:200]}")
         return r.status_code == 200
@@ -1173,15 +1197,14 @@ async def wa_document(to, filename, data, caption=""):
     if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
         return False
     try:
-        async with httpx.AsyncClient(timeout=45.0) as c:
-            up = await c.post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/media",
-                              headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                              data={"messaging_product": "whatsapp", "type": "application/pdf"},
-                              files={"file": (filename, data, "application/pdf")})
-            if up.status_code != 200:
-                logger.error(f"wa media {up.status_code}: {up.text[:200]}")
-                return False
-            mid = up.json().get("id")
+        up = await http().post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/media",
+                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+                               data={"messaging_product": "whatsapp", "type": "application/pdf"},
+                               files={"file": (filename, data, "application/pdf")}, timeout=45.0)
+        if up.status_code != 200:
+            logger.error(f"wa media {up.status_code}: {up.text[:200]}")
+            return False
+        mid = up.json().get("id")
         return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "document",
                               "document": {"id": mid, "filename": filename, "caption": (caption or "")[:900]}})
     except Exception as e:
@@ -1192,13 +1215,13 @@ async def wa_get_media(media_id):
     if not WHATSAPP_TOKEN:
         return None
     try:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            meta = await c.get(f"https://graph.facebook.com/v21.0/{media_id}",
-                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
-            url = meta.json().get("url")
-            if not url:
-                return None
-            r = await c.get(url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
+        cli = http()
+        meta = await cli.get(f"https://graph.facebook.com/v21.0/{media_id}",
+                             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, timeout=30.0)
+        url = meta.json().get("url")
+        if not url:
+            return None
+        r = await cli.get(url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, timeout=30.0)
         return r.content if r.status_code == 200 else None
     except Exception as e:
         logger.error(f"wa get_media: {e}")
@@ -1209,9 +1232,8 @@ async def fb_send(payload):
     if not MESSENGER_TOKEN:
         return False
     try:
-        async with httpx.AsyncClient(timeout=25.0) as c:
-            r = await c.post("https://graph.facebook.com/v21.0/me/messages",
-                             params={"access_token": MESSENGER_TOKEN}, json=payload)
+        r = await http().post("https://graph.facebook.com/v21.0/me/messages",
+                              params={"access_token": MESSENGER_TOKEN}, json=payload, timeout=25.0)
         if r.status_code != 200:
             logger.error(f"fb {r.status_code}: {r.text[:200]}")
         return r.status_code == 200
@@ -1232,11 +1254,10 @@ async def fb_document(to, filename, data, caption=""):
     try:
         if caption:
             await fb_text(to, caption)
-        async with httpx.AsyncClient(timeout=45.0) as c:
-            r = await c.post("https://graph.facebook.com/v21.0/me/messages", params={"access_token": MESSENGER_TOKEN},
-                             data={"recipient": json.dumps({"id": str(to)}),
-                                   "message": json.dumps({"attachment": {"type": "file", "payload": {"is_reusable": False}}})},
-                             files={"filedata": (filename, data, "application/pdf")})
+        r = await http().post("https://graph.facebook.com/v21.0/me/messages", params={"access_token": MESSENGER_TOKEN},
+                              data={"recipient": json.dumps({"id": str(to)}),
+                                    "message": json.dumps({"attachment": {"type": "file", "payload": {"is_reusable": False}}})},
+                              files={"filedata": (filename, data, "application/pdf")}, timeout=45.0)
         return r.status_code == 200
     except Exception as e:
         logger.error(f"fb doc: {e}")
@@ -1306,7 +1327,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         await deliver_text(session, "❌ PDF illisible ou trop lourd (max 20 Mo).")
         return
     try:
-        cv_text = extract_text_pdf(pdf_bytes)
+        cv_text = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
     except Exception:
         cv_text = ""
     if not cv_text or len(cv_text.strip()) < 50:
@@ -1386,8 +1407,7 @@ async def _download_doc(channel, doc):
         if not url:
             return None
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as c:
-                r = await c.get(url)
+            r = await http().get(url, timeout=30.0, follow_redirects=True)
             return r.content if r.status_code == 200 else None
         except Exception:
             return None
@@ -1501,7 +1521,7 @@ async def parse_cv(file: UploadFile = File(...), user_id: str = Form("unknown"),
     if not (file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")):
         raise HTTPException(415, "PDF requis.")
     pdf_bytes = await file.read()
-    cv_text = extract_text_pdf(pdf_bytes)
+    cv_text = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
     if not cv_text.strip():
         raise HTTPException(422, "PDF vide ou scanné sans OCR.")
     system = "Tu es expert en analyse de CV. JSON uniquement."
@@ -1521,8 +1541,8 @@ async def generate_documents(request: GenerateDocumentsRequest, _auth: bool = De
     cible_desc = f"{titre} — {entreprise}"
     pack = await generate_pack(profil, cible_desc, type_cible)
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-    cv_buf = build_cv_pdf(profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
-    lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+    cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
+    lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
     nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
     return {"success": True, "user_id": request.user_id,
             "cv_pdf_base64": pdf_to_b64(cv_buf), "cv_filename": f"CV_{nom}.pdf",
@@ -1551,14 +1571,13 @@ async def tavily_search(query: str, max_results: int = 7) -> list:
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            r = await client.post("https://api.tavily.com/search", json={
-                "api_key": TAVILY_API_KEY,
-                "query": query,
-                "search_depth": "advanced",
-                "max_results": max_results,
-                "include_answer": False,
-            })
+        r = await http().post("https://api.tavily.com/search", json={
+            "api_key": TAVILY_API_KEY,
+            "query": query,
+            "search_depth": "advanced",
+            "max_results": max_results,
+            "include_answer": False,
+        }, timeout=25.0)
         if r.status_code != 200:
             logger.error(f"Tavily {r.status_code}: {r.text[:200]}")
             return []
@@ -1578,8 +1597,7 @@ SOURCE_FEEDS = [
 
 async def fetch_rss(url: str) -> list:
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            r = await client.get(url, headers={"User-Agent": "NexMoveBot/1.0"})
+        r = await http().get(url, headers={"User-Agent": "NexMoveBot/1.0"}, timeout=15.0, follow_redirects=True)
         if r.status_code != 200:
             return []
         root = ET.fromstring(r.content)
