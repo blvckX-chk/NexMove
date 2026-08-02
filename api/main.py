@@ -73,7 +73,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.9.0"
+VERSION         = "2.10.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -419,6 +419,38 @@ PREF_QUESTIONS = [
     ("niveau", "🎓 Ton niveau ? (étudiant / professionnel)"),
     ("mots_cles", "🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)"),
 ]
+
+def valider_pref(field: str, value: str) -> tuple[bool, str]:
+    """Vérifie la cohérence d'une réponse d'onboarding.
+    Retourne (valide, indice). L'indice est affiché quand la réponse est incohérente."""
+    v = (value or "").strip()
+    low = v.lower()
+    if not v or low.startswith("/"):
+        return False, "Réponds directement à la question (pas une commande)."
+    if len(v) < 2:
+        return False, "Réponse trop courte, précise un peu."
+    if field == "objectif":
+        if any(k in low for k in ("travail", "étud", "etud", "bourse", "fellowship", "tous", "tout", "stage", "emploi", "job", "master", "doctorat")):
+            return True, ""
+        return False, "Choisis parmi : travailler / étudier / bourse / fellowship / tous."
+    if field == "financement":
+        if any(k in low for k in ("bourse", "auto", "finance", "peu importe", "propre", "moyen", "fonds", "économie", "economie", "parent", "épargne", "epargne")):
+            return True, ""
+        return False, "Réponds : bourse indispensable / auto-financement / peu importe."
+    if field == "certifs_langue":
+        if any(k in low for k in ("ielts", "toefl", "tcf", "tef", "delf", "dalf", "cambridge", "goethe", "duolingo", "linguaskill", "aucun", "non", "rien", "sans", "pas de", "pas encore")) or any(c.isdigit() for c in low):
+            return True, ""
+        return False, "Indique un test réel (IELTS, TOEFL, TCF, DELF… avec le score) ou « aucune »."
+    if field == "langues_opportunite":
+        if any(k in low for k in ("franç", "franc", "anglais", "english", "deux", "both", "tous", "toutes", "peu importe")) or low in ("fr", "en"):
+            return True, ""
+        return False, "Réponds : français / anglais / les deux."
+    if field == "niveau":
+        if any(k in low for k in ("étud", "etud", "pro", "licence", "master", "bac", "doctorat", "phd", "travaill", "junior", "senior", "débutant", "debutant", "confirmé", "confirme", "diplôm", "diplom")):
+            return True, ""
+        return False, "Réponds : étudiant ou professionnel (ou ton dernier diplôme : licence, master…)."
+    # Champs libres (nationalite, pays_cibles, mots_cles) : on accepte tout texte non-commande.
+    return True, ""
 
 AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🔎 *Trouver des opportunités*\n"
@@ -819,7 +851,14 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
         if 0 <= idx < len(PREF_QUESTIONS):
-            prefs[PREF_QUESTIONS[idx][0]] = t
+            field = PREF_QUESTIONS[idx][0]
+            ok, indice = valider_pref(field, t)
+            if not ok:
+                _push(session, "user", t)
+                q = f"🤔 {indice}\n\n{PREF_QUESTIONS[idx][1]}"
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            prefs[field] = t
             profil["preferences"] = prefs; session["profil"] = profil
         idx += 1; session["pref_index"] = idx
         _push(session, "user", t)
@@ -930,8 +969,8 @@ GRIS = HexColor("#546e7a")
 def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
-    s_nom = ParagraphStyle("n", fontSize=20, textColor=BLEU, fontName="Helvetica-Bold", spaceAfter=2)
-    s_sous = ParagraphStyle("s", fontSize=11, textColor=GRIS, fontName="Helvetica-Oblique", spaceAfter=8)
+    s_nom = ParagraphStyle("n", fontSize=19, leading=23, textColor=BLEU, fontName="Helvetica-Bold", spaceBefore=0, spaceAfter=5)
+    s_sous = ParagraphStyle("s", fontSize=11, leading=14, textColor=GRIS, fontName="Helvetica-Oblique", spaceAfter=6)
     s_sec = ParagraphStyle("se", fontSize=11, textColor=BLEU, fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4)
     s_body = ParagraphStyle("b", fontSize=9.5, fontName="Helvetica", spaceAfter=3, leading=13)
     s_bullet = ParagraphStyle("bu", fontSize=9.5, fontName="Helvetica", spaceAfter=2, leftIndent=12)
@@ -939,12 +978,13 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list) -> io
     formation = profil.get("formation", [])
     experience = profil.get("experience", [])
     els = []
-    els.append(Paragraph(identite.get("nom", "Candidat"), s_nom))
-    els.append(Paragraph(titre, s_sous))
+    els.append(Paragraph(_xml(identite.get("nom", "Candidat")), s_nom))
+    if titre:
+        els.append(Paragraph(_xml(titre), s_sous))
     contacts = [x for x in [identite.get("email"), identite.get("telephone"), identite.get("localisation")] if x]
     if contacts:
-        els.append(Paragraph(" · ".join(contacts), s_body))
-    els.append(HRFlowable(width="100%", thickness=2, color=BLEU, spaceAfter=8))
+        els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
+    els.append(HRFlowable(width="100%", thickness=1.5, color=BLEU, spaceBefore=6, spaceAfter=10))
     if resume:
         els.append(Paragraph("PROFIL", s_sec))
         els.append(Paragraph(resume, s_body))
@@ -1273,11 +1313,23 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         else:
             await deliver_text(session, "❌ Impossible de lire ce PDF, même après OCR.\n\nVérifie que le document est lisible (bonne qualité) ou envoie un PDF avec texte sélectionnable.")
         return
-    system = "Tu es expert en analyse de CV. Extrais toutes les informations. JSON uniquement."
-    prompt = f"""Analyse ce CV:
-{{"identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
-CV: {cv_text[:6000]}"""
+    system = ("Tu es expert en analyse de CV. D'abord détermine si le document EST un CV/résumé "
+              "professionnel (identité + parcours/formation/expérience/compétences). Si ce n'est PAS un CV "
+              "(facture, article, cours, lettre, relevé, capture, texte quelconque), mets \"est_cv\": false "
+              "et laisse les autres champs vides. Réponds en JSON uniquement.")
+    prompt = f"""Analyse ce document:
+{{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
+Document: {cv_text[:6000]}"""
     profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+    # Rejet des documents qui ne sont pas des CV (retour testeurs)
+    ident = profil.get("identite", {}) or {}
+    a_du_contenu = bool(profil.get("formation") or profil.get("experience") or
+                        any((profil.get("competences", {}) or {}).values()))
+    if profil.get("est_cv") is False or not (ident.get("nom") or a_du_contenu):
+        raison = profil.get("raison_rejet") or "il ne ressemble pas à un CV"
+        await deliver_text(session, f"❌ Ce document n'a pas été accepté : {raison}.\n\nEnvoie ton *CV* (formation, expériences, compétences) en PDF pour démarrer.")
+        logger.info(f"[cv] {session.get('channel')} document rejeté (non-CV)")
+        return
     nom = profil.get("identite", {}).get("nom", "N/A")
     diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
@@ -1366,19 +1418,41 @@ async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi
     ident = profil.get("identite", {})
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:12]
     resume = profil.get("resume_profil", "")
+    # Ancrer la lettre dans le vécu réel du candidat (expériences + formations) pour éviter le texte générique.
+    exp_lignes = []
+    for e in (profil.get("experience", []) or [])[:4]:
+        poste = e.get("poste", ""); org = e.get("organisation", "")
+        missions = "; ".join((e.get("missions", []) or [])[:2])
+        exp_lignes.append(f"- {poste} @ {org} : {missions}".strip())
+    form_lignes = []
+    for f in (profil.get("formation", []) or [])[:3]:
+        form_lignes.append(f"- {f.get('diplome','')} ({f.get('domaine','')}), {f.get('etablissement','')}".strip())
+    experiences_txt = "\n".join(exp_lignes) or "(aucune expérience renseignée)"
+    formations_txt = "\n".join(form_lignes) or "(aucune formation renseignée)"
     if type_cible == "bourse":
         consigne = ("Rédige un CV adapté ET une lettre de motivation académique (statement of purpose) pour cette bourse/programme. "
-                    "La lettre met en avant le projet d'études, la motivation, l'adéquation au programme et l'impact visé.")
+                    "La lettre met en avant le projet d'études, la motivation, l'adéquation au programme et l'impact visé au retour.")
     else:
         consigne = ("Rédige un CV adapté ET une lettre de motivation professionnelle ciblée pour ce poste. "
                     "Structure : accroche, adéquation profil/poste, valeur ajoutée, conclusion.")
-    system = "Tu es expert en recrutement et candidatures internationales. Français impeccable, concret, sans clichés. JSON uniquement."
+    system = ("Tu es expert en recrutement et candidatures internationales. Français impeccable et NATUREL, comme "
+              "écrit par la personne elle-même. INTERDIT : les tournures d'IA et clichés (« je suis convaincu que », "
+              "« correspond parfaitement à mes aspirations », « dynamique et motivé », « c'est avec un grand "
+              "intérêt », « fort de mon expérience »). Appuie CHAQUE argument sur un fait CONCRET du profil "
+              "(expérience, mission, diplôme, compétence réels ci-dessous) — jamais de généralités. JSON uniquement.")
     prompt = f"""{consigne}
 CANDIDAT: {ident.get('nom','')}
 RÉSUMÉ: {resume}
+FORMATIONS:
+{formations_txt}
+EXPÉRIENCES:
+{experiences_txt}
 COMPÉTENCES: {competences}
 CIBLE: {cible_desc}
-La lettre (lettre_corps) fait 250-320 mots, paragraphes séparés par une ligne vide, sans en-tête ni signature.
+
+Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par une ligne vide, sans en-tête ni
+signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
+professionnel, phrases variées, pas de superlatifs creux.
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
     return await call_groq(system, prompt, temperature=0.4, max_tokens=1200)
 

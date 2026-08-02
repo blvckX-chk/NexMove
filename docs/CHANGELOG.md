@@ -2,6 +2,18 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.10 — Corrections retours testeurs
+- **Rejet des fichiers non-CV** : à l'analyse, le LLM juge d'abord si le document est bien un CV
+  (`est_cv`) ; sinon (facture, article, capture, texte quelconque) il est refusé au lieu de valider un
+  profil vide. Double garde-fou heuristique (nom + formation/expérience/compétences présents).
+- **Onboarding cohérent** : chaque réponse est validée (`valider_pref`). Les commandes tapées par erreur
+  (`/hej`…) et les réponses incohérentes (ex. « Taf » comme certification de langue) sont refusées avec un
+  indice, sans avancer — fini les profils validés avec une syntaxe fausse.
+- **Documents PDF** : en-tête du CV corrigé (nom + titre plus aérés, interlignage explicite, échappement
+  XML) — plus de chevauchement en haut. Génération CV/lettre **ancrée sur les expériences et formations
+  réelles** du candidat, avec interdiction explicite des tournures d'IA et clichés (« je suis convaincu
+  que », « correspond parfaitement »…).
+
 ## v2.9 — OCR des CV scannés
 - **OCR automatique** (`tesseract-ocr` + `pytesseract`) : quand un PDF ne contient pas de texte
   sélectionnable (CV scanné / photographié), `extract_text_pdf` bascule sur un rendu image page par page
