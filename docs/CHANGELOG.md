@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.10.1 — Menu à la demande (moins de bruit)
+- Le **menu à boutons ne se ré-affiche plus à chaque réponse** (onboarding comme mode actif). Il apparaît
+  seulement quand c'est utile : **une fois** à la validation du profil, et sur demande via **`/menu`**
+  (ou `/aide`). Discussions plus courtes et lisibles.
+
 ## v2.10 — Corrections retours testeurs
 - **Rejet des fichiers non-CV** : à l'analyse, le LLM juge d'abord si le document est bien un CV
   (`est_cv`) ; sinon (facture, article, capture, texte quelconque) il est refusé au lieu de valider un

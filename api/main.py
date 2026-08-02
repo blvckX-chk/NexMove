@@ -73,7 +73,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.10.0"
+VERSION         = "2.10.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -545,8 +545,9 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    if low.startswith("/aide") or low.startswith("/help"):
+    if low.startswith("/aide") or low.startswith("/help") or low.startswith("/menu"):
         _push(session, "user", t); _push(session, "assistant", AIDE_TXT); session["derniere_activite"] = now
+        session["_show_menu"] = True
         return AIDE_TXT, session
 
     if low.startswith("/tuto") or low.startswith("/guide"):
@@ -875,8 +876,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         if detecter_reponse_positive(t):
             session["etape"] = "ACTIF"; session["onboarding_complete"] = True
+            session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
             msg = ("🎉 *Profil validé !* Je vais chercher des opportunités adaptées.\n\n"
-                   "Commandes : /mobilite <pays/domaine>, /status, /profil, /aide.")
+                   "Utilise le menu ci-dessous, ou tape /menu à tout moment pour le rouvrir.")
         else:
             session["etape"] = "PREFERENCES"; session["pref_index"] = 0
             msg = "Pas de souci, on reprend.\n\n" + PREF_QUESTIONS[0][1]
@@ -1411,8 +1413,9 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
             await deliver_text(session, "⚠️ Trop de messages. Attends une minute.")
             return
         msg, session = await process_text_message(session, text)
+        show_menu = session.pop("_show_menu", False)
         session_manager.set(user_id, session)
-        await deliver_text(session, msg, with_menu=session.get("onboarding_complete"))
+        await deliver_text(session, msg, with_menu=show_menu)
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})
@@ -1474,8 +1477,9 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
         return {"ok": True}
     logger.info(f"[chat] tg user={uid} text={request.text[:50]!r}")
     message, session = await process_text_message(session, request.text)
+    show_menu = session.pop("_show_menu", False)
     session_manager.set(uid, session)
-    await deliver_text(session, message, with_menu=session.get("onboarding_complete"))
+    await deliver_text(session, message, with_menu=show_menu)
     return {"ok": True}
 
 @app.post("/api/chat-cv")
