@@ -84,7 +84,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.16.1"
+VERSION         = "2.17.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -97,6 +97,10 @@ ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
 ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr").split(",") if c.strip()][:4]
 # Requêtes de secours si aucun mot-clé utilisateur n'est disponible.
 ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
+# Veille : par défaut, la collecte NE lance PAS un appel LLM (osint Tavily) par utilisateur — sinon les
+# quotas gratuits explosent (429) avec beaucoup de testeurs. Le digest s'appuie sur le pool de sources
+# (RSS + Adzuna + EURAXESS + arbeitnow) matché par profil. L'osint complet reste dispo à la demande (/mobilite).
+COLLECT_OSINT_PER_USER = os.getenv("COLLECT_OSINT_PER_USER", "0").lower() in ("1", "true", "yes", "on")
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -464,33 +468,46 @@ cache = Cache()
 # réutilise GEMINI_API_KEY — zéro dépendance lourde côté image). Repli gracieux : si aucune
 # clé/erreur, on retombe sur l'ordre existant (mots-clés + LLM). Vecteurs mis en cache 7 jours
 # (les titres d'offres se répètent entre utilisateurs → cache partagé, quotas préservés).
-EMBED_MODEL = "text-embedding-004"
+# Modèles d'embeddings candidats : selon la clé Gemini, tous ne sont pas disponibles.
+# On essaie dans l'ordre et on mémorise celui qui répond (ou False si aucun -> repli lexical).
+EMBED_MODELS = [m.strip() for m in os.getenv("EMBED_MODELS", "gemini-embedding-001,text-embedding-004,embedding-001").split(",") if m.strip()]
+_embed_model_ok = None   # None = pas encore testé ; str = modèle qui marche ; False = aucun
 
 def _embeddings_available() -> bool:
-    return bool(GEMINI_API_KEY)
+    return bool(GEMINI_API_KEY) and _embed_model_ok is not False
 
 async def embed_text(text: str):
+    global _embed_model_ok
     text = (text or "").strip()
-    if not text or not GEMINI_API_KEY:
+    if not text or not GEMINI_API_KEY or _embed_model_ok is False:
         return None
     key = "emb:" + hashlib.sha1(text[:2000].encode("utf-8", "ignore")).hexdigest()
     hit = cache.get(key)
     if hit is not None:
         return hit
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{EMBED_MODEL}:embedContent?key={GEMINI_API_KEY}"
-        payload = {"model": f"models/{EMBED_MODEL}", "content": {"parts": [{"text": text[:2000]}]}}
-        r = await http().post(url, json=payload, timeout=20.0)
-        if r.status_code != 200:
-            logger.warning(f"[embed] {r.status_code}: {r.text[:120]}")
+    models = [_embed_model_ok] if _embed_model_ok else list(EMBED_MODELS)
+    all_404 = True
+    for model in [m for m in models if m]:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:embedContent?key={GEMINI_API_KEY}"
+            r = await http().post(url, json={"model": f"models/{model}", "content": {"parts": [{"text": text[:2000]}]}}, timeout=20.0)
+        except Exception as e:
+            logger.warning(f"[embed] {e}")
             return None
+        if r.status_code == 404:
+            continue  # modèle indisponible pour cette clé -> candidat suivant
+        all_404 = False
+        if r.status_code != 200:
+            return None  # 429/erreur transitoire -> pas de spam, repli lexical ce tour-ci
         vec = (r.json().get("embedding") or {}).get("values")
         if vec:
+            _embed_model_ok = model
             cache.set(key, vec, 7 * 24 * 3600)
         return vec
-    except Exception as e:
-        logger.warning(f"[embed] {e}")
-        return None
+    if all_404:
+        _embed_model_ok = False
+        logger.warning("[embed] aucun modèle d'embeddings disponible pour cette clé -> matching lexical (mots-clés)")
+    return None
 
 def _cosine(a, b) -> float:
     if not a or not b:
@@ -2327,19 +2344,20 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
 async def collect(_auth: bool = Depends(verify_api_key)):
     ingested = await ingest_feeds() + await ingest_structured()
     users = session_manager.list_active()
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(3)
     async def _one(s):
         async with sem:
             n = 0
             profil = s.get("profil", {}) or {}
             prefs = profil.get("preferences", {}) or {}
-            try:
-                res = await run_osint(profil, "", s.get("user_id"))
-                for opp in res.get("opportunites", []):
-                    if opp_store.add(s.get("user_id"), opp):
-                        n += 1
-            except Exception as e:
-                logger.error(f"[collect] osint user={s.get('user_id')}: {e}")
+            if COLLECT_OSINT_PER_USER:
+                try:
+                    res = await run_osint(profil, "", s.get("user_id"))
+                    for opp in res.get("opportunites", []):
+                        if opp_store.add(s.get("user_id"), opp):
+                            n += 1
+                except Exception as e:
+                    logger.error(f"[collect] osint user={s.get('user_id')}: {e}")
             try:
                 kws = []
                 for key in ("mots_cles", "objectif", "pays_cibles"):

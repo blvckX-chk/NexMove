@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.17 — Correctifs quotas & embeddings (logs de prod)
+- **Embeddings réparés** : `text-embedding-004` était refusé (404) par la clé → le matching sémantique
+  était KO. On essaie maintenant plusieurs modèles (`gemini-embedding-001`, `text-embedding-004`,
+  `embedding-001`) et on retient le premier disponible ; si aucun, repli lexical **sans spam de logs**.
+- **Fin des 429 en cascade sur la veille** : la collecte ne lance plus un appel LLM (osint Tavily) **par
+  utilisateur** (16 users = 16 appels simultanés → quotas explosés). Le digest s'appuie sur le **pool de
+  sources** (RSS + Adzuna + EURAXESS + arbeitnow) matché par profil ; l'osint complet reste à la demande via
+  `/mobilite`. Réactivable avec `COLLECT_OSINT_PER_USER=1`. Concurrence collecte réduite (5→3).
+
 ## v2.16 — Fetcher EURAXESS (API adaptative)
 - **EURAXESS par API** au lieu du RSS : `fetch_euraxess(query)` interroge EURAXESS avec les **mots-clés
   réels des utilisateurs** (comme Adzuna). Endpoint **auto-sondé** parmi des candidats, ou fixé via
