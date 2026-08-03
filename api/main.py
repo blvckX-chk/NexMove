@@ -1,5 +1,6 @@
 import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re, math
 import xml.etree.ElementTree as ET
+from urllib.parse import quote
 from datetime import datetime, timezone
 from typing import Optional, Any
 
@@ -82,7 +83,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.15.0"
+VERSION         = "2.16.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1906,9 +1907,18 @@ SOURCE_FEEDS = [
 ]
 # Flux RSS supplémentaires ajoutables sans toucher au code (séparés par des virgules)
 SOURCE_FEEDS += [u.strip() for u in os.getenv("SOURCE_FEEDS_EXTRA", "").split(",") if u.strip()]
-# EURAXESS : coller ici le flux RSS d'une recherche EURAXESS (Jobs/Funding filtrée par pays/domaine).
-# Sur euraxess.ec.europa.eu > Jobs, on filtre puis on récupère le lien RSS de la recherche.
+# EURAXESS : flux RSS explicite (facultatif) d'une recherche filtrée.
 EURAXESS_RSS = os.getenv("EURAXESS_RSS", "")
+# EURAXESS API : endpoint de recherche ({q} = requête). Vide -> on tente des endpoints candidats.
+# Pour le fixer précisément : ouvrir euraxess.ec.europa.eu/jobs/search, F12 > Network > taper un mot,
+# copier l'URL de la requête qui renvoie du JSON et remplacer le mot par {q}.
+EURAXESS_API = os.getenv("EURAXESS_API", "")
+_EURAXESS_CANDIDATES = [
+    "https://euraxess.ec.europa.eu/api/search/jobs?text={q}",
+    "https://euraxess.ec.europa.eu/jobs/search?search_api_fulltext={q}&_format=json",
+    "https://euraxess.ec.europa.eu/api/jobs?keywords={q}&format=json",
+]
+_euraxess_working = None  # mémorise le template qui a répondu (évite de re-sonder)
 
 async def fetch_rss(url: str) -> list:
     try:
@@ -1988,15 +1998,100 @@ async def fetch_adzuna(query: str, country: str = "fr") -> list:
         logger.error(f"adzuna: {e}")
         return []
 
+def _euraxess_pick(item: dict):
+    """Extrait titre/url/description d'un item EURAXESS quel que soit le nom des champs."""
+    def first(keys):
+        for k in keys:
+            v = item.get(k)
+            if isinstance(v, dict):
+                v = v.get("value") or v.get("uri") or v.get("href")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+    titre = first(["title", "name", "jobTitle", "label", "offerTitle"])
+    url = first(["url", "link", "jobUrl", "detailUrl", "path", "alias", "self", "href"])
+    desc = first(["description", "summary", "teaser", "body", "abstract", "content"])
+    return titre, url, desc
+
+def _euraxess_items(payload):
+    """Retrouve la liste d'items dans une réponse JSON EURAXESS (formes variées)."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in ("results", "hits", "data", "jobs", "items", "content", "offers", "rows"):
+            v = payload.get(k)
+            if isinstance(v, list):
+                return v
+        emb = payload.get("_embedded")
+        if isinstance(emb, dict):
+            for v in emb.values():
+                if isinstance(v, list):
+                    return v
+    return []
+
+async def fetch_euraxess(query: str) -> list:
+    """Recherche EURAXESS (chercheurs/PhD/postdoc). Endpoint configurable ou auto-sondé, parse JSON ou XML."""
+    global _euraxess_working
+    if EURAXESS_API:
+        templates = [EURAXESS_API]
+    elif _euraxess_working:
+        templates = [_euraxess_working]
+    else:
+        templates = _EURAXESS_CANDIDATES
+    for tmpl in [t for t in templates if t]:
+        url = tmpl.replace("{q}", quote(query)).replace("{query}", quote(query))
+        try:
+            r = await http().get(url, headers={"User-Agent": "NexMoveBot/1.0", "Accept": "application/json"},
+                                 timeout=15.0, follow_redirects=True)
+            if r.status_code != 200:
+                continue
+            out = []
+            body = r.text.lstrip()
+            if "json" in r.headers.get("content-type", "").lower() or body[:1] in "{[":
+                for it in _euraxess_items(r.json())[:25]:
+                    if not isinstance(it, dict):
+                        continue
+                    titre, u, desc = _euraxess_pick(it)
+                    if titre and u:
+                        if u.startswith("/"):
+                            u = "https://euraxess.ec.europa.eu" + u
+                        out.append({"titre": titre, "url": u,
+                                    "resume": re.sub(r"<[^>]+>", " ", desc)[:300], "type": "fellowship", "date": ""})
+            else:
+                for it in ET.fromstring(r.content).iter("item"):
+                    titre = (it.findtext("title") or "").strip()
+                    link = (it.findtext("link") or "").strip()
+                    if titre and link:
+                        out.append({"titre": titre, "url": link,
+                                    "resume": re.sub(r"<[^>]+>", " ", (it.findtext("description") or ""))[:300],
+                                    "type": "fellowship", "date": ""})
+            if out:
+                _euraxess_working = tmpl
+                return out
+        except Exception as e:
+            logger.warning(f"[euraxess] {tmpl[:60]}: {e}")
+    return []
+
 async def ingest_euraxess() -> int:
-    """EURAXESS (recherche/PhD/postdoc en Europe) via flux RSS configurable. Tag type=fellowship."""
-    if not EURAXESS_RSS:
-        return 0
+    """EURAXESS via API (requêtes adaptées aux mots-clés des utilisateurs) + flux RSS explicite éventuel."""
     total = 0
-    for it in await fetch_rss(EURAXESS_RSS):
-        it["type"] = "fellowship"
-        if opp_store.add_source(it):
-            total += 1
+    queries = _collect_user_queries(6)
+    if queries:
+        # 1ère requête = découverte de l'endpoint ; si rien ne répond, on n'insiste pas.
+        first = await fetch_euraxess(queries[0])
+        if first:
+            for it in first:
+                if opp_store.add_source(it):
+                    total += 1
+            for q in queries[1:]:
+                for it in await fetch_euraxess(q):
+                    if opp_store.add_source(it):
+                        total += 1
+    if EURAXESS_RSS:
+        for it in await fetch_rss(EURAXESS_RSS):
+            it["type"] = "fellowship"
+            if opp_store.add_source(it):
+                total += 1
     return total
 
 def _collect_user_queries(limit: int = 8) -> list:
@@ -2384,7 +2479,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():

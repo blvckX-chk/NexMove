@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.16 — Fetcher EURAXESS (API adaptative)
+- **EURAXESS par API** au lieu du RSS : `fetch_euraxess(query)` interroge EURAXESS avec les **mots-clés
+  réels des utilisateurs** (comme Adzuna). Endpoint **auto-sondé** parmi des candidats, ou fixé via
+  `EURAXESS_API` (`{q}` = requête). Parseur **générique** (JSON de formes variées : results/hits/_embedded…,
+  ou XML/RSS) → titre/url/description quels que soient les noms de champs. Découverte à la 1ʳᵉ requête puis
+  arrêt si l'endpoint ne répond pas (pas de requêtes inutiles). Échec **silencieux et sûr** (n'ajoute rien,
+  ne casse pas la veille). Offres taguées `fellowship`. Le flux `EURAXESS_RSS` reste possible en complément.
+
 ## v2.15 — Adzuna adaptatif & multi-pays
 - **Requêtes Adzuna adaptatives** : au lieu d'une liste figée, les requêtes sont construites à partir des
   **mots-clés réels des utilisateurs actifs** (les plus fréquents d'abord) + compétences ; repli sur
