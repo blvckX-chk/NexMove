@@ -82,7 +82,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.14.0"
+VERSION         = "2.15.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -91,7 +91,9 @@ MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
 # Sources d'emplois structurées (open data). arbeitnow = sans clé ; Adzuna = clés gratuites optionnelles.
 ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
-ADZUNA_COUNTRY  = os.getenv("ADZUNA_COUNTRY", "fr")
+# Plusieurs pays possibles (séparés par des virgules) : ex "fr,ca,be". Doivent être supportés par Adzuna.
+ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr").split(",") if c.strip()][:4]
+# Requêtes de secours si aucun mot-clé utilisateur n'est disponible.
 ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
 
 _rate_store: dict[str, list[float]] = {}
@@ -1960,12 +1962,12 @@ async def fetch_arbeitnow() -> list:
         logger.error(f"arbeitnow: {e}")
         return []
 
-async def fetch_adzuna(query: str) -> list:
+async def fetch_adzuna(query: str, country: str = "fr") -> list:
     """API emploi Adzuna (clés gratuites). Ne fait rien si non configurée."""
     if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
         return []
     try:
-        url = f"https://api.adzuna.com/v1/api/jobs/{ADZUNA_COUNTRY}/search/1"
+        url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
         r = await http().get(url, params={"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY,
                                           "results_per_page": 20, "what": query, "content-type": "application/json"},
                              timeout=15.0, follow_redirects=True)
@@ -1997,6 +1999,25 @@ async def ingest_euraxess() -> int:
             total += 1
     return total
 
+def _collect_user_queries(limit: int = 8) -> list:
+    """Construit les requêtes Adzuna à partir des VRAIS mots-clés des utilisateurs actifs
+    (les plus fréquents d'abord) ; repli sur ADZUNA_QUERIES si aucun."""
+    from collections import Counter
+    c = Counter()
+    for s in session_manager.list_active():
+        prefs = (s.get("profil", {}) or {}).get("preferences", {}) or {}
+        for champ in ("mots_cles", "objectif"):
+            for m in re.split(r"[,/;]| et ", str(prefs.get(champ, ""))):
+                m = m.strip().lower()
+                if len(m) > 2 and m not in ("tous", "aucun", "aucune", "travailler", "etudier", "étudier"):
+                    c[m] += 1
+        for comp in (s.get("profil", {}) or {}).get("competences", {}).get("techniques", [])[:3]:
+            comp = str(comp).strip().lower()
+            if len(comp) > 2:
+                c[comp] += 1
+    qs = [w for w, _ in c.most_common(limit)]
+    return qs or ADZUNA_QUERIES
+
 async def ingest_structured() -> int:
     """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré + EURAXESS) dans le pool."""
     total = 0
@@ -2004,10 +2025,12 @@ async def ingest_structured() -> int:
         if opp_store.add_source(it):
             total += 1
     if ADZUNA_APP_ID and ADZUNA_APP_KEY:
-        for q in ADZUNA_QUERIES:
-            for it in await fetch_adzuna(q):
-                if opp_store.add_source(it):
-                    total += 1
+        queries = _collect_user_queries()          # requêtes adaptées aux mots-clés réels
+        for country in (ADZUNA_COUNTRIES or ["fr"]):
+            for q in queries:
+                for it in await fetch_adzuna(q, country):
+                    if opp_store.add_source(it):
+                        total += 1
     total += await ingest_euraxess()
     return total
 
@@ -2361,7 +2384,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "euraxess_configured": bool(EURAXESS_RSS), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():
