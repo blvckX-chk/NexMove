@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.17.2 — RSS tolérant (feeds mal formés)
+- `fetch_rss` : si le XML strict échoue (afterschoolafrica, youthop… : `&` nus, CDATA), repli sur une
+  extraction **régex tolérante** (gère CDATA + entités) ; page HTML → `[]` en silence. Log en warning au
+  lieu d'error.
+
 ## v2.17.1 — EURAXESS opérationnel + RSS anti-bot
 - **User-Agent navigateur** pour EURAXESS, les flux RSS et arbeitnow : certains sites (EURAXESS,
   afterschoolafrica, youthop) renvoyaient une page de blocage aux bots → plus d'offres/flux récupérés.

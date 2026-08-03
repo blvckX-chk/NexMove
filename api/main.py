@@ -84,7 +84,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.17.1"
+VERSION         = "2.17.2"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1943,24 +1943,41 @@ _euraxess_working = None  # mémorise le template qui a répondu (évite de re-s
 # on se présente avec un User-Agent de navigateur.
 _BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
 
+def _rss_regex(text: str) -> list:
+    """Extraction RSS tolérante (feeds WordPress mal formés : & nus, CDATA). Renvoie [] si pas d'items."""
+    def _tag(block, tag):
+        m = re.search(rf"<{tag}[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</{tag}>", block, re.S | re.I)
+        return m.group(1) if m else ""
+    out = []
+    for block in re.findall(r"<item[ >].*?</item>", text, re.S | re.I):
+        titre = _htmlmod.unescape(re.sub(r"<[^>]+>", " ", _tag(block, "title"))).strip()
+        link = _htmlmod.unescape(_tag(block, "link")).strip()
+        desc = _htmlmod.unescape(re.sub(r"<[^>]+>", " ", _tag(block, "description"))).strip()[:300]
+        if titre and link:
+            out.append({"titre": titre, "url": link, "resume": desc, "date": ""})
+    return out
+
 async def fetch_rss(url: str) -> list:
     try:
         r = await http().get(url, headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
         if r.status_code != 200:
             return []
-        root = ET.fromstring(r.content)
         items = []
-        for it in root.iter("item"):
-            titre = (it.findtext("title") or "").strip()
-            link = (it.findtext("link") or "").strip()
-            desc = re.sub("<[^>]+>", " ", (it.findtext("description") or ""))
-            desc = re.sub(r"\s+", " ", desc).strip()[:300]
-            pub = (it.findtext("pubDate") or "").strip()
-            if titre and link:
-                items.append({"titre": titre, "url": link, "resume": desc, "date": pub})
+        try:
+            root = ET.fromstring(r.content)
+            for it in root.iter("item"):
+                titre = (it.findtext("title") or "").strip()
+                link = (it.findtext("link") or "").strip()
+                desc = re.sub("<[^>]+>", " ", (it.findtext("description") or ""))
+                desc = re.sub(r"\s+", " ", desc).strip()[:300]
+                pub = (it.findtext("pubDate") or "").strip()
+                if titre and link:
+                    items.append({"titre": titre, "url": link, "resume": desc, "date": pub})
+        except Exception:
+            items = _rss_regex(r.text)   # feed mal formé -> parseur tolérant
         return items[:30]
     except Exception as e:
-        logger.error(f"RSS {url}: {e}")
+        logger.warning(f"RSS {url}: {e}")
         return []
 
 async def ingest_feeds() -> int:
