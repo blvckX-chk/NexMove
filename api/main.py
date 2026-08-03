@@ -1,4 +1,5 @@
 import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re, math
+import html as _htmlmod
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 from datetime import datetime, timezone
@@ -83,7 +84,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.16.0"
+VERSION         = "2.16.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1913,10 +1914,11 @@ EURAXESS_RSS = os.getenv("EURAXESS_RSS", "")
 # Pour le fixer précisément : ouvrir euraxess.ec.europa.eu/jobs/search, F12 > Network > taper un mot,
 # copier l'URL de la requête qui renvoie du JSON et remplacer le mot par {q}.
 EURAXESS_API = os.getenv("EURAXESS_API", "")
+# EURAXESS rend ses résultats en HTML (recherche à facettes Drupal) : on lit la page et on
+# extrait les liens d'offres. Le mot-clé va dans la facette keywords.
 _EURAXESS_CANDIDATES = [
-    "https://euraxess.ec.europa.eu/api/search/jobs?text={q}",
-    "https://euraxess.ec.europa.eu/jobs/search?search_api_fulltext={q}&_format=json",
-    "https://euraxess.ec.europa.eu/api/jobs?keywords={q}&format=json",
+    "https://euraxess.ec.europa.eu/jobs/search?f[0]=keywords:{q}",
+    "https://euraxess.ec.europa.eu/jobs/search?keywords={q}",
 ]
 _euraxess_working = None  # mémorise le template qui a répondu (évite de re-sonder)
 
@@ -2047,7 +2049,8 @@ async def fetch_euraxess(query: str) -> list:
                 continue
             out = []
             body = r.text.lstrip()
-            if "json" in r.headers.get("content-type", "").lower() or body[:1] in "{[":
+            ct = r.headers.get("content-type", "").lower()
+            if "json" in ct or body[:1] in "{[":
                 for it in _euraxess_items(r.json())[:25]:
                     if not isinstance(it, dict):
                         continue
@@ -2057,7 +2060,7 @@ async def fetch_euraxess(query: str) -> list:
                             u = "https://euraxess.ec.europa.eu" + u
                         out.append({"titre": titre, "url": u,
                                     "resume": re.sub(r"<[^>]+>", " ", desc)[:300], "type": "fellowship", "date": ""})
-            else:
+            elif body[:5].lower().startswith("<?xml") or "<rss" in body[:200].lower():
                 for it in ET.fromstring(r.content).iter("item"):
                     titre = (it.findtext("title") or "").strip()
                     link = (it.findtext("link") or "").strip()
@@ -2065,6 +2068,19 @@ async def fetch_euraxess(query: str) -> list:
                         out.append({"titre": titre, "url": link,
                                     "resume": re.sub(r"<[^>]+>", " ", (it.findtext("description") or ""))[:300],
                                     "type": "fellowship", "date": ""})
+            else:
+                # HTML : extraction des liens d'offres /jobs/<id> + intitulé
+                seen = set()
+                for m in re.finditer(r'href="(/jobs/[^"?#]*\d[^"?#]*)"[^>]*>(.*?)</a>', r.text, re.S | re.I):
+                    href = m.group(1)
+                    titre = _htmlmod.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(2))).strip())
+                    if href in seen or "/search" in href or len(titre) < 6:
+                        continue
+                    seen.add(href)
+                    out.append({"titre": titre[:150], "url": "https://euraxess.ec.europa.eu" + href,
+                                "resume": "", "type": "fellowship", "date": ""})
+                    if len(out) >= 25:
+                        break
             if out:
                 _euraxess_working = tmpl
                 return out
