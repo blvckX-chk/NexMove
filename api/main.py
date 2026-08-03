@@ -84,7 +84,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.17.0"
+VERSION         = "2.17.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1939,9 +1939,13 @@ _EURAXESS_CANDIDATES = [
 ]
 _euraxess_working = None  # mémorise le template qui a répondu (évite de re-sonder)
 
+# Certains sites (EURAXESS, afterschoolafrica, youthop…) renvoient une page de blocage aux bots :
+# on se présente avec un User-Agent de navigateur.
+_BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
+
 async def fetch_rss(url: str) -> list:
     try:
-        r = await http().get(url, headers={"User-Agent": "NexMoveBot/1.0"}, timeout=15.0, follow_redirects=True)
+        r = await http().get(url, headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
         if r.status_code != 200:
             return []
         root = ET.fromstring(r.content)
@@ -1972,7 +1976,7 @@ async def fetch_arbeitnow() -> list:
     """Job board ouvert (EU/tech, sans clé API). https://www.arbeitnow.com/api/job-board-api"""
     try:
         r = await http().get("https://www.arbeitnow.com/api/job-board-api",
-                             headers={"User-Agent": "NexMoveBot/1.0"}, timeout=15.0, follow_redirects=True)
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
         if r.status_code != 200:
             return []
         out = []
@@ -2060,7 +2064,8 @@ async def fetch_euraxess(query: str) -> list:
     for tmpl in [t for t in templates if t]:
         url = tmpl.replace("{q}", quote(query)).replace("{query}", quote(query))
         try:
-            r = await http().get(url, headers={"User-Agent": "NexMoveBot/1.0", "Accept": "application/json"},
+            r = await http().get(url, headers={"User-Agent": _BROWSER_UA,
+                                               "Accept": "text/html,application/xhtml+xml,application/json"},
                                  timeout=15.0, follow_redirects=True)
             if r.status_code != 200:
                 continue
@@ -2086,18 +2091,17 @@ async def fetch_euraxess(query: str) -> list:
                                     "resume": re.sub(r"<[^>]+>", " ", (it.findtext("description") or ""))[:300],
                                     "type": "fellowship", "date": ""})
             else:
-                # HTML : extraction des liens d'offres /jobs/<id> + intitulé
-                seen = set()
-                for m in re.finditer(r'href="(/jobs/[^"?#]*\d[^"?#]*)"[^>]*>(.*?)</a>', r.text, re.S | re.I):
+                # HTML : offres = liens /jobs/<id numérique>. Une carte a souvent 2 liens (image + titre) :
+                # on garde, par offre, l'intitulé le plus long (le vrai titre).
+                best = {}
+                for m in re.finditer(r'<a\s+[^>]*href="(/jobs/\d+)"[^>]*>(.*?)</a>', r.text, re.S | re.I):
                     href = m.group(1)
                     titre = _htmlmod.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(2))).strip())
-                    if href in seen or "/search" in href or len(titre) < 6:
-                        continue
-                    seen.add(href)
+                    if len(titre) >= 6 and (href not in best or len(titre) > len(best[href])):
+                        best[href] = titre
+                for href, titre in list(best.items())[:25]:
                     out.append({"titre": titre[:150], "url": "https://euraxess.ec.europa.eu" + href,
                                 "resume": "", "type": "fellowship", "date": ""})
-                    if len(out) >= 25:
-                        break
             if out:
                 _euraxess_working = tmpl
                 return out

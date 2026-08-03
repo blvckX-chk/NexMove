@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.17.1 — EURAXESS opérationnel + RSS anti-bot
+- **User-Agent navigateur** pour EURAXESS, les flux RSS et arbeitnow : certains sites (EURAXESS,
+  afterschoolafrica, youthop) renvoyaient une page de blocage aux bots → plus d'offres/flux récupérés.
+- **Extraction EURAXESS fiabilisée** : offres = liens `/jobs/<id>` ; comme une carte lie l'offre deux fois
+  (image + titre), on garde l'intitulé le plus long (le vrai titre) au lieu de rater l'offre.
+
 ## v2.17 — Correctifs quotas & embeddings (logs de prod)
 - **Embeddings réparés** : `text-embedding-004` était refusé (404) par la clé → le matching sémantique
   était KO. On essaie maintenant plusieurs modèles (`gemini-embedding-001`, `text-embedding-004`,
