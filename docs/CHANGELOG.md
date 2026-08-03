@@ -2,6 +2,21 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.14 — EURAXESS + RSS élargis & correctifs testeurs (rapport Carmelle)
+- **Sources élargies** : 4 flux RSS supplémentaires (afterschoolafrica, opportunitiesforyouth, youthop,
+  mladiinfo) + **EURAXESS** (recherche/PhD/postdoc EU) via `EURAXESS_RSS`, + `SOURCE_FEEDS_EXTRA` pour
+  ajouter des flux sans toucher au code. `/health` : `euraxess_configured`, `rss_feeds`.
+- **Correctifs retours testeurs :**
+  - *Diplôme principal* : le profil retient désormais le diplôme le **plus élevé/récent** (master avant
+    licence) — tri déterministe par niveau + année.
+  - *Objectif « travailler »* : nouvelle question **type de poste** (temps plein / partiel / télétravail /
+    alternance), injectée dans la recherche d'offres.
+  - *Doublons /mobilite* : anti-doublons entre deux `/mobilite` successifs (mémoire des URLs déjà vues).
+  - *Mots-clés multiples* : la recherche couvre désormais **tous** les mots-clés (requête OR + consigne de
+    diversité) au lieu d'un seul.
+  - *Faux assistant de dossier* : le mode conversationnel **ne simule plus** de formulaire multi-étapes ni
+    ne prétend créer un dossier — il renvoie vers la commande unique `/dossier <cible>` / `/postuler <cible>`.
+
 ## v2.13 — Routing de modèle · sources emploi · rappels programmables · feedback 👍/👎
 - **Routing de modèle** : les tâches simples (conversation libre en mode actif) partent sur un **petit
   modèle rapide** (llama-3.1-8b / gemini-flash) ; l'analyse CV, la sélection d'offres et la rédaction de

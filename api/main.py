@@ -82,7 +82,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.13.0"
+VERSION         = "2.14.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -531,6 +531,31 @@ def _get_notif(session: dict) -> dict:
     n = session.get("notif") or {}
     return {"enabled": n.get("enabled", True), "freq": n.get("freq", "quotidien"), "jour": n.get("jour", "lundi")}
 
+_NIVEAU_RANK = [
+    (("doctorat", "phd", "ph.d", "doctorate"), 5),
+    (("master", "ingénieur", "ingenieur", "msc", "mba", "m2", "m1", "dea", "dess", "magist"), 4),
+    (("licence", "bachelor", "bsc", "l3", "maîtrise", "maitrise"), 3),
+    (("bts", "dut", "deug", "dts", "l2", "l1"), 2),
+    (("baccalauréat", "baccalaureat", "bac", "high school"), 1),
+]
+
+def _diplome_rank(f: dict):
+    txt = f"{f.get('diplome','')} {f.get('domaine','')}".lower()
+    lvl = 0
+    for kws, r in _NIVEAU_RANK:
+        if any(k in txt for k in kws):
+            lvl = max(lvl, r)
+    m = re.search(r"(19|20)\d{2}", str(f.get("annee", "")))
+    return (lvl, int(m.group(0)) if m else 0)
+
+def _sort_formations(formation):
+    """Trie les formations du diplôme le PLUS ÉLEVÉ/récent au plus ancien (retour testeur :
+    le bot retenait la licence au lieu du master)."""
+    return sorted([f for f in (formation or []) if isinstance(f, dict)], key=_diplome_rank, reverse=True)
+
+def _is_travail(objectif) -> bool:
+    return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
+
 PREF_QUESTIONS = [
     ("objectif", "🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)"),
     ("nationalite", "🛂 Quelle est ta nationalité (pays du passeport) ?"),
@@ -645,7 +670,8 @@ def _resume_prefs(prefs):
             f"• Certifs langue : {prefs.get('certifs_langue','—')}\n"
             f"• Langue des offres : {prefs.get('langues_opportunite','—')}\n"
             f"• Niveau : {prefs.get('niveau','—')}\n"
-            f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
+            + (f"• Type de poste : {prefs.get('type_emploi')}\n" if prefs.get('type_emploi') else "")
+            + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
 
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
@@ -824,9 +850,16 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
         try:
-            res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"))
+            seen = set(session.get("seen_urls", []))
+            res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"), exclude_urls=seen)
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
-            _attach_feedback(session, res.get("opportunites", []))
+            opps = res.get("opportunites", [])
+            for o in opps:
+                u = o.get("url") or o.get("portail_officiel")
+                if u:
+                    seen.add(u)
+            session["seen_urls"] = list(seen)[-60:]
+            _attach_feedback(session, opps)
         except Exception as e:
             logger.error(f"Erreur mobilite: {e}")
             msg = "😕 L'analyse mobilité a échoué, réessaie dans un instant."
@@ -1042,7 +1075,29 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             q = PREF_QUESTIONS[idx][1]
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
+        # Question conditionnelle : type de poste (seulement si l'objectif est de travailler)
+        if _is_travail(prefs.get("objectif")) and not prefs.get("type_emploi"):
+            session["etape"] = "PREF_TYPE_EMPLOI"
+            q = "💼 Type de poste recherché ?\n(temps plein / temps partiel / télétravail / alternance / peu importe)"
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
         session["etape"] = "CONFIRMATION"
+        resume = _resume_prefs(prefs)
+        _push(session, "assistant", resume); session["derniere_activite"] = now
+        return resume, session
+
+    if etape == "PREF_TYPE_EMPLOI":
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        if t.strip().lower().startswith("/") or len(t.strip()) < 2:
+            _push(session, "user", t)
+            q = "🤔 Réponds à la question (sans commande).\n💼 Type de poste ? (temps plein / temps partiel / télétravail / alternance / peu importe)"
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        prefs["type_emploi"] = t.strip()
+        profil["preferences"] = prefs; session["profil"] = profil
+        session["etape"] = "CONFIRMATION"
+        _push(session, "user", t)
         resume = _resume_prefs(prefs)
         _push(session, "assistant", resume); session["derniere_activite"] = now
         return resume, session
@@ -1067,7 +1122,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 ETAPE: {etape}
 PROFIL: {profil_str}
 INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: francais, TUTOIE l'utilisateur, ton amical et encourageant, ne le re-salue PAS en pleine conversation, max 120 mots, propose une action utile (ex: /veille, /campusfrance, /dossier, /postuler), ne redemande jamais le CV si etape=ACTIF.
+REGLES: francais, TUTOIE l'utilisateur, ton amical et encourageant, ne le re-salue PAS en pleine conversation, max 120 mots, propose une action utile, ne redemande jamais le CV si etape=ACTIF.
+IMPORTANT: tu NE crées jamais toi-même un dossier, un CV ou une lettre dans la conversation, et tu ne lances JAMAIS de formulaire multi-étapes (ne demande pas l'objectif du poste, etc.). Pour générer des documents, indique la commande UNIQUE à taper en une fois, avec un exemple : « /dossier <cible> » (documents + CV + projet) ou « /postuler <cible> » (CV + lettre). N'affirme jamais avoir créé ou enregistré un document.
 JSON: {{"message":"..."}}"""
     try:
         llm = await call_groq(system, t, temperature=0.3, max_tokens=350, tier="fast")
@@ -1594,6 +1650,8 @@ Document: {cv_text[:6000]}"""
         await deliver_text(session, f"❌ Ce document n'a pas été accepté : {raison}.\n\nEnvoie ton *CV* (formation, expériences, compétences) en PDF pour démarrer.")
         logger.info(f"[cv] {session.get('channel')} document rejeté (non-CV)")
         return
+    # Diplôme principal en premier (le plus élevé/récent) — sinon le bot retenait la licence au lieu du master
+    profil["formation"] = _sort_formations(profil.get("formation"))
     nom = profil.get("identite", {}).get("nom", "N/A")
     diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
@@ -1838,7 +1896,17 @@ SOURCE_FEEDS = [
     "https://www.scholars4dev.com/feed/",
     "https://opportunitydesk.org/feed/",
     "https://www.opportunitiesforafricans.com/feed/",
+    # Sources additionnelles (bourses, mobilité, jeunesse, Afrique)
+    "https://afterschoolafrica.com/feed/",
+    "https://www.opportunitiesforyouth.org/feed/",
+    "https://youthop.com/feed/",
+    "https://mladiinfo.eu/feed/",
 ]
+# Flux RSS supplémentaires ajoutables sans toucher au code (séparés par des virgules)
+SOURCE_FEEDS += [u.strip() for u in os.getenv("SOURCE_FEEDS_EXTRA", "").split(",") if u.strip()]
+# EURAXESS : coller ici le flux RSS d'une recherche EURAXESS (Jobs/Funding filtrée par pays/domaine).
+# Sur euraxess.ec.europa.eu > Jobs, on filtre puis on récupère le lien RSS de la recherche.
+EURAXESS_RSS = os.getenv("EURAXESS_RSS", "")
 
 async def fetch_rss(url: str) -> list:
     try:
@@ -1918,8 +1986,19 @@ async def fetch_adzuna(query: str) -> list:
         logger.error(f"adzuna: {e}")
         return []
 
+async def ingest_euraxess() -> int:
+    """EURAXESS (recherche/PhD/postdoc en Europe) via flux RSS configurable. Tag type=fellowship."""
+    if not EURAXESS_RSS:
+        return 0
+    total = 0
+    for it in await fetch_rss(EURAXESS_RSS):
+        it["type"] = "fellowship"
+        if opp_store.add_source(it):
+            total += 1
+    return total
+
 async def ingest_structured() -> int:
-    """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré) dans le pool."""
+    """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré + EURAXESS) dans le pool."""
     total = 0
     for it in await fetch_arbeitnow():
         if opp_store.add_source(it):
@@ -1929,6 +2008,7 @@ async def ingest_structured() -> int:
             for it in await fetch_adzuna(q):
                 if opp_store.add_source(it):
                     total += 1
+    total += await ingest_euraxess()
     return total
 
 def _domain(url):
@@ -1956,8 +2036,9 @@ def _attach_feedback(session, opps):
         session["last_offers"] = lo
         session["_feedback_kb"] = kb
 
-async def run_osint(profil: dict, cible: str = "", user_id: str = "") -> dict:
+async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None) -> dict:
     profil = profil or {}
+    exclude_urls = exclude_urls or set()
     prefs = profil.get("preferences", {}) or {}
     nationalite = prefs.get("nationalite") or "béninoise"
     financement = prefs.get("financement") or "non précisé"
@@ -1968,11 +2049,13 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "") -> dict:
     experiences = [f"{e.get('poste','')} ({e.get('organisation','')})" for e in (profil.get("experience") or []) if e.get("poste")][:3]
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
     mots = prefs.get("mots_cles") or ""
-    if mots and mots.lower() not in ("tous", "aucun", "aucune", "-", ""):
+    mots_list = [m.strip() for m in re.split(r"[,/;]| et ", mots) if m.strip()] if mots and mots.lower() not in ("tous", "aucun", "aucune", "-", "") else []
+    if mots_list:
         domaine = mots
     else:
         last_poste = (profil.get("experience") or [{}])[0].get("poste", "")
         domaine = last_poste or (resume[:60]) or (formations[0] if formations else "") or "opportunités internationales"
+    type_emploi = prefs.get("type_emploi") or ""
     cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités internationales"
     cible_lower = cible.lower()
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
@@ -1987,8 +2070,9 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "") -> dict:
         type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
                     "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
         zone = pays_detecte or pays_cibles or ""
-        query = f"{type_mot} {domaine} {zone} 2026 candidature".strip()
-        grounded = await tavily_search(query, 8)
+        domaine_q = " OR ".join(mots_list) if len(mots_list) > 1 else domaine
+        query = f"{type_mot} {domaine_q} {type_emploi} {zone} 2026 candidature".strip()
+        grounded = await tavily_search(query, 10)
 
     if grounded:
         # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
@@ -2004,9 +2088,12 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "") -> dict:
                   "Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du candidat (respecte une éventuelle "
                   "reconversion : cible son domaine ACTUEL/visé, pas ses anciens diplômes). Réponds avec l'INDEX du résultat "
                   "(jamais d'URL inventée). Ignore le hors-sujet. JSON uniquement.")
+        diversite = (f"MOTS-CLÉS À COUVRIR (varie les résultats entre ces thèmes, pas tous sur le même) : {', '.join(mots_list)}.\n"
+                     if len(mots_list) > 1 else "")
+        type_emploi_txt = f"TYPE DE POSTE souhaité : {type_emploi}.\n" if type_emploi else ""
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
 DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or 'indifférent'}
-DATE DU JOUR: {today}. Exclus les deadlines passées.
+{diversite}{type_emploi_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
 Sélectionne 3 à 5 résultats PERTINENTS pour CE profil. Donne l'index de chacun.
@@ -2062,6 +2149,8 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
         except Exception:
             return True
     opps = [o for o in opps if _open(o)]
+    if exclude_urls:   # anti-doublons entre deux /mobilite d'affilée
+        opps = [o for o in opps if str(o.get("url", "") or o.get("portail_officiel", "")) not in exclude_urls]
     titre_aff = _md_clean(domaine)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
     msg = f"🌍 *NexMove — {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
@@ -2272,7 +2361,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "euraxess_configured": bool(EURAXESS_RSS), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/")
 async def root():
