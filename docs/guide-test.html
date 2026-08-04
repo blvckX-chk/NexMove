@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexMove — Guide de test (v2.20)</title>
+<style>
+  :root {
+    --navy: #0f2942;
+    --navy-soft: #1c3d5a;
+    --mint: #00d4a0;
+    --mint-dark: #00a37c;
+    --amber: #f5a623;
+    --red: #e05252;
+    --cream: #faf8f3;
+    --ink: #16222e;
+    --muted: #5f7285;
+    --line: #dfe4ea;
+    --card: #ffffff;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--cream); color: var(--ink); line-height: 1.55; font-size: 16px; padding-bottom: 90px;
+  }
+  .progress-wrap { position: sticky; top: 0; z-index: 100; background: var(--navy); padding: 14px 18px 12px; box-shadow: 0 2px 12px rgba(15,41,66,.25); }
+  .progress-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .progress-title { color: #fff; font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+  .progress-count { color: var(--mint); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .progress-track { height: 7px; background: rgba(255,255,255,.15); border-radius: 20px; overflow: hidden; }
+  .progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--mint-dark), var(--mint)); border-radius: 20px; transition: width .4s cubic-bezier(.4,0,.2,1); }
+  .hero { background: var(--navy); color: #fff; padding: 30px 22px 34px; position: relative; overflow: hidden; }
+  .hero::after { content: ""; position: absolute; right: -40px; top: -40px; width: 180px; height: 180px; border-radius: 50%; background: radial-gradient(circle, rgba(0,212,160,.18), transparent 70%); }
+  .hero .eyebrow { color: var(--mint); font-size: 12px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 10px; }
+  .hero h1 { font-size: 30px; line-height: 1.1; font-weight: 800; margin-bottom: 12px; }
+  .hero p { color: #b9c7d4; font-size: 15px; max-width: 60ch; }
+  .hero .bot { display: inline-block; margin-top: 14px; background: rgba(255,255,255,.1); padding: 6px 14px; border-radius: 20px; font-size: 14px; color: #fff; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 16px; }
+  .intro { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 20px; margin: 22px 0; }
+  .intro h2 { font-size: 18px; color: var(--navy); margin-bottom: 12px; }
+  .intro p { color: var(--muted); font-size: 14.5px; margin-bottom: 10px; }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .pill { background: #eef7f4; color: var(--mint-dark); border: 1px solid #cdeae0; padding: 5px 11px; border-radius: 8px; font-size: 12.5px; font-weight: 600; }
+  .mech { display: flex; gap: 12px; margin: 12px 0; }
+  .mech-item { flex: 1; background: #f7f9fb; border: 1px solid var(--line); border-radius: 10px; padding: 13px; }
+  .mech-item .tag { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 5px; }
+  .mech-web .tag { color: var(--mint-dark); }
+  .mech-ai .tag { color: var(--amber); }
+  .mech-item p { font-size: 13px; color: var(--muted); margin: 0; }
+  .callout { border-left: 4px solid var(--amber); background: #fff8ec; padding: 13px 15px; border-radius: 0 8px 8px 0; margin: 14px 0; font-size: 14px; color: #6b4e12; }
+  .callout strong { color: #4a3607; }
+  .section { background: var(--card); border: 1px solid var(--line); border-radius: 14px; margin: 16px 0; overflow: hidden; transition: box-shadow .2s; }
+  .section.done { border-color: var(--mint); box-shadow: 0 0 0 1px var(--mint); }
+  .section-head { display: flex; align-items: center; gap: 13px; padding: 16px 18px; cursor: pointer; user-select: none; }
+  .section-num { flex-shrink: 0; width: 34px; height: 34px; border-radius: 9px; background: var(--navy); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; transition: background .3s; }
+  .section.done .section-num { background: var(--mint); }
+  .section-title { flex: 1; font-size: 16.5px; font-weight: 700; color: var(--navy); }
+  .section-chev { color: var(--muted); font-size: 13px; transition: transform .3s; }
+  .section.open .section-chev { transform: rotate(180deg); }
+  .section-body { display: none; padding: 0 18px 18px; }
+  .section.open .section-body { display: block; }
+  .cmd { background: var(--navy); color: #9fe8d4; font-family: "SF Mono", Menlo, monospace; font-size: 13.5px; padding: 10px 13px; border-radius: 9px; margin: 8px 0; display: block; white-space: pre-wrap; word-break: break-word; }
+  .check { display: flex; align-items: flex-start; gap: 11px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 10px; margin: 7px 0; cursor: pointer; transition: all .15s; background: #fff; }
+  .check:active { transform: scale(.99); }
+  .check.ticked { background: #f0faf6; border-color: var(--mint); }
+  .check-box { flex-shrink: 0; width: 22px; height: 22px; border-radius: 6px; border: 2px solid var(--line); margin-top: 1px; display: flex; align-items: center; justify-content: center; font-size: 14px; color: #fff; transition: all .15s; }
+  .check.ticked .check-box { background: var(--mint); border-color: var(--mint); }
+  .check-label { flex: 1; font-size: 14.5px; }
+  .check-label .what { display: block; }
+  .check-label .look { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .expect { font-size: 13.5px; color: var(--muted); margin: 10px 0 4px; padding-left: 2px; }
+  .expect b { color: var(--ink); }
+  .try-list { margin: 8px 0; padding-left: 4px; }
+  .try-list li { list-style: none; font-size: 14px; color: var(--ink); padding: 7px 0 7px 26px; position: relative; border-bottom: 1px dashed var(--line); }
+  .try-list li:last-child { border-bottom: none; }
+  .try-list li::before { content: "→"; position: absolute; left: 4px; color: var(--mint-dark); font-weight: 700; }
+  .report-field { margin-top: 14px; }
+  .report-field label { display: block; font-size: 13px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
+  .report-field textarea { width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 11px; font-size: 14px; font-family: inherit; resize: vertical; min-height: 60px; background: #fcfdfe; }
+  .report-field textarea:focus { outline: none; border-color: var(--mint); }
+  .grav-row { display: flex; gap: 7px; margin-top: 9px; }
+  .grav-btn { flex: 1; padding: 8px; border-radius: 8px; border: 1.5px solid var(--line); background: #fff; font-size: 12.5px; font-weight: 600; cursor: pointer; color: var(--muted); transition: all .15s; }
+  .grav-btn.sel[data-g="bloquant"] { background: #fdeeee; border-color: var(--red); color: var(--red); }
+  .grav-btn.sel[data-g="majeur"]   { background: #fff8ec; border-color: var(--amber); color: #a6700a; }
+  .grav-btn.sel[data-g="mineur"]   { background: #eef7f4; border-color: var(--mint-dark); color: var(--mint-dark); }
+  .limits { background: #f2f5f8; border-radius: 14px; padding: 18px 20px; margin: 20px 0; }
+  .limits h3 { font-size: 15px; color: var(--navy); margin-bottom: 10px; }
+  .limits li { font-size: 13.5px; color: var(--muted); margin: 6px 0; padding-left: 18px; position: relative; list-style: none; }
+  .limits li::before { content: "·"; position: absolute; left: 6px; font-weight: 700; color: var(--muted); }
+  .fab { position: fixed; bottom: 0; left: 0; right: 0; background: linear-gradient(0deg, var(--cream) 60%, transparent); padding: 16px; z-index: 90; }
+  .fab-inner { max-width: 720px; margin: 0 auto; }
+  .fab button { width: 100%; padding: 16px; border: none; border-radius: 14px; background: var(--mint); color: var(--navy); font-size: 16px; font-weight: 800; cursor: pointer; box-shadow: 0 6px 20px rgba(0,212,160,.4); transition: transform .15s; }
+  .fab button:active { transform: scale(.98); }
+  .modal-bg { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(15,41,66,.6); backdrop-filter: blur(3px); align-items: flex-end; justify-content: center; }
+  .modal-bg.show { display: flex; }
+  .modal { background: #fff; width: 100%; max-width: 720px; border-radius: 20px 20px 0 0; padding: 22px 20px 26px; max-height: 85vh; overflow-y: auto; animation: slideUp .3s cubic-bezier(.4,0,.2,1); }
+  @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+  .modal h3 { font-size: 19px; color: var(--navy); margin-bottom: 6px; }
+  .modal .sub { font-size: 13.5px; color: var(--muted); margin-bottom: 16px; }
+  .modal .field { margin-bottom: 14px; }
+  .modal label { display: block; font-size: 13px; font-weight: 600; color: var(--navy); margin-bottom: 6px; }
+  .modal input { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 15px; font-family: inherit; }
+  .modal input:focus { outline: none; border-color: var(--mint); }
+  .report-preview { background: var(--navy); color: #cfe9e0; border-radius: 12px; padding: 15px; font-family: "SF Mono", Menlo, monospace; font-size: 12.5px; white-space: pre-wrap; word-break: break-word; margin: 14px 0; max-height: 240px; overflow-y: auto; }
+  .send-hint { font-size: 12.5px; color: var(--muted); margin: 4px 0 12px; line-height: 1.45; }
+  .btn-copy-full { width: 100%; padding: 15px; border-radius: 12px; font-size: 15.5px; font-weight: 800; cursor: pointer; border: none; background: var(--mint); color: var(--navy); margin-bottom: 10px; box-shadow: 0 4px 14px rgba(0,212,160,.3); }
+  .btn-copy-full:active { transform: scale(.99); }
+  .modal-actions { display: flex; gap: 10px; }
+  .modal-actions a { flex: 1; padding: 14px; border-radius: 12px; font-size: 14.5px; font-weight: 700; cursor: pointer; border: none; text-decoration: none; text-align: center; display: flex; align-items: center; justify-content: center; }
+  .btn-wa { background: #25D366; color: #fff; }
+  .btn-form { background: #673ab7; color: #fff; }
+  .btn-close-x { position: absolute; top: 14px; right: 16px; background: none; border: none; font-size: 24px; color: var(--muted); cursor: pointer; }
+  .toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%); background: var(--navy); color: #fff; padding: 12px 22px; border-radius: 30px; font-size: 14px; font-weight: 600; z-index: 300; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+  @media (min-width: 600px) { .hero h1 { font-size: 34px; } }
+</style>
+</head>
+<body>
+
+<div class="progress-wrap">
+  <div class="progress-head">
+    <span class="progress-title">Progression du test</span>
+    <span class="progress-count"><span id="doneCount">0</span> / <span id="totalCount">0</span></span>
+  </div>
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+</div>
+
+<div class="hero">
+  <div class="eyebrow">Programme testeurs · v2.20</div>
+  <h1>Aide-nous à casser<br>NexMove</h1>
+  <p>Un conseiller d'orientation qui lit ton CV, te dresse un bilan, trouve de vraies opportunités, t'accompagne étape par étape (Campus France, Canada, Europe) et prépare tes documents. Ton job : le pousser dans ses retranchements.</p>
+  <span class="bot">🤖 @nex_move_bot sur Telegram</span>
+</div>
+
+<div class="wrap">
+  <div class="intro">
+    <h2>À quoi sert NexMove</h2>
+    <p>Tu envoies ton CV, il en tire ton profil <b>et un bilan d'orientation</b> (atouts, axes à renforcer, pistes réalistes), te pose quelques questions, puis te propose <b>tout de suite</b> des opportunités réelles. Il t'aide ensuite pour les écoles, le logement, les entretiens, les documents — et il a des outils (compression/fusion de PDF, images→PDF…).</p>
+    <div class="pill-row">
+      <span class="pill">Bilan de CV</span>
+      <span class="pill">Offres réelles</span>
+      <span class="pill">Campus France pas à pas</span>
+      <span class="pill">Canada &amp; Europe</span>
+      <span class="pill">CV + lettres (PDF &amp; Word)</span>
+      <span class="pill">Outils PDF</span>
+    </div>
+    <h2 style="margin-top:20px;">Comment les réponses sont produites</h2>
+    <div class="mech">
+      <div class="mech-item mech-web">
+        <div class="tag">Recherche web réelle</div>
+        <p>Les offres et infos viennent de vraies pages. Les liens sont vérifiables, pas inventés.</p>
+      </div>
+      <div class="mech-item mech-ai">
+        <div class="tag">IA</div>
+        <p>Sélectionne, résume, conseille, rédige. C'est là que des erreurs peuvent apparaître — surtout montants, dates, conditions.</p>
+      </div>
+    </div>
+    <div class="callout">
+      <strong>C'est tout l'enjeu du test.</strong> Le bot peut répondre de façon fluide et convaincante… mais fausse. Dès qu'il annonce un fait vérifiable — un montant, une date, un lien, une démarche — <strong>vérifie-le</strong>.
+    </div>
+  </div>
+
+  <p style="font-size:13px;color:var(--muted);text-align:center;margin:6px 0 4px;">
+    Touche une section pour l'ouvrir · coche ce que tu as testé · note les anomalies au fil de l'eau
+  </p>
+
+  <div id="sections"></div>
+
+  <div class="limits">
+    <h3>Déjà connu — inutile de le remonter</h3>
+    <ul>
+      <li>Telegram uniquement pour l'instant (WhatsApp/Messenger à venir)</li>
+      <li>Pour /enpdf, il faut envoyer les images <b>en Fichier</b> (📎 Fichier), pas en Photo compressée</li>
+      <li>La traduction du bot est <b>informative</b> : un dossier officiel exige un traducteur assermenté</li>
+      <li>Coupures ponctuelles possibles — le service évolue en direct</li>
+    </ul>
+  </div>
+</div>
+
+<div class="fab">
+  <div class="fab-inner">
+    <button onclick="openReport()">📋 Générer mon rapport</button>
+  </div>
+</div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <button class="btn-close-x" onclick="closeReport()">×</button>
+    <h3>Ton rapport de test</h3>
+    <p class="sub">Vérifie, copie, et colle-le dans le groupe WhatsApp ou le Form.</p>
+    <div class="field">
+      <label>Ton prénom (ou pseudo)</label>
+      <input type="text" id="testerName" placeholder="Ex. Aïcha" oninput="buildReport()">
+    </div>
+    <div class="report-preview" id="reportPreview"></div>
+    <p class="send-hint">Copie ton rapport, puis envoie-le où tu veux. Astuce : sur le Form, colle-le dans « Décris le problème ».</p>
+    <button class="btn-copy-full" onclick="copyReport()">📋 Copier le rapport</button>
+    <div class="modal-actions">
+      <a class="btn-wa" id="waLink" href="#" target="_blank">Envoyer sur WhatsApp</a>
+      <a class="btn-form" id="formLink" href="#" target="_blank" onclick="copyReport(); showToast('Rapport copié — colle-le dans le Form ✓')">Envoyer au Form</a>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const SECTIONS = [
+  {
+    n: "1", title: "Démarrage, profil & bilan",
+    cmds: ["/start"],
+    checks: [
+      { what: "Le bot répond à /start", look: "Accueil + demande du CV" },
+      { what: "Envoi du CV en PDF", look: "Résumé : nom, formation, compétences" },
+      { what: "Le résumé est fidèle à mon CV", look: "Rien d'inventé, rien d'oublié" },
+      { what: "Il retient mon diplôme le PLUS ÉLEVÉ", look: "Master avant licence, pas l'inverse" },
+      { what: "Un bilan apparaît (atouts / à renforcer / pistes)", look: "Personnalisé, pas générique" },
+      { what: "Les questions s'enchaînent une à une", look: "Sans répétition ni boucle" },
+      { what: "Si objectif = travailler → question type de poste", look: "Temps plein / partiel / télétravail" },
+      { what: "Après « Oui », 3 pistes s'affichent tout de suite", look: "Première veille automatique" },
+    ],
+    tries: [
+      "Envoyer un CV scanné / photo → est-il lu (OCR) ? sinon message clair ?",
+      "Envoyer un fichier qui n'est PAS un CV → est-il refusé ?",
+      "Répondre « Taf » à la question certifs, ou « /hej » → refusé avec un indice ?",
+      "Faire /start au milieu de l'onboarding",
+    ]
+  },
+  {
+    n: "2", title: "Trouver des opportunités",
+    cmds: ["/veille", "/mobilite Canada informatique", "/formations cybersécurité"],
+    checks: [
+      { what: "Les liens s'ouvrent vraiment", look: "Pas de 404, pas de page vide" },
+      { what: "L'offre existe et correspond au titre", look: "La page annonce bien ça" },
+      { what: "Les deadlines ne sont pas dépassées", look: "Comparer à aujourd'hui" },
+      { what: "Le type est correct", look: "Bourse ≠ emploi ≠ formation" },
+      { what: "Les offres collent à mon profil", look: "Niveau et domaine adaptés" },
+      { what: "Des boutons 👍/👎 apparaissent sous les offres", look: "Et un appui donne un accusé" },
+      { what: "Plusieurs mots-clés → offres variées", look: "Pas toutes sur un seul mot" },
+    ],
+    tries: [
+      "/mobilite sans rien écrire après",
+      "/mobilite deux fois de suite → doublons ?",
+      "Mettre 👎 plusieurs fois sur un type d'offre → en propose-t-il moins ensuite ?",
+    ]
+  },
+  {
+    n: "3", title: "Campus France pas à pas",
+    cmds: ["/campusfrance", "/parcours", "/etape", "/ecoles cybersécurité", "/logement Paris", "/entretien"],
+    note: "Les infos administratives engagent argent et délais. À confronter : benin.campusfrance.org · france-visas.gouv.fr",
+    checks: [
+      { what: "/campusfrance explique la procédure + oriente vers l'aide", look: "Étapes, bourses, documents, calendrier" },
+      { what: "Le calendrier correspond à la campagne EN COURS", look: "Pas des dates de l'an dernier" },
+      { what: "/parcours affiche l'action concrète de l'étape en cours", look: "« 👉 Maintenant : … » + commande utile" },
+      { what: "/ecoles propose des écoles réelles adaptées", look: "Du plus accessible au plus sélectif" },
+      { what: "/logement donne des pistes fiables", look: "CROUS, Visale, budget — pas d'arnaque" },
+      { what: "/entretien donne des questions + pistes de réponse", look: "Adaptées à mon profil, Campus France ET visa" },
+    ],
+    tries: [
+      "Demander « quelle est la deadline ? » sans préciser l'année",
+      "/etape plusieurs fois → avance-t-il indûment ?",
+      "« Je suis en terminale au Bénin, par où je commence ? » (langage libre)",
+      "/entretien visa Capago → cible-t-il le visa ?",
+    ]
+  },
+  {
+    n: "4", title: "Canada, Europe & décision",
+    cmds: ["/canada", "/procedure Belgique", "/procedure Allemagne", "/eligibilite Bourse Eiffel master", "/budget Montreal"],
+    checks: [
+      { what: "/canada route selon mon profil", look: "Permis d'études / PGWP / Entrée express / PEQ-Québec" },
+      { what: "/procedure <pays> marche pour Belgique, Allemagne, Suisse, Luxembourg", look: "Voies officielles réelles" },
+      { what: "/eligibilite est HONNÊTE", look: "Éligible / limite / non + ce qui manque" },
+      { what: "/budget donne un budget réaliste", look: "Loyer, vie, ressources à justifier" },
+      { what: "Aucun organisme/URL inventé", look: "Tout est vérifiable" },
+    ],
+    tries: [
+      "/procedure avec un pays sans programme (ex : /procedure Vanuatu)",
+      "/eligibilite sur une cible trop élevée pour mon profil → est-il franc ?",
+      "/procedure sans rien après → liste-t-il les pays ?",
+    ]
+  },
+  {
+    n: "5", title: "Documents (PDF & Word)",
+    cmds: ["/dossier <cible>", "/postuler <cible>"],
+    note: "Teste 2 cibles : une bourse/master ET un emploi.",
+    checks: [
+      { what: "Le PDF ET le Word (.docx) arrivent", look: "Les deux s'ouvrent" },
+      { what: "Le CV reprend mes vraies infos", look: "Rien d'inventé sur moi" },
+      { what: "L'en-tête du CV est propre", look: "Nom + titre non superposés" },
+      { what: "La lettre est spécifique à la cible", look: "Pas générique, bon établissement" },
+      { what: "Pas de clichés d'IA ni de champs [XXX]", look: "Ton naturel, aucun trou" },
+      { what: "Le dossier apparaît dans /status", look: "Bien enregistré" },
+    ],
+    tries: [
+      "/postuler sans argument",
+      "/postuler avant d'avoir envoyé un CV",
+      "Ouvrir le .docx et vérifier qu'il est modifiable",
+    ]
+  },
+  {
+    n: "6", title: "Boîte à outils PDF & docs",
+    cmds: ["/compresser 500", "/fusionner", "/enpdf", "/decouper 1-2", "/traduire Hello, I am a student"],
+    note: "Pour /fusionner et /enpdf : envoie les fichiers puis tape /terminer.",
+    checks: [
+      { what: "/compresser réduit vraiment le poids", look: "Ex. 4 Mo → quelques centaines de Ko" },
+      { what: "Le PDF compressé reste lisible", look: "Pas illisible" },
+      { what: "/fusionner + 2 PDF + /terminer → 1 seul PDF", look: "Ordre respecté" },
+      { what: "/enpdf + images (en Fichier) + /terminer → PDF", look: "Toutes les images dedans" },
+      { what: "/decouper 1-2 sur un PDF → garde les bonnes pages", look: "Numéros respectés" },
+      { what: "/traduire traduit + prévient (assermenté)", look: "Rappel dossier officiel" },
+    ],
+    tries: [
+      "/terminer sans avoir envoyé de fichier",
+      "/annuler au milieu d'une fusion",
+      "/decouper 99 sur un PDF de 3 pages",
+    ]
+  },
+  {
+    n: "7", title: "Mon espace & progression",
+    cmds: ["/status", "/profil", "/rappels", "/digest hebdo lundi", "/supprimer"],
+    note: "Fais /supprimer EN DERNIER.",
+    checks: [
+      { what: "/status montre ma progression", look: "Opportunités, +N cette semaine, barre Campus France" },
+      { what: "/status reflète mes vrais dossiers", look: "Cohérent avec ce que j'ai créé" },
+      { what: "/rappels on/off fonctionne", look: "Confirme l'état" },
+      { what: "/digest hebdo <jour> est pris en compte", look: "Confirme le jour" },
+      { what: "Après /supprimer, /profil et /status sont vides", look: "Plus aucune donnée — sinon SIGNALER" },
+      { what: "/start repart de zéro", look: "Comme un nouvel utilisateur" },
+    ],
+    tries: []
+  },
+  {
+    n: "8", title: "Menu à boutons",
+    cmds: [],
+    checks: [
+      { what: "/menu ouvre le menu à boutons", look: "Trouver · Procédures · Candidater · Formations · Mon espace · Aide" },
+      { what: "Le menu ne se répète PAS à chaque message", look: "Seulement quand utile" },
+      { what: "Chaque bouton fait ce qu'il annonce", look: "Y compris École, Logement, Entretien, Canada, Autres pays" },
+      { what: "Le bouton Retour marche partout", look: "À tous les niveaux" },
+      { what: "Les boutons répondent encore après quelques minutes", look: "Pas de blocage" },
+    ],
+    tries: []
+  },
+];
+
+const container = document.getElementById('sections');
+let totalChecks = 0;
+SECTIONS.forEach((sec, si) => {
+  const el = document.createElement('div');
+  el.className = 'section';
+  el.id = 'sec' + si;
+  let cmdsHtml = sec.cmds.length ? '<div class="cmd">' + sec.cmds.join('\n') + '</div>' : '';
+  let noteHtml = sec.note ? '<div class="callout" style="margin-top:10px;">' + sec.note + '</div>' : '';
+  let checksHtml = sec.checks.map((c) => {
+    totalChecks++;
+    return `<div class="check" onclick="toggleCheck(this,${si})">
+      <div class="check-box">✓</div>
+      <div class="check-label"><span class="what">${c.what}</span><span class="look">${c.look}</span></div>
+    </div>`;
+  }).join('');
+  let triesHtml = sec.tries.length
+    ? `<div class="expect"><b>À provoquer volontairement :</b></div>
+       <ul class="try-list">${sec.tries.map(t => '<li>' + t + '</li>').join('')}</ul>`
+    : '';
+  el.innerHTML = `
+    <div class="section-head" onclick="toggleSection(${si})">
+      <div class="section-num">${sec.n}</div>
+      <div class="section-title">${sec.title}</div>
+      <div class="section-chev">▼</div>
+    </div>
+    <div class="section-body">
+      ${cmdsHtml}${noteHtml}${checksHtml}${triesHtml}
+      <div class="report-field">
+        <label>🐞 Un problème dans cette partie ? Décris-le</label>
+        <textarea data-sec="${sec.title}" placeholder="Ce que tu as fait, ce que tu attendais, ce qui s'est passé…" oninput="updateGravVisibility(${si})"></textarea>
+        <div class="grav-row" id="grav${si}" style="display:none;">
+          <button class="grav-btn" data-g="bloquant" onclick="pickGrav(${si},'bloquant',this)">🔴 Bloquant</button>
+          <button class="grav-btn" data-g="majeur" onclick="pickGrav(${si},'majeur',this)">🟠 Majeur</button>
+          <button class="grav-btn" data-g="mineur" onclick="pickGrav(${si},'mineur',this)">🟡 Mineur</button>
+        </div>
+      </div>
+    </div>`;
+  container.appendChild(el);
+});
+document.getElementById('totalCount').textContent = totalChecks;
+
+function toggleSection(si) { document.getElementById('sec' + si).classList.toggle('open'); }
+function toggleCheck(elem, si) { event.stopPropagation(); elem.classList.toggle('ticked'); updateProgress(); updateSectionDone(si); }
+function updateSectionDone(si) {
+  const sec = document.getElementById('sec' + si);
+  const checks = sec.querySelectorAll('.check');
+  const ticked = sec.querySelectorAll('.check.ticked');
+  sec.classList.toggle('done', checks.length > 0 && ticked.length === checks.length);
+}
+function updateProgress() {
+  const total = document.querySelectorAll('.check').length;
+  const done = document.querySelectorAll('.check.ticked').length;
+  document.getElementById('doneCount').textContent = done;
+  document.getElementById('progressFill').style.width = (done / total * 100) + '%';
+}
+function updateGravVisibility(si) {
+  const sec = document.getElementById('sec' + si);
+  const ta = sec.querySelector('textarea');
+  document.getElementById('grav' + si).style.display = ta.value.trim() ? 'flex' : 'none';
+}
+const gravChoice = {};
+function pickGrav(si, g, btn) {
+  gravChoice[si] = g;
+  const row = document.getElementById('grav' + si);
+  row.querySelectorAll('.grav-btn').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+}
+function openReport() { buildReport(); document.getElementById('modalBg').classList.add('show'); document.body.style.overflow = 'hidden'; }
+function closeReport() { document.getElementById('modalBg').classList.remove('show'); document.body.style.overflow = ''; }
+function buildReport() {
+  const name = document.getElementById('testerName').value.trim() || "Testeur";
+  const total = document.querySelectorAll('.check').length;
+  const done = document.querySelectorAll('.check.ticked').length;
+  const gravEmoji = { bloquant: '🔴', majeur: '🟠', mineur: '🟡' };
+  let bugs = [];
+  SECTIONS.forEach((sec, si) => {
+    const ta = document.getElementById('sec' + si).querySelector('textarea');
+    if (ta && ta.value.trim()) {
+      const g = gravChoice[si] || 'majeur';
+      bugs.push(`${gravEmoji[g]} [${sec.title}]\n${ta.value.trim()}`);
+    }
+  });
+  let r = `🧪 RAPPORT DE TEST — NexMove v2.20\n👤 ${name}\n✅ Progression : ${done}/${total} points vérifiés\n\n`;
+  if (bugs.length) { r += `🐞 Anomalies (${bugs.length}) :\n\n` + bugs.join('\n\n'); }
+  else { r += `Aucune anomalie signalée sur cette session.`; }
+  r += `\n\n— envoyé via le guide de test NexMove`;
+  document.getElementById('reportPreview').textContent = r;
+  document.getElementById('waLink').href = 'https://wa.me/?text=' + encodeURIComponent(r);
+  document.getElementById('formLink').href = 'https://forms.gle/Mh4kBhM5SRsSSGs56';
+  return r;
+}
+function copyReport() {
+  const txt = document.getElementById('reportPreview').textContent;
+  navigator.clipboard.writeText(txt).then(() => showToast('Rapport copié ✓')).catch(() => {
+    const ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta); showToast('Rapport copié ✓');
+  });
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+document.getElementById('sec0').classList.add('open');
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re, math
+import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re, math, shutil
 import html as _htmlmod
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
@@ -86,7 +86,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.19.0"
+VERSION         = "2.20.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -649,12 +649,13 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
             "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n\n"
             "🌍 *Autres destinations*\n"
-            "/canada (immigration selon ton profil)\n\n"
+            "/canada · /procedure <pays> (Belgique, Allemagne, Suisse, Luxembourg, Pays-Bas…)\n"
+            "/eligibilite <cible> · /budget <ville>\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n\n"
-            "🛠️ *Outils*\n"
-            "/compresser <Ko> (alléger un PDF pour tes soumissions)\n\n"
+            "🛠️ *Outils PDF & docs*\n"
+            "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
             "/profil · /status · /rappels · /digest · /supprimer\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
@@ -921,6 +922,136 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                "Envoie-moi maintenant le *PDF* à alléger (CV, relevé, passeport scanné…). "
                "Je te renvoie une version plus légère pour tes soumissions en ligne.\n"
                "_Astuce : /compresser 500 pour viser 500 Ko._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/fusionner") or low.startswith("/fusion"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "merge"
+        msg = ("📎 *Fusion de PDF.*\nEnvoie les PDF à assembler un par un (dans l'ordre voulu), "
+               "puis tape */terminer*.\n_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/enpdf") or low.startswith("/img2pdf") or low.startswith("/imagepdf"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "img2pdf"
+        msg = ("🖼️➡️📄 *Images en PDF.*\nEnvoie tes images *en fichier* (📎 Fichier, pas Photo), une par une, "
+               "puis */terminer*.\n_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/decouper") or low.startswith("/découper") or low.startswith("/split"):
+        parts = t.split(maxsplit=1)
+        spec = parts[1].strip() if len(parts) > 1 else ""
+        if not spec:
+            msg = "✂️ Indique les pages à garder : */decouper 1-3,5*\nPuis envoie le PDF."
+        else:
+            _tool_clear(session.get("user_id")); session["tool_mode"] = "split"; session["split_spec"] = spec
+            msg = f"✂️ *Découpe.* Envoie maintenant le *PDF* — je garde les pages *{spec}*."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/terminer") or low.startswith("/fini") or low.startswith("/generer") or low.startswith("/générer"):
+        mode = session.get("tool_mode")
+        files = _tool_files(session.get("user_id"))
+        if mode not in ("merge", "img2pdf"):
+            msg = "Rien à générer. Lance /fusionner (PDF) ou /enpdf (images) d'abord."
+        elif not files:
+            msg = "📎 Aucun fichier reçu. Envoie au moins un fichier avant /terminer."
+        else:
+            try:
+                if mode == "merge":
+                    data = await asyncio.to_thread(merge_pdfs, files); cap = "📎 PDF fusionné"
+                else:
+                    data = await asyncio.to_thread(images_to_pdf, files); cap = "📄 PDF créé depuis tes images"
+                await deliver_file(session, "NexMove_document.pdf", data, f"{cap} ({len(files)} fichier·s)")
+                msg = "✅ C'est prêt ! Trop lourd pour une soumission ? Tape /compresser."
+            except Exception as e:
+                logger.error(f"[tool {mode}] {e}"); msg = "😕 Génération impossible, réessaie."
+            _tool_clear(session.get("user_id")); session["tool_mode"] = None
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/annuler") or low.startswith("/cancel"):
+        _tool_clear(session.get("user_id"))
+        session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
+        msg = "🚫 Opération annulée."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/budget") or low.startswith("/cout") or low.startswith("/coût"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        ville = parts[1].strip() if len(parts) > 1 else ((profil.get("preferences", {}) or {}).get("pays_cibles") or "France")
+        try:
+            msg = await conseil_grounded(profil,
+                f"💶 *Budget & coût de la vie — {_md_clean(ville)}*",
+                f"coût de la vie étudiant {ville} loyer transport nourriture budget mensuel preuve de ressources visa 2026",
+                "Donne un budget mensuel étudiant réaliste (loyer, nourriture, transport, santé, divers) en euros — et l'ordre de grandeur en FCFA — puis rappelle le montant de RESSOURCES à justifier pour le visa/Campus France si connu.",
+                cta="Ensuite : /eligibilite <programme> · /compresser (justificatifs).")
+        except Exception as e:
+            logger.error(f"budget: {e}"); msg = "😕 Estimation budget indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/eligibilite") or low.startswith("/éligibilité") or low.startswith("/eligible"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je compare ensuite ton profil aux exigences."
+        elif not cible:
+            msg = "🎯 Précise la cible : */eligibilite <programme ou bourse>*\nEx : /eligibilite Bourse Eiffel master."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    f"🎯 *Éligibilité — {_md_clean(cible)}*",
+                    f"{cible} conditions éligibilité critères admission prérequis dossier requis 2026",
+                    "Compare HONNÊTEMENT le profil aux exigences réelles : dis s'il est éligible / limite / non éligible, liste précisément ce qui MANQUE et comment le combler. Pas de faux espoirs.",
+                    cta="Prêt ? /dossier <cible> pour monter le dossier.")
+            except Exception as e:
+                logger.error(f"eligibilite: {e}"); msg = "😕 Vérification indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/traduire") or low.startswith("/translate") or low.startswith("/traduction"):
+        parts = t.split(maxsplit=1)
+        texte = parts[1].strip() if len(parts) > 1 else ""
+        if not texte:
+            msg = ("🌐 *Traduction (informative).*\nColle le texte à traduire : */traduire <texte>*\n\n"
+                   "⚠️ Pour un DOSSIER officiel (diplômes, actes de naissance…), les institutions exigent une "
+                   "*traduction assermentée* (traducteur agréé). Ma traduction sert à COMPRENDRE, pas à soumettre.")
+        else:
+            try:
+                r = await call_groq(
+                    "Tu es traducteur professionnel. Traduis fidèlement : si le texte est en anglais traduis en français, sinon en anglais. Conserve le sens exact. JSON uniquement.",
+                    f'Texte: """{texte[:3000]}"""\nJSON: {{"traduction":"","langue_source":"","langue_cible":""}}',
+                    temperature=0.1, max_tokens=1300)
+                msg = (f"🌐 *Traduction* ({r.get('langue_source','?')} → {r.get('langue_cible','?')})\n\n"
+                       f"{r.get('traduction','')}\n\n⚠️ _Informatif. Un dossier officiel exige un traducteur assermenté._")
+            except Exception as e:
+                logger.error(f"traduire: {e}"); msg = "😕 Traduction indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/procedure") or low.startswith("/procédure") or low.startswith("/pays"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        pays = parts[1].strip() if len(parts) > 1 else ""
+        if not pays:
+            msg = ("🌍 *Procédures par pays.*\nÉcris : */procedure <pays>*\n"
+                   "Ex : /procedure Belgique · /procedure Allemagne · /procedure Suisse · /procedure Luxembourg · /procedure Pays-Bas.\n\n"
+                   "🇫🇷 France : /campusfrance  ·  🇨🇦 Canada : /canada")
+        elif not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je route selon ton profil."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    f"🌍 *{_md_clean(pays)} — études & immigration (selon ton profil)*",
+                    f"{pays} étudier travailler immigration étudiant permis visa bourse programme officiel procédure {(profil.get('preferences', {}) or {}).get('objectif','')} 2026",
+                    f"Explique la ou les VOIES OFFICIELLES adaptées à CE profil pour {pays} (études : université + permis étudiant + preuve de fonds ; travail : permis/visa et programmes officiels). Étapes concrètes, conditions honnêtes, organismes RÉELS.",
+                    cta="Ensuite : /ecoles · /budget <ville> · /dossier <programme> · /entretien.")
+            except Exception as e:
+                logger.error(f"procedure: {e}"); msg = "😕 Infos pays indisponibles, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1374,6 +1505,87 @@ def pdf_to_b64(buf: io.BytesIO) -> str:
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
 
+def _parse_pages(spec: str, n: int) -> list:
+    """« 1-3,5,8 » (1-indexé) -> indices 0-indexés valides et ordonnés."""
+    out = []
+    for part in str(spec or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        if "-" in part:
+            try:
+                a, b = part.split("-", 1)
+                a = int(a); b = int(b)
+            except Exception:
+                continue
+            for p in range(min(a, b), max(a, b) + 1):
+                if 1 <= p <= n:
+                    out.append(p - 1)
+        else:
+            try:
+                p = int(part)
+                if 1 <= p <= n:
+                    out.append(p - 1)
+            except Exception:
+                continue
+    seen = set(); res = []
+    for i in out:
+        if i not in seen:
+            seen.add(i); res.append(i)
+    return res
+
+def merge_pdfs(paths: list) -> bytes:
+    out = fitz.open()
+    for p in paths:
+        try:
+            src = fitz.open(p); out.insert_pdf(src); src.close()
+        except Exception as e:
+            logger.warning(f"[merge] {p}: {e}")
+    data = out.tobytes(garbage=4, deflate=True); out.close()
+    return data
+
+def images_to_pdf(paths: list) -> bytes:
+    out = fitz.open()
+    for p in paths:
+        try:
+            im = fitz.open(p)
+            pdfbytes = im.convert_to_pdf(); im.close()
+            src = fitz.open("pdf", pdfbytes); out.insert_pdf(src); src.close()
+        except Exception as e:
+            logger.warning(f"[img2pdf] {p}: {e}")
+    data = out.tobytes(garbage=4, deflate=True); out.close()
+    return data
+
+def split_pdf(pdf_bytes: bytes, spec: str) -> bytes:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    idx = _parse_pages(spec, doc.page_count)
+    out = fitz.open()
+    for i in idx:
+        out.insert_pdf(doc, from_page=i, to_page=i)
+    data = out.tobytes(garbage=4, deflate=True); out.close(); doc.close()
+    return data
+
+# --- Tampon de fichiers sur disque (fusion PDF / images->PDF), volume ./data persistant ---
+_TOOL_DIR = "data/tmp"
+
+def _tool_dir(uid) -> str:
+    return os.path.join(_TOOL_DIR, hashlib.sha1(str(uid).encode()).hexdigest()[:16])
+
+def _tool_add_file(uid, data: bytes, ext: str) -> int:
+    d = _tool_dir(uid); os.makedirs(d, exist_ok=True)
+    n = len(os.listdir(d))
+    if n >= 15:
+        return -1
+    with open(os.path.join(d, f"{n:02d}.{ext}"), "wb") as f:
+        f.write(data)
+    return n + 1
+
+def _tool_files(uid) -> list:
+    d = _tool_dir(uid)
+    return [os.path.join(d, f) for f in sorted(os.listdir(d))] if os.path.isdir(d) else []
+
+def _tool_clear(uid):
+    shutil.rmtree(_tool_dir(uid), ignore_errors=True)
+
 def compress_pdf(pdf_bytes: bytes, target_kb: int = 2000) -> tuple:
     """Compresse un PDF sous ~target_kb. 1) reconstruction lossless (nettoyage/deflate).
     2) si toujours trop lourd et Pillow dispo, rendu des pages en JPEG à DPI décroissant.
@@ -1625,6 +1837,8 @@ def get_menu(session, key):
             ("🏠 Logement", "act:logement"),
             ("🎤 Prépa entretien", "act:entretien"),
             ("🇨🇦 Canada", "act:canada"),
+            ("🌍 Autres pays", "act:procedure"),
+            ("💶 Budget", "act:budget"),
         ]
         try:
             for (cible, dl, st) in (opp_store.list_candidatures(session.get("user_id")) or [])[:2]:
@@ -1796,7 +2010,7 @@ _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "pr
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
             "formations": "/formations", "supprimer": "/supprimer",
             "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
-            "compresser": "/compresser"}
+            "compresser": "/compresser", "procedure": "/procedure", "budget": "/budget"}
 _ACT_HELP = {
     "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
     "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
@@ -1841,6 +2055,32 @@ async def handle_action(session, data, callback_id=None):
     return session
 
 async def process_cv(session, pdf_bytes, filename="cv.pdf"):
+    uid = session.get("user_id")
+    # Boîte à outils PDF : fusion / images->PDF (tampon) ou découpe (immédiat)
+    mode = session.get("tool_mode")
+    if mode in ("merge", "img2pdf"):
+        ext = "pdf" if (filename or "").lower().endswith(".pdf") else ((filename or "img").rsplit(".", 1)[-1].lower() or "jpg")
+        n = await asyncio.to_thread(_tool_add_file, uid, pdf_bytes, ext)
+        if n < 0:
+            await deliver_text(session, "⚠️ Limite atteinte (15 fichiers). Tape /terminer pour générer, ou /annuler.")
+        else:
+            quoi = "PDF" if mode == "merge" else "image"
+            await deliver_text(session, f"📎 {quoi} n°{n} ajouté. Envoie le suivant, ou tape /terminer pour générer le PDF.")
+        return
+    if mode == "split":
+        spec = session.pop("split_spec", "")
+        session["tool_mode"] = None
+        session_manager.set(uid, session)
+        try:
+            data = await asyncio.to_thread(split_pdf, pdf_bytes, spec)
+            ok = data and len(data) > 100
+        except Exception as e:
+            logger.error(f"[split] {e}"); ok = False
+        if ok:
+            await deliver_file(session, f"{_slug((filename or 'document').rsplit('.',1)[0])}_pages_{spec.replace(',', '_')}.pdf", data, f"✂️ Pages {spec}")
+        else:
+            await deliver_text(session, "😕 Découpe impossible (vérifie les numéros de pages).")
+        return
     # Mode compression : l'utilisateur a demandé /compresser puis envoie un PDF
     target_kb = session.pop("compress_target", 0)
     if target_kb:
@@ -2106,8 +2346,15 @@ async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), 
     session["channel"] = "telegram"
     session["chat_id"] = chat_id
     session["username"] = username
-    if not (file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")):
-        await deliver_text(session, "❌ Envoie ton CV en PDF.")
+    fn = (file.filename or "").lower()
+    is_pdf = file.content_type == "application/pdf" or fn.endswith(".pdf")
+    is_img = (file.content_type or "").startswith("image/") or fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic"))
+    if session.get("tool_mode") == "img2pdf":
+        if not (is_img or is_pdf):
+            await deliver_text(session, "🖼️ Envoie une *image* (en fichier/document), ou /annuler.")
+            return {"ok": True}
+    elif not is_pdf:
+        await deliver_text(session, "❌ Envoie un *PDF*.\n_(Pour transformer des images en PDF : /enpdf.)_")
         return {"ok": True}
     pdf_bytes = await file.read()
     await process_cv(session, pdf_bytes, file.filename or "cv.pdf")

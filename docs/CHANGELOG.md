@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.20 — Boîte à outils & procédures multi-pays
+- **Outils PDF** : `/fusionner` (assembler des PDF), `/enpdf` (images→PDF, images envoyées en fichier),
+  `/decouper <pages>` (extraire des pages), en plus de `/compresser`. Tampon de fichiers sur disque
+  (volume persistant), `/terminer` / `/annuler`. Le endpoint accepte les images en mode img2pdf.
+- **Outils conseil** : `/budget <ville>` (coût de la vie + preuve de ressources), `/eligibilite <cible>`
+  (compare honnêtement le profil aux exigences), `/traduire <texte>` (traduction informative + rappel :
+  dossier officiel = traducteur assermenté).
+- **Procédures multi-pays** : `/procedure <pays>` générique (Belgique, Allemagne, Suisse, Luxembourg,
+  Pays-Bas… routé par profil), en plus de `/campusfrance` (France) et `/canada`. Menu enrichi.
+- **Fix** : f-string sans placeholder.
+
 ## v2.19 — Motivation & outils
 - **Première veille automatique** dès le profil validé : 3 pistes tout de suite (valeur immédiate) + promesse
   d'un digest quotidien lié au profil.
