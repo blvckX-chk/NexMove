@@ -84,7 +84,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.17.2"
+VERSION         = "2.18.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -537,7 +537,7 @@ ETAPE_INSTRUCTIONS = {
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
     "CONFIRMATION": "Résume le profil complet et demande confirmation finale (Oui pour démarrer).",
-    "ACTIF": "L'onboarding est terminé. Réponds DIRECTEMENT et utilement à la demande (tutoie, ne re-salue PAS l'utilisateur). Selon son besoin, oriente vers : /veille (chercher des opportunités), /campusfrance (études en France), /dossier <cible> (documents + CV + projet d'études), /postuler <cible> (CV + lettre), /status (suivi)."
+    "ACTIF": "L'onboarding est terminé. Réponds DIRECTEMENT et utilement (tutoie, ne re-salue PAS). Oriente vers la bonne commande : /veille & /mobilite (opportunités), /campusfrance & /parcours (études en France, étape par étape), /ecoles (choisir une école), /logement, /entretien (prépa entretien Campus France/visa), /canada (immigration Canada selon le profil), /dossier <cible> (documents + CV + projet), /postuler <cible> (CV + lettre), /formations, /status."
 }
 
 REPONSES_POSITIVES = {"oui", "yes", "ok", "correct", "exacte", "c'est bon", "parfait", "valide", "confirme"}
@@ -551,6 +551,13 @@ def _get_notif(session: dict) -> dict:
     """Préférences de notification de l'utilisateur (défaut : activées, quotidien)."""
     n = session.get("notif") or {}
     return {"enabled": n.get("enabled", True), "freq": n.get("freq", "quotidien"), "jour": n.get("jour", "lundi")}
+
+# Persona partagée : conseiller d'orientation & mobilité internationale senior.
+CONSEILLER_PERSONA = (
+    "Tu es un conseiller d'orientation et en mobilité internationale SENIOR (15 ans d'expérience), "
+    "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
+    "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
+    "et tu donnes toujours des étapes actionnables.")
 
 _NIVEAU_RANK = [
     (("doctorat", "phd", "ph.d", "doctorate"), 5),
@@ -623,8 +630,10 @@ def valider_pref(field: str, value: str) -> tuple[bool, str]:
 AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🔎 *Trouver des opportunités*\n"
             "/veille · /mobilite <pays ou domaine>\n\n"
-            "🇫🇷 *Étudier en France*\n"
-            "/campusfrance (procédure) · /parcours (ton suivi étape par étape)\n\n"
+            "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
+            "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n\n"
+            "🌍 *Autres destinations*\n"
+            "/canada (immigration selon ton profil)\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n\n"
@@ -657,6 +666,17 @@ CF_STAGES = [
     "Accepter une offre et confirmer ton inscription",
     "Demander ton visa étudiant",
     "Préparer ton départ (logement, billet, assurance)",
+]
+# Action concrète + commande d'aide pour l'étape en cours (accompagnement actif)
+CF_STAGE_HELP = [
+    "Crée ton compte sur etudesenfrance.diplomatie.gouv.fr. Pas sûr de tes choix ? Tape /ecoles <domaine>.",
+    "Remplis tes vœux et ton projet d'études. /ecoles pour cibler, /dossier <programme> pour rédiger le projet.",
+    "Règle les frais Campus France (montant selon ton pays).",
+    "Prépare l'entretien Campus France / Institut Français : tape /entretien.",
+    "Relance et suis les réponses des établissements. /status pour le suivi.",
+    "Accepte la meilleure offre et confirme ton inscription.",
+    "Dépose ta demande de visa (entretien Capago/VFS) : tape /entretien visa.",
+    "Organise ton arrivée : /logement <ville>, puis billet et assurance.",
 ]
 
 def _push(session, role, content):
@@ -753,8 +773,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg += "📎 *Documents à préparer :*\n" + "\n".join(f"• {_md_clean(d)}" for d in docs[:8]) + "\n\n"
             if r.get("conseil"):
                 msg += f"💡 {_md_clean(r['conseil'])}\n\n"
-            msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n"
-            msg += "✍️ Prêt à candidater ? Tape : /postuler Bourse Eiffel master <ton domaine>"
+            msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n\n"
+            msg += ("✍️ *Je t'accompagne pas à pas :*\n"
+                    "• /ecoles <domaine> — trouver les bonnes écoles\n"
+                    "• /parcours — suivre tes étapes jusqu'au départ ✈️\n"
+                    "• /entretien — préparer l'entretien Campus France / visa\n"
+                    "• /logement <ville> — te loger sans arnaque\n"
+                    "• /dossier <programme> — monter le dossier (CV + projet)")
         except Exception as e:
             logger.error(f"campusfrance: {e}")
             msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
@@ -772,9 +797,12 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             else:
                 lines.append(f"⬜ {st}")
         pos = min(stage + 1, len(CF_STAGES))
+        hint = CF_STAGE_HELP[stage] if stage < len(CF_STAGE_HELP) else ""
         msg = ("🇫🇷 *Ton parcours Campus France*\n━━━━━━━━━━━━━━━━━━\n\n" + "\n".join(lines) +
-               f"\n\nÉtape {pos}/{len(CF_STAGES)}. Tape /etape quand tu as terminé l'étape en cours.\n"
-               "/campusfrance pour les détails · /dossier <cible> pour préparer les documents.")
+               f"\n\nÉtape {pos}/{len(CF_STAGES)}")
+        if hint:
+            msg += f"\n👉 *Maintenant :* {hint}"
+        msg += "\n\nTape /etape quand tu as terminé l'étape en cours."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -791,6 +819,73 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                        "/parcours pour voir l'ensemble.")
         else:
             msg = "Ton parcours est déjà complet 🎉. /parcours pour revoir."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/ecoles") or low.startswith("/écoles") or low.startswith("/ecole"):
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        parts = t.split(maxsplit=1)
+        domaine = parts[1].strip() if len(parts) > 1 else (prefs.get("mots_cles") or (profil.get("formation") or [{}])[0].get("domaine", "") or "ton domaine")
+        pays = prefs.get("pays_cibles") or "France"
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je cible ensuite les écoles adaptées."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    f"🏫 *Écoles & programmes — {_md_clean(domaine)}*",
+                    f"meilleures écoles universités programmes {domaine} {pays} admission candidature 2026 étudiant international",
+                    "Recommande 4 à 6 écoles/programmes RÉELS et ADAPTÉS au profil (niveau, domaine, budget/bourse), du plus accessible au plus sélectif, avec pour chacun comment et quand postuler.",
+                    cta="Ensuite : /dossier <programme> (préparer le dossier) · /logement <ville> · /entretien.")
+            except Exception as e:
+                logger.error(f"ecoles: {e}"); msg = "😕 Recherche d'écoles indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/logement"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        ville = parts[1].strip() if len(parts) > 1 else ((profil.get("preferences", {}) or {}).get("pays_cibles") or "France")
+        try:
+            msg = await conseil_grounded(profil,
+                f"🏠 *Logement étudiant — {_md_clean(ville)}*",
+                f"logement étudiant {ville} CROUS résidence universitaire garant Visale plateforme fiable budget arnaque 2026",
+                "Explique concrètement comment trouver un logement étudiant abordable et ÉVITER LES ARNAQUES : CROUS/résidences, plateformes fiables, dispositif garant Visale, budget réaliste, pièces à préparer, délais.",
+                cta="🔎 Commence tôt, les logements partent vite. /entretien pour la suite.")
+        except Exception as e:
+            logger.error(f"logement: {e}"); msg = "😕 Conseils logement indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/entretien"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        sujet = parts[1].strip() if len(parts) > 1 else "Campus France et visa"
+        try:
+            msg = await conseil_grounded(profil,
+                f"🎤 *Préparation entretien — {_md_clean(sujet)}*",
+                f"questions entretien {sujet} Campus France Institut Français entretien visa étudiant conseils réponses 2026",
+                "Prépare l'utilisateur à l'entretien (Campus France/Institut Français et/ou entretien visa type Capago/VFS). Donne 5 à 7 QUESTIONS TYPES avec, pour chacune, une PISTE de réponse ADAPTÉE à son profil, plus les erreurs à éviter et la posture attendue (projet cohérent, financement, retour au pays).",
+                cta="Cible si besoin : /entretien visa Capago · /entretien Campus France.")
+        except Exception as e:
+            logger.error(f"entretien: {e}"); msg = "😕 Prépa entretien indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/canada"):
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je détermine ensuite la meilleure voie Canada pour toi."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    "🇨🇦 *Immigration Canada — voies adaptées à ton profil*",
+                    f"immigration Canada permis d'études PGWP Entrée express PEQ Arrima Québec francophone {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
+                    "Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : permis d'études (attestation/PAL, preuve de fonds) si étudiant ; PGWP puis Entrée express / résidence permanente si diplômé/travailleur ; PEQ/Arrima Québec (avantage francophone). Sois HONNÊTE sur les conditions (fonds, langue, points).",
+                    cta="Ensuite : /dossier <programme canadien> · /entretien visa · /logement <ville>.")
+            except Exception as e:
+                logger.error(f"canada: {e}"); msg = "😕 Conseils Canada indisponibles, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1139,11 +1234,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     historique = session.get("historique", [])
     historique.append({"role": "user", "content": t})
     profil_str = json.dumps(session.get("profil", {}), ensure_ascii=False)[:800]
-    system = f"""Tu es NexMove, agent IA chaleureux qui aide à préparer son prochain départ (études, emploi, bourses, mobilité internationale).
+    system = f"""Tu es NexMove. {CONSEILLER_PERSONA}
 ETAPE: {etape}
 PROFIL: {profil_str}
 INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: francais, TUTOIE l'utilisateur, ton amical et encourageant, ne le re-salue PAS en pleine conversation, max 120 mots, propose une action utile, ne redemande jamais le CV si etape=ACTIF.
+REGLES: francais, TUTOIE l'utilisateur, ton bienveillant et concret, ne le re-salue PAS en pleine conversation, max 120 mots. Propose l'action la plus utile parmi : /veille, /mobilite, /campusfrance, /parcours, /ecoles, /logement, /entretien, /canada, /dossier, /postuler, /formations. Ne redemande jamais le CV si etape=ACTIF.
 IMPORTANT: tu NE crées jamais toi-même un dossier, un CV ou une lettre dans la conversation, et tu ne lances JAMAIS de formulaire multi-étapes (ne demande pas l'objectif du poste, etc.). Pour générer des documents, indique la commande UNIQUE à taper en une fois, avec un exemple : « /dossier <cible> » (documents + CV + projet) ou « /postuler <cible> » (CV + lettre). N'affirme jamais avoir créé ou enregistré un document.
 JSON: {{"message":"..."}}"""
     try:
@@ -1427,15 +1522,21 @@ def get_menu(session, key):
             ("🌍 Recherche ciblée", "act:mobilite_help"),
             ("⬅️ Retour", "m:root")])
     if key == "cf":
-        opts = [("🇫🇷 Campus France", "act:parcours")]
+        opts = [
+            ("🇫🇷 Campus France", "act:campusfrance"),
+            ("🗺️ Mon parcours", "act:parcours"),
+            ("🏫 Trouver une école", "act:ecoles"),
+            ("🏠 Logement", "act:logement"),
+            ("🎤 Prépa entretien", "act:entretien"),
+            ("🇨🇦 Canada", "act:canada"),
+        ]
         try:
-            for (cible, dl, st) in (opp_store.list_candidatures(session.get("user_id")) or [])[:4]:
+            for (cible, dl, st) in (opp_store.list_candidatures(session.get("user_id")) or [])[:2]:
                 opts.append((("🗂️ " + str(cible))[:20], "act:status"))
         except Exception:
             pass
-        opts.append(("➕ Nouvelle candid.", "act:dossier_help"))
         opts.append(("⬅️ Retour", "m:root"))
-        return ("🗂️ *Tes procédures de candidature*", opts)
+        return ("🗂️ *Procédures & accompagnement*", opts)
     if key == "apply":
         return ("📄 *Candidater*", [
             ("🗂️ Dossier complet", "act:dossier_help"),
@@ -1596,7 +1697,8 @@ async def deliver_file(session, filename, data, caption=""):
 
 _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "profil": "/profil",
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
-            "formations": "/formations", "supprimer": "/supprimer"}
+            "formations": "/formations", "supprimer": "/supprimer",
+            "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada"}
 _ACT_HELP = {
     "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
     "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
@@ -1654,12 +1756,14 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         else:
             await deliver_text(session, "❌ Impossible de lire ce PDF, même après OCR.\n\nVérifie que le document est lisible (bonne qualité) ou envoie un PDF avec texte sélectionnable.")
         return
-    system = ("Tu es expert en analyse de CV. D'abord détermine si le document EST un CV/résumé "
-              "professionnel (identité + parcours/formation/expérience/compétences). Si ce n'est PAS un CV "
-              "(facture, article, cours, lettre, relevé, capture, texte quelconque), mets \"est_cv\": false "
-              "et laisse les autres champs vides. Réponds en JSON uniquement.")
+    system = ("Tu es expert en analyse de CV ET " + CONSEILLER_PERSONA + " D'abord détermine si le document EST "
+              "un CV/résumé professionnel (identité + parcours/formation/expérience/compétences). Si ce n'est PAS "
+              "un CV (facture, article, cours, lettre, relevé, capture, texte quelconque), mets \"est_cv\": false "
+              "et laisse les autres champs vides. Sinon, remplis aussi un \"bilan\" d'orientation bref et "
+              "personnalisé (forces réelles, axes à renforcer, 2-3 pistes réalistes de destinations/programmes "
+              "adaptées au profil). Réponds en JSON uniquement.")
     prompt = f"""Analyse ce document:
-{{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
+{{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"bilan":{{"forces":["..."],"axes":["..."],"pistes":["..."]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
 Document: {cv_text[:6000]}"""
     profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
     # Rejet des documents qui ne sont pas des CV (retour testeurs)
@@ -1676,7 +1780,15 @@ Document: {cv_text[:6000]}"""
     nom = profil.get("identite", {}).get("nom", "N/A")
     diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
-    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formation :* {diplome}\n💻 *Compétences :* {', '.join(skills)}\n\nCes informations sont-elles correctes ? Réponds *Oui* pour continuer."
+    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formation :* {diplome}\n💻 *Compétences :* {', '.join(skills)}\n"
+    bilan = profil.get("bilan", {}) or {}
+    if bilan.get("forces"):
+        message += "\n💪 *Tes atouts :* " + _md_clean(", ".join(bilan["forces"][:3])) + "\n"
+    if bilan.get("axes"):
+        message += "📈 *À renforcer :* " + _md_clean(", ".join(bilan["axes"][:3])) + "\n"
+    if bilan.get("pistes"):
+        message += "🎯 *Pistes réalistes pour toi :*\n" + "\n".join(f"• {_md_clean(p)}" for p in bilan["pistes"][:3]) + "\n"
+    message += "\nCes informations sont-elles correctes ? Réponds *Oui* pour continuer."
     session["etape"] = "CV_RECU"
     session["profil"] = profil
     session["cv_parsed"] = True
@@ -1759,6 +1871,50 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
         await deliver_text(session, msg, with_menu=show_menu)
         if fb_kb:
             await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
+
+def _profil_txt_court(profil: dict) -> str:
+    prefs = (profil.get("preferences", {}) or {})
+    dom = prefs.get("mots_cles") or (profil.get("resume_profil", "")[:60])
+    dip = (profil.get("formation") or [{}])[0].get("diplome", "")
+    return (f"diplôme={dip}, domaine={dom}, objectif={prefs.get('objectif','')}, "
+            f"pays visés={prefs.get('pays_cibles','')}, niveau={prefs.get('niveau','')}, "
+            f"financement={prefs.get('financement','')}, type poste={prefs.get('type_emploi','')}")
+
+async def conseil_grounded(profil: dict, titre_aff: str, tavily_query: str, consigne: str, cta: str = "") -> str:
+    """Conseil personnalisé façon conseiller senior, ancré sur le web (Tavily) — réutilisé par
+    /ecoles, /logement, /entretien, /canada. Liens réels uniquement, jamais d'échéance passée."""
+    grounded = await tavily_search(tavily_query, 6)
+    sources = "\n".join(f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:180]}"
+                        for s in grounded[:6]) if grounded else "(pas de résultat web — n'utilise que des organismes/plateformes RÉELS et connus, sans inventer d'URL)"
+    system = (CONSEILLER_PERSONA + " " + consigne +
+              " Ne cite QUE des organismes, plateformes ou écoles RÉELS (jamais d'URL inventée). JSON uniquement.")
+    prompt = f"""PROFIL: {_profil_txt_court(profil)}
+SOURCES WEB:
+{sources}
+DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()} — n'indique jamais une échéance déjà passée.
+JSON: {{"intro":"","points":[{{"titre":"","detail":"","lien":""}}],"checklist":["..."],"conseil":""}}"""
+    r = await call_groq(system, prompt, temperature=0.2, max_tokens=1400)
+    msg = f"{titre_aff}\n━━━━━━━━━━━━━━━━━━\n"
+    if r.get("intro"):
+        msg += _md_clean(r["intro"]) + "\n\n"
+    for p in (r.get("points") or [])[:6]:
+        ti = _md_clean(p.get("titre", ""))
+        if not ti:
+            continue
+        msg += f"• *{ti}*"
+        if p.get("detail"):
+            msg += f" — {_md_clean(p['detail'])}"
+        lien = str(p.get("lien", "") or "").replace("*", "").replace("`", "").strip()
+        if lien:
+            msg += f"\n  🔗 {lien}"
+        msg += "\n"
+    if r.get("checklist"):
+        msg += "\n📋 *À préparer :*\n" + "\n".join(f"⬜ {_md_clean(c)}" for c in r["checklist"][:6]) + "\n"
+    if r.get("conseil"):
+        msg += f"\n💡 {_md_clean(r['conseil'])}\n"
+    if cta:
+        msg += "\n" + cta
+    return msg
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})

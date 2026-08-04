@@ -2,6 +2,20 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.18 — Mode « conseiller d'orientation senior » & accompagnement des procédures
+- **Bilan d'orientation au CV** : à l'analyse, le bot rend un mini-bilan personnalisé (atouts, axes à
+  renforcer, 2-3 pistes réalistes de destinations/programmes) — l'onboarding devient un vrai conseil, pas
+  une simple extraction. Persona `CONSEILLER_PERSONA` partagée (aussi appliquée à la conversation libre).
+- **Campus France vraiment accompagné** : `/campusfrance` présente la procédure + oriente vers l'aide ;
+  `/parcours` affiche, pour l'étape en cours, l'action concrète + la commande qui aide.
+- **Nouvelles commandes d'accompagnement** (ancrées web, adaptées au profil) :
+  `/ecoles <domaine>` (trouver les bonnes écoles), `/logement <ville>` (se loger sans arnaque : CROUS,
+  Visale…), `/entretien [type]` (prépa entretien Campus France / Institut Français / visa Capago-VFS avec
+  questions types + pistes de réponse), `/canada` (voies d'immigration routées par profil : permis d'études,
+  PGWP, Entrée express, PEQ/Arrima Québec).
+- Menu **Procédures & accompagnement** enrichi (Campus France · Parcours · École · Logement · Entretien ·
+  Canada). Helper réutilisable `conseil_grounded`.
+
 ## v2.17.2 — RSS tolérant (feeds mal formés)
 - `fetch_rss` : si le XML strict échoue (afterschoolafrica, youthop… : `&` nus, CDATA), repli sur une
   extraction **régex tolérante** (gère CDATA + entités) ; page HTML → `[]` en silence. Log en warning au
