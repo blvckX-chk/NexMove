@@ -2,7 +2,7 @@ import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, 
 import html as _htmlmod
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
 import fitz
@@ -20,14 +20,16 @@ from reportlab.lib.enums import TA_JUSTIFY
 
 # OCR optionnel (CV scannés / images). Nécessite le binaire tesseract-ocr + pytesseract.
 # Import tolérant : si tesseract n'est pas installé, l'app démarre quand même (OCR désactivé).
+# Pillow (utile pour l'OCR ET la compression PDF) importé indépendamment de tesseract.
+try:
+    from PIL import Image
+except Exception:
+    Image = None
 try:
     import pytesseract
-    from PIL import Image
-    _OCR_IMPORTED = True
 except Exception:
     pytesseract = None
-    Image = None
-    _OCR_IMPORTED = False
+_OCR_IMPORTED = bool(pytesseract and Image)
 
 # Export Word (.docx) optionnel — python-docx est pur Python (aucune dépendance système).
 try:
@@ -84,7 +86,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.18.0"
+VERSION         = "2.19.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -413,6 +415,15 @@ class OppStore:
         n = con.execute("SELECT COUNT(*) FROM offres WHERE notified=0 AND score>=?", (min_score,)).fetchone()[0]
         con.close()
         return int(n)
+    def user_stats(self, user_id, days: int = 7) -> dict:
+        """Total d'offres et nombre ajouté sur les N derniers jours (gamification / preuve sociale)."""
+        con = sqlite3.connect(self._path, timeout=10)
+        total = con.execute("SELECT COUNT(*) FROM offres WHERE user_id=?", (str(user_id),)).fetchone()[0]
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        recent = con.execute("SELECT COUNT(*) FROM offres WHERE user_id=? AND created_at>=?",
+                             (str(user_id), since)).fetchone()[0]
+        con.close()
+        return {"total": int(total), "recent": int(recent)}
     def _ensure_feedback(self):
         con = sqlite3.connect(self._path, timeout=10)
         con.execute("""CREATE TABLE IF NOT EXISTS feedback (
@@ -584,6 +595,11 @@ def _sort_formations(formation):
 def _is_travail(objectif) -> bool:
     return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
 
+def _progress_bar(done: int, total: int, taille: int = 8) -> str:
+    total = max(total, 1)
+    plein = round(taille * min(done, total) / total)
+    return "▓" * plein + "░" * (taille - plein) + f" {min(done,total)}/{total}"
+
 PREF_QUESTIONS = [
     ("objectif", "🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)"),
     ("nationalite", "🛂 Quelle est ta nationalité (pays du passeport) ?"),
@@ -637,6 +653,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n\n"
+            "🛠️ *Outils*\n"
+            "/compresser <Ko> (alléger un PDF pour tes soumissions)\n\n"
             "📊 *Mon espace*\n"
             "/profil · /status · /rappels · /digest · /supprimer\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
@@ -889,6 +907,23 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/compresser") or low.startswith("/compress") or low.startswith("/alleger"):
+        target = 2000  # Ko par défaut (~2 Mo)
+        for p in t.split()[1:]:
+            d = re.sub(r"[^0-9]", "", p)
+            if d:
+                target = int(d)
+                if target < 50:      # l'utilisateur a probablement donné des Mo
+                    target *= 1024
+                target = max(100, min(20000, target))
+        session["compress_target"] = target
+        msg = (f"🗜️ *Compression PDF* — cible ≈ {target} Ko.\n\n"
+               "Envoie-moi maintenant le *PDF* à alléger (CV, relevé, passeport scanné…). "
+               "Je te renvoie une version plus légère pour tes soumissions en ligne.\n"
+               "_Astuce : /compresser 500 pour viser 500 Ko._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/formations") or low.startswith("/formation"):
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
@@ -1123,7 +1158,15 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 msg += "\n"
             else:
                 msg += "🗂️ Aucun dossier en cours. Lance /dossier <cible> pour en préparer un.\n\n"
-            msg += "Utilise /veille pour explorer, /campusfrance pour Études en France."
+            # 🏅 Progression (gamification)
+            st = opp_store.user_stats(session.get("user_id"))
+            cf = int(session.get("cf_stage", 0) or 0)
+            msg += ("🏅 *Ta progression*\n"
+                    f"• Opportunités trouvées : *{st['total']}*"
+                    + (f"  ( +{st['recent']} cette semaine 🔥)" if st['recent'] else "") + "\n"
+                    f"• Dossiers suivis : *{len(cands)}*\n"
+                    f"• Campus France : {_progress_bar(cf, len(CF_STAGES))}\n\n")
+            msg += "Continue : /veille · /parcours · /campusfrance · /ecoles · /canada."
         else:
             msg = f"📊 Onboarding en cours (étape : {session.get('etape','WELCOME')}). Fais /start."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -1222,9 +1265,28 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         if detecter_reponse_positive(t):
             session["etape"] = "ACTIF"; session["onboarding_complete"] = True
+            msg = "🎉 *Profil validé !* Voici déjà des pistes pour toi :\n"
+            # Première veille AUTOMATIQUE : de la valeur immédiate (levier de rétention).
+            try:
+                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+                top = res.get("opportunites", [])[:3]
+                for o in res.get("opportunites", []):
+                    opp_store.add(session.get("user_id"), o)
+                if top:
+                    for i, o in enumerate(top, 1):
+                        msg += f"\n{i}. {_type_label(o.get('type',''))} *{_md_clean(o.get('titre',''))[:55]}*"
+                        lien = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
+                        if lien:
+                            msg += f"\n   🔗 {lien}"
+                    _attach_feedback(session, top)
+                else:
+                    msg += "\nJe scrute déjà le web — tape /veille dans un instant."
+            except Exception as e:
+                logger.error(f"auto-veille: {e}")
+                msg += "\nTape /veille pour tes premières opportunités."
+            msg += ("\n\n▶️ *La suite :* /veille (plus d'offres) · /campusfrance (études en France) · "
+                    "/ecoles · /canada · /menu.\n_Je t'enverrai chaque jour les meilleures offres liées à ton profil._")
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
-            msg = ("🎉 *Profil validé !* Je vais chercher des opportunités adaptées.\n\n"
-                   "Utilise le menu ci-dessous, ou tape /menu à tout moment pour le rouvrir.")
         else:
             session["etape"] = "PREFERENCES"; session["pref_index"] = 0
             msg = "Pas de souci, on reprend.\n\n" + PREF_QUESTIONS[0][1]
@@ -1311,6 +1373,40 @@ def extract_text_pdf(pdf_bytes: bytes) -> str:
 def pdf_to_b64(buf: io.BytesIO) -> str:
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
+
+def compress_pdf(pdf_bytes: bytes, target_kb: int = 2000) -> tuple:
+    """Compresse un PDF sous ~target_kb. 1) reconstruction lossless (nettoyage/deflate).
+    2) si toujours trop lourd et Pillow dispo, rendu des pages en JPEG à DPI décroissant.
+    Renvoie (bytes, taille_ko_finale)."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        best = doc.tobytes(garbage=4, deflate=True, clean=True, deflate_images=True, deflate_fonts=True)
+    except Exception:
+        best = pdf_bytes
+    target = max(50, target_kb) * 1024
+    if len(best) <= target or Image is None:
+        doc.close()
+        return best, len(best) // 1024
+    for dpi, q in ((150, 75), (120, 70), (96, 65), (72, 55)):
+        try:
+            nd = fitz.open()
+            for page in doc:
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                b = io.BytesIO(); img.save(b, format="JPEG", quality=q, optimize=True)
+                npage = nd.new_page(width=page.rect.width, height=page.rect.height)
+                npage.insert_image(page.rect, stream=b.getvalue())
+            cand = nd.tobytes(garbage=4, deflate=True)
+            nd.close()
+            if len(cand) < len(best):
+                best = cand
+            if len(best) <= target:
+                break
+        except Exception as e:
+            logger.warning(f"[compress] dpi={dpi}: {e}")
+            break
+    doc.close()
+    return best, len(best) // 1024
 
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
@@ -1547,6 +1643,7 @@ def get_menu(session, key):
         return ("📊 *Mon espace*", [
             ("👤 Mon profil", "act:profil"),
             ("📊 Mon suivi", "act:status"),
+            ("🗜️ Compresser un PDF", "act:compresser"),
             ("🗑️ Effacer données", "act:supprimer"),
             ("⬅️ Retour", "m:root")])
     return ("🧭 *NexMove* — que veux-tu faire ?", [
@@ -1698,7 +1795,8 @@ async def deliver_file(session, filename, data, caption=""):
 _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "profil": "/profil",
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
             "formations": "/formations", "supprimer": "/supprimer",
-            "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada"}
+            "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
+            "compresser": "/compresser"}
 _ACT_HELP = {
     "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
     "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
@@ -1743,6 +1841,26 @@ async def handle_action(session, data, callback_id=None):
     return session
 
 async def process_cv(session, pdf_bytes, filename="cv.pdf"):
+    # Mode compression : l'utilisateur a demandé /compresser puis envoie un PDF
+    target_kb = session.pop("compress_target", 0)
+    if target_kb:
+        session_manager.set(session.get("user_id"), session)   # on retire le flag
+        if not pdf_bytes or len(pdf_bytes) > 25 * 1024 * 1024:
+            await deliver_text(session, "❌ PDF illisible ou trop lourd (max 25 Mo).")
+            return
+        orig_kb = len(pdf_bytes) // 1024
+        try:
+            data, kb = await asyncio.to_thread(compress_pdf, pdf_bytes, target_kb)
+        except Exception as e:
+            logger.error(f"[compress] {e}")
+            await deliver_text(session, "😕 Compression impossible sur ce fichier.")
+            return
+        base = _slug((filename or "document").rsplit(".", 1)[0])
+        await deliver_file(session, f"{base}_compresse.pdf", data, f"🗜️ {orig_kb} Ko → {kb} Ko")
+        note = "" if kb <= target_kb else f"\n⚠️ Je n'ai pas pu descendre sous {target_kb} Ko sans trop dégrader la qualité. Relance avec une cible plus haute si besoin."
+        await deliver_text(session, f"✅ PDF allégé : *{orig_kb} Ko → {kb} Ko*.{note}")
+        logger.info(f"[compress] {session.get('channel')} {orig_kb}->{kb} Ko (cible {target_kb})")
+        return
     if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
         await deliver_text(session, "❌ PDF illisible ou trop lourd (max 20 Mo).")
         return
@@ -2601,9 +2719,13 @@ async def notify(_auth: bool = Depends(verify_api_key)):
             if deadline:
                 ligne += "\n   📅 " + _md_clean(deadline)
             lignes.append(ligne)
-        msg = ("🔔 *Nouvelles opportunités pour toi*\n━━━━━━━━━━━━━━━━━━\n\n"
+        st = opp_store.user_stats(s.get("user_id"))
+        entete = f"🔔 *Tes meilleures offres du jour* ({len(rows)} sélectionnées pour ton profil)\n"
+        if st["recent"]:
+            entete += f"📈 {st['recent']} nouvelles cette semaine · {st['total']} au total dans ta veille\n"
+        msg = (entete + "━━━━━━━━━━━━━━━━━━\n\n"
                + "\n\n".join(lignes)
-               + "\n\n_Utilise /postuler <titre> pour générer CV + lettre._")
+               + "\n\n_/postuler <titre> pour ton CV + lettre · 👍/👎 pour affiner._")
         if await deliver_text(s, msg):
             opp_store.mark_notified(ids)
             notified += 1

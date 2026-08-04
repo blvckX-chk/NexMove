@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.19 — Motivation & outils
+- **Première veille automatique** dès le profil validé : 3 pistes tout de suite (valeur immédiate) + promesse
+  d'un digest quotidien lié au profil.
+- **Gamification** : `/status` affiche la progression (opportunités trouvées, +N cette semaine, dossiers,
+  barre Campus France ▓▓▓░░). Digest quotidien enrichi (preuve sociale : « N nouvelles cette semaine »).
+- **Outil compression PDF** : `/compresser [Ko]` puis envoi d'un PDF → version allégée pour les soumissions
+  en ligne (Campus France, visa…). Reconstruction lossless puis, si besoin, ré-encodage image à DPI
+  décroissant (testé : 20 Mo → <200 Ko). Bouton « 🗜️ Compresser un PDF » dans *Mon espace*.
+- **Fix** : Pillow importé indépendamment de tesseract (l'OCR manquant ne désactive plus la compression).
+
 ## v2.18 — Mode « conseiller d'orientation senior » & accompagnement des procédures
 - **Bilan d'orientation au CV** : à l'analyse, le bot rend un mini-bilan personnalisé (atouts, axes à
   renforcer, 2-3 pistes réalistes de destinations/programmes) — l'onboarding devient un vrai conseil, pas
