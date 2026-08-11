@@ -86,7 +86,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.20.0"
+VERSION         = "2.20.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -594,6 +594,24 @@ def _sort_formations(formation):
 
 def _is_travail(objectif) -> bool:
     return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
+
+def _free_text_to_command(low: str, t: str) -> str:
+    """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
+    if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
+        return "/formations " + t
+    if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")):
+        return "/logement " + t
+    if "budget" in low or "coût de la vie" in low or "cout de la vie" in low:
+        return "/budget " + t
+    if any(k in low for k in ("école", "ecole", "universit", "quelle formation", "quel master", "programme d'étude")):
+        return "/ecoles " + t
+    if "campus france" in low or "études en france" in low or "etudes en france" in low:
+        return "/campusfrance"
+    if "canada" in low or "québec" in low or "quebec" in low:
+        return "/canada"
+    if any(k in low for k in ("bourse", "opportunit", "offre d'emploi", "emploi", "poste", "stage", "recrut", "fellowship")):
+        return "/mobilite " + t
+    return ""
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -1424,6 +1442,19 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    # Pas encore onboardé : réponse déterministe (pas de LLM bavard qui re-salue / vouvoie / redemande le CV)
+    if not session.get("onboarding_complete"):
+        _push(session, "user", t)
+        msg = ("📄 Pour démarrer, envoie-moi ton *CV en PDF* — j'analyse ton profil et je te fais un bilan "
+               "d'orientation. Besoin d'un guide ? Tape /tuto.")
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    # Utilisateur actif : router l'intention vers la vraie commande plutôt qu'un chat approximatif
+    cmd = _free_text_to_command(low, t)
+    if cmd:
+        return await process_text_message(session, cmd)
+
     historique = session.get("historique", [])
     historique.append({"role": "user", "content": t})
     profil_str = json.dumps(session.get("profil", {}), ensure_ascii=False)[:800]
@@ -1431,11 +1462,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 ETAPE: {etape}
 PROFIL: {profil_str}
 INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: francais, TUTOIE l'utilisateur, ton bienveillant et concret, ne le re-salue PAS en pleine conversation, max 120 mots. Propose l'action la plus utile parmi : /veille, /mobilite, /campusfrance, /parcours, /ecoles, /logement, /entretien, /canada, /dossier, /postuler, /formations. Ne redemande jamais le CV si etape=ACTIF.
+REGLES: réponds en français, TUTOIE toujours (jamais « vous »/« veuillez »), ne dis JAMAIS « Bonjour » ni ne te re-présentes (la conversation est déjà en cours), max 120 mots. Ne redemande JAMAIS le CV (le profil existe déjà). Propose l'action la plus utile parmi : /veille, /mobilite, /campusfrance, /parcours, /ecoles, /logement, /entretien, /canada, /dossier, /postuler, /formations, /budget, /eligibilite.
 IMPORTANT: tu NE crées jamais toi-même un dossier, un CV ou une lettre dans la conversation, et tu ne lances JAMAIS de formulaire multi-étapes (ne demande pas l'objectif du poste, etc.). Pour générer des documents, indique la commande UNIQUE à taper en une fois, avec un exemple : « /dossier <cible> » (documents + CV + projet) ou « /postuler <cible> » (CV + lettre). N'affirme jamais avoir créé ou enregistré un document.
 JSON: {{"message":"..."}}"""
     try:
-        llm = await call_groq(system, t, temperature=0.3, max_tokens=350, tier="fast")
+        llm = await call_groq(system, t, temperature=0.3, max_tokens=350)  # modèle 70B : meilleur suivi de consignes
         message = llm.get("message", "Je suis là pour t'aider.")
     except Exception as e:
         logger.error(f"Erreur LLM: {e}")

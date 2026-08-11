@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.20.1 — Conversation libre corrigée (retour prod)
+- **Avant onboarding** : un message libre reçoit une réponse *déterministe* (« envoie ton CV ») au lieu d'un
+  LLM bavard qui disait « Bonjour », vouvoyait et redemandait le CV.
+- **Utilisateur actif** : les messages libres sont *routés vers la vraie commande* selon l'intention
+  (formations, école, logement, budget, Campus France, Canada, opportunités) — ex. « formations proposées
+  par l'ASIN » lance une vraie recherche au lieu d'une réponse approximative.
+- **Conversation** repassée sur le modèle 70B (le 8B ignorait le tutoiement / ne-pas-resaluer), consignes
+  durcies (jamais « Bonjour »/« vous », ne jamais redemander le CV).
+
 ## v2.20 — Boîte à outils & procédures multi-pays
 - **Outils PDF** : `/fusionner` (assembler des PDF), `/enpdf` (images→PDF, images envoyées en fichier),
   `/decouper <pages>` (extraire des pages), en plus de `/compresser`. Tampon de fichiers sur disque
