@@ -86,7 +86,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.20.2"
+VERSION         = "2.21.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -628,6 +628,23 @@ PREF_QUESTIONS = [
     ("niveau", "🎓 Ton niveau ? (étudiant / professionnel)"),
     ("mots_cles", "🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)"),
 ]
+
+# Choix cliquables pour les questions à réponse fermée (les autres restent en texte libre).
+PREF_CHOICES = {
+    "objectif": ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"],
+    "financement": ["Bourse indispensable", "Auto-financement", "Peu importe"],
+    "langues_opportunite": ["Français", "Anglais", "Les deux"],
+    "niveau": ["Étudiant", "Professionnel"],
+}
+
+_CONFIRM_KB = [("✅ Oui, c'est bon", "onb:oui"), ("🔄 Recommencer", "onb:non")]
+
+def _pref_question(session: dict, idx: int) -> str:
+    """Renvoie l'intitulé de la question et arme les boutons de choix (si la question est fermée)."""
+    field, q = PREF_QUESTIONS[idx]
+    choix = PREF_CHOICES.get(field)
+    session["_kb_options"] = [(c, "pref:" + c) for c in choix] if choix else None
+    return q
 
 def valider_pref(field: str, value: str) -> tuple[bool, str]:
     """Vérifie la cohérence d'une réponse d'onboarding.
@@ -1359,7 +1376,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"; session["pref_index"] = 0
-        q = PREF_QUESTIONS[0][1]
+        q = _pref_question(session, 0)
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
 
@@ -1372,7 +1389,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             ok, indice = valider_pref(field, t)
             if not ok:
                 _push(session, "user", t)
-                q = f"🤔 {indice}\n\n{PREF_QUESTIONS[idx][1]}"
+                q = f"🤔 {indice}\n\n{_pref_question(session, idx)}"
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
             prefs[field] = t
@@ -1380,16 +1397,18 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         idx += 1; session["pref_index"] = idx
         _push(session, "user", t)
         if idx < len(PREF_QUESTIONS):
-            q = PREF_QUESTIONS[idx][1]
+            q = _pref_question(session, idx)
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
         # Question conditionnelle : type de poste (seulement si l'objectif est de travailler)
         if _is_travail(prefs.get("objectif")) and not prefs.get("type_emploi"):
             session["etape"] = "PREF_TYPE_EMPLOI"
             q = "💼 Type de poste recherché ?\n(temps plein / temps partiel / télétravail / alternance / peu importe)"
+            session["_kb_options"] = [(c, "pref:" + c) for c in ["Temps plein", "Temps partiel", "Télétravail", "Alternance", "Peu importe"]]
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
         session["etape"] = "CONFIRMATION"
+        session["_kb_options"] = _CONFIRM_KB
         resume = _resume_prefs(prefs)
         _push(session, "assistant", resume); session["derniere_activite"] = now
         return resume, session
@@ -1400,11 +1419,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if t.strip().lower().startswith("/") or len(t.strip()) < 2:
             _push(session, "user", t)
             q = "🤔 Réponds à la question (sans commande).\n💼 Type de poste ? (temps plein / temps partiel / télétravail / alternance / peu importe)"
+            session["_kb_options"] = [(c, "pref:" + c) for c in ["Temps plein", "Temps partiel", "Télétravail", "Alternance", "Peu importe"]]
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
         prefs["type_emploi"] = t.strip()
         profil["preferences"] = prefs; session["profil"] = profil
         session["etape"] = "CONFIRMATION"
+        session["_kb_options"] = _CONFIRM_KB
         _push(session, "user", t)
         resume = _resume_prefs(prefs)
         _push(session, "assistant", resume); session["derniere_activite"] = now
@@ -1438,7 +1459,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
         else:
             session["etape"] = "PREFERENCES"; session["pref_index"] = 0
-            msg = "Pas de souci, on reprend.\n\n" + PREF_QUESTIONS[0][1]
+            msg = "Pas de souci, on reprend.\n\n" + _pref_question(session, 0)
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -2015,18 +2036,23 @@ async def deliver_menu(session, title, options):
         return await fb_menu(to, title, options)
     return await send_message(to, title, _tg_keyboard(options))
 
-async def deliver_text(session, text, with_menu=False):
+async def deliver_text(session, text, with_menu=False, options=None):
+    # `options` = boutons attachés à CE message (confirmation, choix d'onboarding…), prioritaires sur le menu.
     ch = session.get("channel", "telegram"); to = session.get("chat_id")
     if ch == "whatsapp":
+        if options:
+            return await wa_menu(to, text, options)
         await wa_text(to, text)
         if with_menu:
             await wa_menu(to, "👉 Que veux-tu faire ?", get_menu(session, "root")[1])
         return True
     if ch == "messenger":
+        if options:
+            return await fb_menu(to, text, options)
         if with_menu:
             return await fb_menu(to, text, get_menu(session, "root")[1])
         return await fb_text(to, text)
-    kb = _tg_keyboard(get_menu(session, "root")[1]) if with_menu else None
+    kb = _tg_keyboard(options) if options else (_tg_keyboard(get_menu(session, "root")[1]) if with_menu else None)
     return await send_message(to, text, kb)
 
 async def deliver_file(session, filename, data, caption=""):
@@ -2067,6 +2093,18 @@ async def handle_action(session, data, callback_id=None):
         return session
     if callback_id:
         await answer_callback(callback_id)
+    # Confirmation / choix d'onboarding cliquables : on rejoue la réponse comme si elle était tapée
+    if data.startswith(("onb:", "pref:")):
+        val = data.split(":", 1)[1]
+        txt = "/start" if val == "reset" else val
+        msg, session = await process_text_message(session, txt)
+        opts = session.pop("_kb_options", None)
+        show = session.pop("_show_menu", False)
+        fb = session.pop("_feedback_kb", None)
+        await deliver_text(session, msg, with_menu=show, options=opts)
+        if fb:
+            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb)
+        return session
     if data.startswith("m:"):
         title, opts = get_menu(session, data[2:])
         await deliver_menu(session, title, opts)
@@ -2191,7 +2229,7 @@ Document: {cv_text[:6000]}"""
         message += "📈 *À renforcer :* " + _md_clean(", ".join(bilan["axes"][:3])) + "\n"
     if bilan.get("pistes"):
         message += "🎯 *Pistes réalistes pour toi :*\n" + "\n".join(f"• {_md_clean(p)}" for p in bilan["pistes"][:3]) + "\n"
-    message += "\nCes informations sont-elles correctes ? Réponds *Oui* pour continuer."
+    message += "\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*)."
     session["etape"] = "CV_RECU"
     session["profil"] = profil
     session["cv_parsed"] = True
@@ -2199,7 +2237,7 @@ Document: {cv_text[:6000]}"""
     _push(session, "assistant", message)
     session_manager.set(session.get("user_id"), session)
     logger.info(f"[cv] {session.get('channel')} {nom} -> CV_RECU")
-    await deliver_text(session, message)
+    await deliver_text(session, message, options=[("✅ C'est correct", "onb:oui"), ("🔄 Recommencer", "onb:reset")])
 
 def _extract_incoming(channel, raw):
     text, callback, doc = None, None, None
@@ -2269,9 +2307,10 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
             return
         msg, session = await process_text_message(session, text)
         show_menu = session.pop("_show_menu", False)
+        kb_options = session.pop("_kb_options", None)
         fb_kb = session.pop("_feedback_kb", None)
         session_manager.set(user_id, session)
-        await deliver_text(session, msg, with_menu=show_menu)
+        await deliver_text(session, msg, with_menu=show_menu, options=kb_options)
         if fb_kb:
             await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
 
@@ -2378,9 +2417,10 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     logger.info(f"[chat] tg user={uid} text={request.text[:50]!r}")
     message, session = await process_text_message(session, request.text)
     show_menu = session.pop("_show_menu", False)
+    kb_options = session.pop("_kb_options", None)
     fb_kb = session.pop("_feedback_kb", None)
     session_manager.set(uid, session)
-    await deliver_text(session, message, with_menu=show_menu)
+    await deliver_text(session, message, with_menu=show_menu, options=kb_options)
     if fb_kb:
         await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
     return {"ok": True}

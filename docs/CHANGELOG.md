@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.21 — Boutons de confirmation & choix cliquables (rapport testeur, point 3)
+- **Validation du CV** avec boutons : `✅ C'est correct` / `🔄 Recommencer` (au lieu de taper « Oui »).
+- **Questions d'onboarding fermées** en boutons cliquables : objectif, financement, langue, niveau, type de
+  poste — plus besoin de taper, et fini les réponses incohérentes sur ces champs.
+- **Récapitulatif** validé par boutons : `✅ Oui, c'est bon` / `🔄 Recommencer`.
+- Mécanique : clavier par tour (`_kb_options`) attaché au message, callbacks `onb:`/`pref:` rejoués comme une
+  réponse tapée (la saisie texte reste possible). `deliver_text(..., options=…)` sur les 3 canaux.
+
 ## v2.20.2 — Affichage des formations (rapport testeur)
 - Le message d'analyse du CV affiche désormais **toutes les formations** (jusqu'à 3, diplôme le plus élevé
   en tête, + « +N autres ») au lieu d'une seule — les données étaient déjà complètes, seul l'affichage
