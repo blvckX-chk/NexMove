@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.20.2 — Affichage des formations (rapport testeur)
+- Le message d'analyse du CV affiche désormais **toutes les formations** (jusqu'à 3, diplôme le plus élevé
+  en tête, + « +N autres ») au lieu d'une seule — les données étaient déjà complètes, seul l'affichage
+  induisait en erreur.
+- **CV sans section Formation** : message explicite « Aucune formation détectée » (l'analyse continue, pas
+  de blocage).
+
 ## v2.20.1 — Conversation libre corrigée (retour prod)
 - **Avant onboarding** : un message libre reçoit une réponse *déterministe* (« envoie ton CV ») au lieu d'un
   LLM bavard qui disait « Bonjour », vouvoyait et redemandait le CV.

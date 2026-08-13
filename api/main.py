@@ -86,7 +86,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.20.1"
+VERSION         = "2.20.2"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2167,9 +2167,23 @@ Document: {cv_text[:6000]}"""
     # Diplôme principal en premier (le plus élevé/récent) — sinon le bot retenait la licence au lieu du master
     profil["formation"] = _sort_formations(profil.get("formation"))
     nom = profil.get("identite", {}).get("nom", "N/A")
-    diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
+    forms = profil.get("formation", []) or []
+    if forms:
+        lignes_f = []
+        for f in forms[:3]:
+            dip = (f.get("diplome", "") or "").strip()
+            etab = (f.get("etablissement", "") or "").strip()
+            an = (f.get("annee", "") or "").strip()
+            ligne = dip + (f" — {etab}" if etab else "") + (f" ({an})" if an else "")
+            if ligne.strip():
+                lignes_f.append("   • " + _md_clean(ligne))
+        formation_txt = "\n".join(lignes_f) if lignes_f else "   • _non précisé_"
+        if len(forms) > 3:
+            formation_txt += f"\n   • _(+{len(forms) - 3} autre·s)_"
+    else:
+        formation_txt = "   • _Aucune formation détectée dans ton CV — dis-le-moi si c'est une erreur._"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
-    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formation :* {diplome}\n💻 *Compétences :* {', '.join(skills)}\n"
+    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
     bilan = profil.get("bilan", {}) or {}
     if bilan.get("forces"):
         message += "\n💪 *Tes atouts :* " + _md_clean(", ".join(bilan["forces"][:3])) + "\n"
