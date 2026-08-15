@@ -86,7 +86,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.21.0"
+VERSION         = "2.22.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -613,6 +613,11 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/mobilite " + t
     return ""
 
+# Commandes que le routeur d'intention LLM peut déclencher à partir d'une phrase libre.
+_VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "entretien", "campusfrance",
+                  "canada", "procedure", "budget", "eligibilite", "dossier", "postuler", "compresser",
+                  "traduire", "status", "profil", "parcours", "aide", "fusionner", "enpdf", "decouper"}
+
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
     plein = round(taille * min(done, total) / total)
@@ -621,7 +626,7 @@ def _progress_bar(done: int, total: int, taille: int = 8) -> str:
 PREF_QUESTIONS = [
     ("objectif", "🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)"),
     ("nationalite", "🛂 Quelle est ta nationalité (pays du passeport) ?"),
-    ("pays_cibles", "🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada, Europe francophone, ou « tous »)"),
+    ("pays_cibles", "🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… — ou ton *propre pays* pour des offres locales, ou « tous »)"),
     ("financement", "💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?"),
     ("certifs_langue", "🗣️ Certifications de langue ?\n(IELTS/TOEFL/TCF/DELF + score, ou « aucune »)"),
     ("langues_opportunite", "🌐 Langue des opportunités ? (français / anglais / les deux)"),
@@ -1471,29 +1476,33 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    # Utilisateur actif : router l'intention vers la vraie commande plutôt qu'un chat approximatif
+    # Utilisateur actif — langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
+    # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.
     cmd = _free_text_to_command(low, t)
     if cmd:
         return await process_text_message(session, cmd)
 
-    historique = session.get("historique", [])
-    historique.append({"role": "user", "content": t})
     profil_str = json.dumps(session.get("profil", {}), ensure_ascii=False)[:800]
     system = f"""Tu es NexMove. {CONSEILLER_PERSONA}
-ETAPE: {etape}
 PROFIL: {profil_str}
-INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: réponds en français, TUTOIE toujours (jamais « vous »/« veuillez »), ne dis JAMAIS « Bonjour » ni ne te re-présentes (la conversation est déjà en cours), max 120 mots. Ne redemande JAMAIS le CV (le profil existe déjà). Propose l'action la plus utile parmi : /veille, /mobilite, /campusfrance, /parcours, /ecoles, /logement, /entretien, /canada, /dossier, /postuler, /formations, /budget, /eligibilite.
-IMPORTANT: tu NE crées jamais toi-même un dossier, un CV ou une lettre dans la conversation, et tu ne lances JAMAIS de formulaire multi-étapes (ne demande pas l'objectif du poste, etc.). Pour générer des documents, indique la commande UNIQUE à taper en une fois, avec un exemple : « /dossier <cible> » (documents + CV + projet) ou « /postuler <cible> » (CV + lettre). N'affirme jamais avoir créé ou enregistré un document.
-JSON: {{"message":"..."}}"""
+L'utilisateur écrit librement. Deux cas :
+1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
+2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
+COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · dossier <cible> · postuler <cible> · compresser · traduire <texte> · status · profil · parcours · aide.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots.
+JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
-        llm = await call_groq(system, t, temperature=0.3, max_tokens=350)  # modèle 70B : meilleur suivi de consignes
-        message = llm.get("message", "Je suis là pour t'aider.")
+        r = await call_groq(system, t, temperature=0.3, max_tokens=380)
     except Exception as e:
         logger.error(f"Erreur LLM: {e}")
-        message = "Désolé, souci technique. Reformule ta demande."
-    historique.append({"role": "assistant", "content": message, "ts": now})
-    session["historique"] = historique[-30:]; session["derniere_activite"] = now
+        r = {}
+    action = str(r.get("action", "") or "").strip().lower().lstrip("/")
+    if action in _VALID_INTENTS:
+        arg = str(r.get("argument", "") or "").strip()
+        return await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
+    message = (r.get("message") or "Je suis là pour t'aider — dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…).").strip()
+    _push(session, "user", t); _push(session, "assistant", message)
+    session["derniere_activite"] = now
     return message, session
 
 def session_to_sheets_row(session: dict) -> dict:
@@ -2793,6 +2802,25 @@ def _domain(url):
     d = re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0]
     return d[:40]
 
+# Nationalité -> pays (pour proposer aussi des opportunités LOCALES, pas seulement à l'étranger)
+_NAT_PAYS = {
+    "béninoise": "Bénin", "beninoise": "Bénin", "ivoirienne": "Côte d'Ivoire", "sénégalaise": "Sénégal",
+    "senegalaise": "Sénégal", "togolaise": "Togo", "burkinabé": "Burkina Faso", "burkinabe": "Burkina Faso",
+    "malienne": "Mali", "nigérienne": "Niger", "nigerienne": "Niger", "nigériane": "Nigéria",
+    "camerounaise": "Cameroun", "guinéenne": "Guinée", "guineenne": "Guinée", "gabonaise": "Gabon",
+    "congolaise": "Congo", "tchadienne": "Tchad", "centrafricaine": "Centrafrique", "marocaine": "Maroc",
+    "tunisienne": "Tunisie", "algérienne": "Algérie", "algerienne": "Algérie",
+}
+
+def _pays_from_nat(nat: str) -> str:
+    n = str(nat or "").strip().lower()
+    if n in _NAT_PAYS:
+        return _NAT_PAYS[n]
+    for k, v in _NAT_PAYS.items():
+        if k in n or v.lower() in n:
+            return v
+    return ""
+
 _STOP_SIG = {"pour", "avec", "dans", "les", "des", "une", "chez", "sur", "the", "and",
              "for", "master", "bourse", "offre", "emploi", "stage", "junior", "senior"}
 
@@ -2832,12 +2860,17 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
         domaine = mots
     else:
         last_poste = (profil.get("experience") or [{}])[0].get("poste", "")
-        domaine = last_poste or (resume[:60]) or (formations[0] if formations else "") or "opportunités internationales"
+        domaine = last_poste or (resume[:60]) or (formations[0] if formations else "") or "opportunités"
     type_emploi = prefs.get("type_emploi") or ""
-    cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités internationales"
+    cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités"
     cible_lower = cible.lower()
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
+    # Champ élargi : proposer aussi des opportunités LOCALES (pas seulement à l'étranger)
+    local_pays = _pays_from_nat(nationalite)
+    _pc_low = (pays_cibles or "").lower()
+    _pc_vide = (not pays_cibles) or _pc_low in ("tous", "local", "sur place", "mon pays", "")
+    veut_local = _pc_vide or "afrique" in _pc_low or (local_pays and local_pays.lower() in (_pc_low + " " + cible_lower))
     today = datetime.now(timezone.utc).date().isoformat()
     profil_txt = (f"résumé: {resume[:200]} | formations: {', '.join(formations) or '—'} | "
                   f"expériences: {', '.join(experiences) or '—'} | compétences: {competences} | "
@@ -2847,7 +2880,12 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     if TAVILY_API_KEY:
         type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
                     "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
-        zone = pays_detecte or pays_cibles or ""
+        if pays_detecte:
+            zone = pays_detecte
+        elif not _pc_vide:
+            zone = pays_cibles
+        else:
+            zone = local_pays if veut_local else ""
         domaine_q = " OR ".join(mots_list) if len(mots_list) > 1 else domaine
         query = f"{type_mot} {domaine_q} {type_emploi} {zone} 2026 candidature".strip()
         grounded = await tavily_search(query, 10)
@@ -2862,16 +2900,18 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
         grounded = grounded[:8]
         sources_txt = "\n".join(f"[{i}] {s.get('title','')} — {(s.get('content','') or '')[:200]}"
                                 for i, s in enumerate(grounded))
-        system = ("Tu es expert en orientation et mobilité internationale. On te fournit des RÉSULTATS WEB numérotés. "
-                  "Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du candidat (respecte une éventuelle "
-                  "reconversion : cible son domaine ACTUEL/visé, pas ses anciens diplômes). Réponds avec l'INDEX du résultat "
-                  "(jamais d'URL inventée). Ignore le hors-sujet. JSON uniquement.")
+        system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale). On te fournit des "
+                  "RÉSULTATS WEB numérotés. Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du "
+                  "candidat (respecte une éventuelle reconversion : cible son domaine ACTUEL/visé, pas ses anciens "
+                  "diplômes). Réponds avec l'INDEX du résultat (jamais d'URL inventée). Ignore le hors-sujet. JSON uniquement.")
         diversite = (f"MOTS-CLÉS À COUVRIR (varie les résultats entre ces thèmes, pas tous sur le même) : {', '.join(mots_list)}.\n"
                      if len(mots_list) > 1 else "")
         type_emploi_txt = f"TYPE DE POSTE souhaité : {type_emploi}.\n" if type_emploi else ""
+        local_txt = (f"IMPORTANT : inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations comme "
+                     f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or 'indifférent'}
-{diversite}{type_emploi_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
+DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent')}
+{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
 Sélectionne 3 à 5 résultats PERTINENTS pour CE profil. Donne l'index de chacun.
@@ -2904,13 +2944,16 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles — vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
-        system = ("Tu es expert en orientation et mobilité internationale pour ressortissants africains. "
-                  "Respecte le PARCOURS RÉEL (reconversion incluse) : cible le domaine actuel/visé. "
-                  "Ne cite QUE des organismes RÉELS (DAAD, Campus France, Erasmus Mundus, Chevening, AUF, "
-                  "Mastercard Foundation, Mitacs...). N'invente jamais d'URL (portail officiel en clair). JSON uniquement.")
+        system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale) pour ressortissants "
+                  "africains. Respecte le PARCOURS RÉEL (reconversion incluse) : cible le domaine actuel/visé. "
+                  "Ne cite QUE des organismes RÉELS — locaux (agences, universités, entreprises, programmes du pays) "
+                  "ET internationaux (DAAD, Campus France, Erasmus Mundus, Chevening, AUF, Mastercard Foundation…). "
+                  "N'invente jamais d'URL (portail officiel en clair). JSON uniquement.")
+        local_txt = (f"Inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations locales, bourses "
+                     f"nationales), pas seulement à l'étranger.\n" if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or 'Non précisé'}
-DATE DU JOUR: {today}. Uniquement des opportunités ouvertes ou à venir.
+DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' + international' if local_pays else 'Non précisé')}
+{local_txt}DATE DU JOUR: {today}. Uniquement des opportunités ouvertes ou à venir.
 Donne 3 à 5 opportunités RÉELLES adaptées à CE profil.
 JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship|formation","portail_officiel":"","financement":"total|partiel|aucun","deadline":"","deadline_iso":"","confiance":"haute|moyenne|faible","score_composite":0,"raison":""}}],"conseil_principal":""}}"""
         result = await call_groq(system, prompt, temperature=0.15, max_tokens=1500)

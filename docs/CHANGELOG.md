@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.22 — Langage 100 % naturel & offres locales
+- **Parler normalement suffit** : n'importe quelle phrase est comprise. Mots-clés en priorité (instantané),
+  sinon le LLM décide en **un seul appel** s'il faut lancer une **action** (n'importe quelle commande, avec
+  son argument) ou **répondre en conversation**. Les commandes restent utilisables. Repli mots-clés si le
+  LLM est indisponible (pas de régression).
+- **Champ élargi au LOCAL** : le système ne cherche plus seulement à l'étranger. Si les pays visés sont
+  vides / « tous » / le propre pays de l'utilisateur, la veille inclut les opportunités **locales** (emplois,
+  formations comme l'ASIN, bourses nationales). Détection nationalité→pays, prompts et requêtes adaptés.
+  Question d'onboarding « pays visés » mentionne désormais le local.
+
 ## v2.21 — Boutons de confirmation & choix cliquables (rapport testeur, point 3)
 - **Validation du CV** avec boutons : `✅ C'est correct` / `🔄 Recommencer` (au lieu de taper « Oui »).
 - **Questions d'onboarding fermées** en boutons cliquables : objectif, financement, langue, niveau, type de
