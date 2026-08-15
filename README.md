@@ -1,8 +1,11 @@
 # NexMove
 
-**Agent IA de mobilité internationale sur messageries** — études, emploi, bourses, fellowships.
-Grounding web réel (Tavily), scoring LLM (Groq), génération de documents (CV + lettre/projet d'études)
-et veille proactive. Multi-canal : **Telegram** (en production), **WhatsApp** & **Messenger** (code prêt).
+**Conseiller IA d'orientation & d'opportunités sur messageries** — études, emploi, bourses, fellowships,
+**en local comme à l'international**. On lui parle **en langage naturel** (pas besoin de connaître les
+commandes) : il lit le CV, dresse un bilan, trouve de vraies opportunités adaptées, accompagne les
+procédures pas à pas et prépare les documents. Grounding web réel (Tavily), matching sémantique, génération
+de documents (PDF + Word) et veille proactive. Multi-canal : **Telegram** (en production), **WhatsApp** &
+**Messenger** (code prêt).
 
 ## Architecture (v2.7)
 

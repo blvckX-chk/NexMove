@@ -1,11 +1,14 @@
 # NexMove — Fonctionnalités & avancées (v2.20)
 
-**NexMove** est un agent IA de **mobilité internationale** (études, emploi, bourses, fellowships) sur
-messageries, qui se comporte comme un **conseiller d'orientation senior** : il lit le CV, dresse un bilan,
-trouve de **vraies** opportunités, accompagne les procédures pas à pas et prépare les documents.
+**NexMove** est un **conseiller IA d'orientation et d'opportunités** (études, emploi, bourses, fellowships),
+**en local comme à l'international**, sur messageries. Il se comporte comme un **conseiller d'orientation
+senior** : il lit le CV, dresse un bilan, trouve de **vraies** opportunités adaptées, accompagne les
+procédures pas à pas et prépare les documents. On lui **parle en langage naturel** — les commandes ne sont
+qu'un raccourci.
 
-Cible : francophones d'Afrique de l'Ouest (ex. Bénin). Canal en production : **Telegram**
-(`@nex_move_bot`). WhatsApp & Messenger : code prêt, config Meta à faire.
+Cible : francophones d'Afrique de l'Ouest (ex. Bénin), qu'ils veuillent partir à l'étranger **ou** trouver
+des opportunités chez eux. Canal en production : **Telegram** (`@nex_move_bot`). WhatsApp & Messenger : code
+prêt, config Meta à faire.
 
 ---
 

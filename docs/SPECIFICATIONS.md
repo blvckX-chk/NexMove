@@ -1,14 +1,18 @@
-# NexMove — Spécifications techniques (v2.7)
+# NexMove — Spécifications techniques (v2.22)
 
-Agent IA de **mobilité internationale** (études, emploi, bourses, fellowships) sur messageries,
-avec grounding web réel, scoring LLM, génération de documents et veille proactive.
+Conseiller IA d'**orientation et d'opportunités** (études, emploi, bourses, fellowships), **local et
+international**, sur messageries, avec **langage naturel**, grounding web réel, matching sémantique,
+génération de documents et veille proactive.
 
 ---
 
 ## 1. Vision produit
-Aider un candidat (cible : francophones d'Afrique de l'Ouest, ex. Bénin) à préparer son **prochain départ** :
-1. analyser son profil (CV), 2. trouver de **vraies** opportunités adaptées, 3. préparer les **dossiers**
-(documents + CV + lettre/projet d'études), 4. suivre ses candidatures et **ne jamais rater une deadline**.
+Aider un candidat (cible : francophones d'Afrique de l'Ouest, ex. Bénin) à saisir sa **prochaine
+opportunité — chez lui ou à l'étranger** :
+1. analyser son profil (CV) + **bilan d'orientation**, 2. trouver de **vraies** opportunités adaptées
+(locales *et* internationales), 3. préparer les **dossiers** (documents + CV + lettre/projet), 4. suivre ses
+candidatures et **ne jamais rater une deadline**. On lui **parle en langage naturel** ; les commandes sont un
+raccourci.
 
 ## 2. Architecture
 
