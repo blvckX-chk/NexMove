@@ -51,10 +51,17 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_URL        = "https://api.groq.com/openai/v1/chat/completions"
 CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
+# Modèles LLM configurables par env : les fournisseurs déprécient régulièrement leurs modèles,
+# on peut donc les corriger sans toucher au code (juste .env + redémarrage).
+GROQ_MODEL       = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL_FAST  = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
+CEREBRAS_MODEL   = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
+CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "llama3.1-8b")
+GEMINI_MODEL     = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")   # gemini-2.0-flash déprécié (août 2026)
+GEMINI_MODEL_FAST = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite")
 OCR_LANG        = os.getenv("OCR_LANG", "fra+eng")   # packs tesseract requis: tesseract-ocr-fra tesseract-ocr-eng
 OCR_MAX_PAGES   = int(os.getenv("OCR_MAX_PAGES", "8"))
 OCR_ZOOM        = float(os.getenv("OCR_ZOOM", "2.5")) # facteur de rendu (≈216 dpi) pour une meilleure reconnaissance
@@ -86,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.22.0"
+VERSION         = "2.22.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -176,11 +183,11 @@ class MobilityRequest(BaseModel):
 # ── Routeur LLM multi-fournisseurs : Cerebras → Groq → Gemini (bascule auto) ──
 _LLM_PROVIDERS = [
     {"name": "cerebras", "url": "https://api.cerebras.ai/v1/chat/completions",
-     "key": CEREBRAS_API_KEY, "model": "llama-3.3-70b", "model_fast": "llama-3.1-8b", "api": "openai", "max_ctx": 8192},
+     "key": CEREBRAS_API_KEY, "model": CEREBRAS_MODEL, "model_fast": CEREBRAS_MODEL_FAST, "api": "openai", "max_ctx": 8192},
     {"name": "groq", "url": GROQ_URL, "key": GROQ_API_KEY,
-     "model": GROQ_MODEL, "model_fast": "llama-3.1-8b-instant", "api": "openai", "max_ctx": 32000},
-    {"name": "gemini", "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-     "key": GEMINI_API_KEY, "model": "gemini-2.0-flash", "model_fast": "gemini-2.0-flash", "api": "gemini", "max_ctx": 1000000},
+     "model": GROQ_MODEL, "model_fast": GROQ_MODEL_FAST, "api": "openai", "max_ctx": 32000},
+    {"name": "gemini", "url": f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
+     "key": GEMINI_API_KEY, "model": GEMINI_MODEL, "model_fast": GEMINI_MODEL_FAST, "api": "gemini", "max_ctx": 1000000},
 ]
 _LLM_FALLBACK_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 
@@ -2201,7 +2208,15 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
     prompt = f"""Analyse ce document:
 {{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"bilan":{{"forces":["..."],"axes":["..."],"pistes":["..."]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
 Document: {cv_text[:6000]}"""
-    profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+    try:
+        profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+    except Exception as e:
+        logger.error(f"[cv] analyse LLM échouée: {e}")
+        await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute — je m'en occupe dès que possible.")
+        return
+    if not isinstance(profil, dict) or not profil:
+        await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
+        return
     # Rejet des documents qui ne sont pas des CV (retour testeurs)
     ident = profil.get("identite", {}) or {}
     a_du_contenu = bool(profil.get("formation") or profil.get("experience") or

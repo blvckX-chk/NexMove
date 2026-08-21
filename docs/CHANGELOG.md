@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.22.1 — 🔴 Correctif critique : modèles LLM dépréciés (bot bloqué)
+- **Bug bloquant en prod** : les 3 modèles LLM renvoyaient 404 (Gemini `gemini-2.0-flash` **déprécié**,
+  Groq/Cerebras 70B « no access ») → `call_groq` échouait → **les CV n'étaient plus analysés** (`/api/chat-cv`
+  503), personne ne pouvait s'onboarder.
+- **Fix** : modèles **configurables par env** (`GROQ_MODEL`, `GROQ_MODEL_FAST`, `CEREBRAS_MODEL`,
+  `CEREBRAS_MODEL_FAST`, `GEMINI_MODEL`, `GEMINI_MODEL_FAST`) → on corrige un modèle déprécié sans toucher au
+  code. Défaut Gemini passé à **`gemini-2.5-flash`**. URL Gemini construite depuis `GEMINI_MODEL`.
+- **Robustesse** : `process_cv` n'échoue plus **en silence** — si le service IA est indisponible, l'utilisateur
+  reçoit un message clair (« renvoie ton CV dans une minute »).
+
 ## v2.22 — Langage 100 % naturel & offres locales
 - **Parler normalement suffit** : n'importe quelle phrase est comprise. Mots-clés en priorité (instantané),
   sinon le LLM décide en **un seul appel** s'il faut lancer une **action** (n'importe quelle commande, avec
