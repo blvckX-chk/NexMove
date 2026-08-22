@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.23 — CV multi-formats & procédures françaises parallèles
+- **CV en tous formats** : PDF texte + PDF scanné (OCR) ✅ déjà, **+ DOCX** (python-docx) **+ image** (JPG/PNG/WEBP/HEIC).
+  Images analysées d'abord par **vision Gemini** (robuste sur photos), repli **OCR tesseract**. Endpoint et
+  process_cv routent par extension/MIME. Messages d'erreur adaptés au format.
+- **Procédures françaises parallèles à Campus France** (le gros gap face aux prestataires payants) :
+  `/parcoursup`, `/monmaster`, `/ecandidat`, `/dap` (L1 hors UE), `/visa` (phase consulaire Capago/VFS),
+  `/recours` (refus CF ou refus de visa). Grounded, adaptés au profil.
+- Menu **Procédures & accompagnement** enrichi. Routeur d'intention en langage naturel étendu (« parcoursup »,
+  « monmaster », « visa », « capago », « recours », « refus »…).
+
 ## v2.22.1 — 🔴 Correctif critique : modèles LLM dépréciés (bot bloqué)
 - **Bug bloquant en prod** : les 3 modèles LLM renvoyaient 404 (Gemini `gemini-2.0-flash` **déprécié**,
   Groq/Cerebras 70B « no access ») → `call_groq` échouait → **les CV n'étaient plus analysés** (`/api/chat-cv`

@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.22.2"
+VERSION         = "2.23.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -550,8 +550,8 @@ async def semantic_scores(profil_txt: str, items: list, text_of) -> Optional[lis
     return [_cosine(pv, v) if v else 0.0 for v in vecs]
 
 ETAPE_INSTRUCTIONS = {
-    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV en PDF.",
-    "ATTENTE_CV": "L'utilisateur doit envoyer son CV en PDF. Rappelle-lui brièvement.",
+    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
+    "ATTENTE_CV": "L'utilisateur doit envoyer son CV (PDF, Word ou image). Rappelle-lui brièvement.",
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
     "CONFIRMATION": "Résume le profil complet et demande confirmation finale (Oui pour démarrer).",
@@ -612,6 +612,18 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/budget " + t
     if any(k in low for k in ("école", "ecole", "universit", "quelle formation", "quel master", "programme d'étude")):
         return "/ecoles " + t
+    if "parcoursup" in low or "parcours-sup" in low or "parcours sup" in low:
+        return "/parcoursup"
+    if "monmaster" in low or "mon master" in low or "mon-master" in low:
+        return "/monmaster"
+    if "ecandidat" in low or "e-candidat" in low or "candidature directe universit" in low:
+        return "/ecandidat"
+    if "dap" in low.split() or "demande d'admission" in low:
+        return "/dap"
+    if "visa" in low or "capago" in low or "vfs" in low or "consulat" in low or "consulaire" in low:
+        return "/visa"
+    if "recours" in low or "refus" in low or "contestation" in low or "appel" in low:
+        return "/recours"
     if "campus france" in low or "études en france" in low or "etudes en france" in low:
         return "/campusfrance"
     if "canada" in low or "québec" in low or "quebec" in low:
@@ -623,7 +635,8 @@ def _free_text_to_command(low: str, t: str) -> str:
 # Commandes que le routeur d'intention LLM peut déclencher à partir d'une phrase libre.
 _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "entretien", "campusfrance",
                   "canada", "procedure", "budget", "eligibilite", "dossier", "postuler", "compresser",
-                  "traduire", "status", "profil", "parcours", "aide", "fusionner", "enpdf", "decouper"}
+                  "traduire", "status", "profil", "parcours", "aide", "fusionner", "enpdf", "decouper",
+                  "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours"}
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -708,7 +721,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
-            "*1. Ton profil* — envoie ton *CV en PDF*. Je l'analyse, puis je te pose quelques questions "
+            "*1. Ton profil* — envoie ton *CV (PDF, Word ou image)*. Je l'analyse, puis je te pose quelques questions "
             "(objectif, pays, financement, langue…).\n\n"
             "*2. Trouver des opportunités*\n"
             "• /veille — je cherche des offres RÉELLES adaptées à ton profil.\n"
@@ -721,7 +734,7 @@ TUTO_TXT = ("📖 *Guide NexMove*\n\n"
             "• /dossier <cible> — la *liste des documents requis* + je génère ton *CV* et ton *projet d'études*.\n"
             "• /postuler <cible> — juste le *CV adapté* + la *lettre de motivation*.\n\n"
             "*5. Suivi* — /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
-            "Prêt ? Envoie ton *CV en PDF* pour démarrer. 🚀")
+            "Prêt ? Envoie ton *CV (PDF, Word ou image)* pour démarrer. 🚀")
 
 CF_STAGES = [
     "Créer ton compte « Études en France » (EEF)",
@@ -793,10 +806,10 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         msg = ("👋 *Bienvenue sur NexMove !*\n"
                "_Ton agent IA pour préparer ton prochain départ : études, emploi, bourses et mobilité internationale._\n\n"
                "Voici comment ça marche :\n"
-               "1️⃣ Envoie-moi ton *CV en PDF* — j'analyse ton profil.\n"
+               "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil.\n"
                "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
                "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
-               "📄 *Pour commencer, envoie ton CV en PDF.*  (ou tape /tuto pour le guide)")
+               "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*  (ou tape /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1102,6 +1115,53 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    # --- Procédures françaises PARALLÈLES à Campus France (grosse demande du terrain) ---
+    _FR_PROCS = {
+        "parcoursup":   ("🎓 *Parcoursup — 1ʳᵉ année Licence/BUT/BTS/CPGE en France*",
+                         "Parcoursup 2026 candidature calendrier étudiant international vœux formations sélectives non sélectives dossier",
+                         "Explique CLAIREMENT Parcoursup pour un étudiant international : qui est concerné (bac étranger), calendrier de la campagne EN COURS (inscription, vœux, réponses), types de formations, dossier (bulletins, lettre de motivation par vœu, projet), lien avec Études en France quand nécessaire.",
+                         "Ensuite : /ecoles <domaine> · /dossier Parcoursup <formation> · /entretien."),
+        "monmaster":    ("📘 *MonMaster — candidatures Master en France*",
+                         "MonMaster 2026 candidature master université France calendrier étudiant international dossier lettre projet",
+                         "Explique la plateforme MonMaster pour candidater en M1 : calendrier RÉEL en cours, nombre de vœux, critères, différences avec Études en France (Campus France reste souvent obligatoire pour les étudiants hors UE), pièces à préparer.",
+                         "Ensuite : /ecoles master <domaine> · /dossier MonMaster <mention> · /campusfrance."),
+        "ecandidat":    ("🧾 *eCandidat — candidatures directes université (procédure parallèle)*",
+                         "eCandidat 2026 procédure université France candidature directe étudiant international dossier",
+                         "Explique eCandidat : quelles universités l'utilisent, quand cette voie remplace/complète Campus France (procédure blanche vs procédure Études en France), calendrier propre à chaque université, dossier type.",
+                         "Ensuite : /ecoles <domaine> · /dossier eCandidat <université> · /campusfrance."),
+        "dap":          ("📜 *DAP — Demande d'Admission Préalable (1ʳᵉ année licence hors UE)*",
+                         "DAP demande admission préalable Campus France 2026 calendrier hors UE licence université France dossier",
+                         "Explique la DAP (obligatoire pour candidater en L1 hors UE via Études en France) : qui est concerné, calendrier, épreuves de langue (TCF-DAP/DELF B2), pièces, différences avec Parcoursup.",
+                         "Ensuite : /campusfrance · /dossier DAP · /entretien."),
+        "visa":         ("🛂 *Visa étudiant France — phase consulaire (VFS/Capago)*",
+                         "visa étudiant France VFS Capago 2026 rendez-vous dépôt pièces preuves ressources OFII validation",
+                         "Détaille la phase CONSULAIRE APRÈS Campus France : prise de rendez-vous VFS/Capago, pièces à préparer, preuve de ressources (montant à jour), délais, retrait du visa, validation OFII à l'arrivée.",
+                         "Ensuite : /budget <ville> · /logement <ville> · /entretien visa."),
+        "recours":      ("⚖️ *Recours — refus Campus France ou refus de visa*",
+                         "recours refus Campus France refus visa étudiant France 2026 procédure appel commission délais",
+                         "Explique HONNÊTEMENT les recours possibles : recours gracieux auprès de Campus France, recours contentieux, refus de visa (Commission de recours contre les décisions de refus de visa d'entrée en France), délais impératifs, pièces à joindre. Reste réaliste sur les chances.",
+                         "En parallèle : /procedure Belgique · /procedure Allemagne · /canada."),
+    }
+    _MATCH_PROC = [(k, k.replace("-", "")) for k in _FR_PROCS] + [
+        ("parcoursup", "parcours-sup"), ("monmaster", "mon-master"),
+    ]
+    _cmd_proc = None
+    for k, alias in _MATCH_PROC:
+        if low.startswith("/" + alias):
+            _cmd_proc = k; break
+    if _cmd_proc:
+        titre, query, consigne, cta = _FR_PROCS[_cmd_proc]
+        profil = session.get("profil", {}) or {}
+        if not profil.get("identite"):
+            msg = f"📄 Fais d'abord /start puis envoie ton CV — j'adapte ensuite {_cmd_proc} à ton profil."
+        else:
+            try:
+                msg = await conseil_grounded(profil, titre, query, consigne, cta=cta)
+            except Exception as e:
+                logger.error(f"{_cmd_proc}: {e}"); msg = f"😕 Infos {_cmd_proc} indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/formations") or low.startswith("/formation"):
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
@@ -1162,7 +1222,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             ident = profil.get("identite", {})
             msg = f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\nÉtape : {session.get('etape','—')}\n\n" + _resume_prefs(profil.get("preferences", {}) or {})
         else:
-            msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV en PDF."
+            msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV (PDF, Word ou image)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1200,7 +1260,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cible_desc = parts[1].strip() if len(parts) > 1 else ""
         profil = session.get("profil", {}) or {}
         if not profil.get("identite"):
-            msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV en PDF."
+            msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV (PDF, Word ou image)."
         elif not cible_desc:
             msg = ("✍️ Indique la cible :\n/postuler <poste ou bourse>\n\n"
                    "Ex : /postuler Analyste SOC chez Orange\n"
@@ -1243,7 +1303,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cible_desc = parts[1].strip() if len(parts) > 1 else ""
         profil = session.get("profil", {}) or {}
         if not profil.get("identite"):
-            msg = "📄 Fais d'abord /start puis envoie ton CV en PDF."
+            msg = "📄 Fais d'abord /start puis envoie ton CV (PDF, Word ou image)."
         elif not cible_desc:
             msg = ("🗂️ Indique la cible du dossier :\n/dossier <bourse ou programme>\n\n"
                    "Ex : /dossier Bourse Eiffel master cybersécurité\n"
@@ -1478,7 +1538,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     # Pas encore onboardé : réponse déterministe (pas de LLM bavard qui re-salue / vouvoie / redemande le CV)
     if not session.get("onboarding_complete"):
         _push(session, "user", t)
-        msg = ("📄 Pour démarrer, envoie-moi ton *CV en PDF* — j'analyse ton profil et je te fais un bilan "
+        msg = ("📄 Pour démarrer, envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil et je te fais un bilan "
                "d'orientation. Besoin d'un guide ? Tape /tuto.")
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -1568,6 +1628,73 @@ def extract_text_pdf(pdf_bytes: bytes) -> str:
         if len(ocr_text) > len(text):
             return ocr_text
     return text
+
+def extract_text_docx(data: bytes) -> str:
+    """Extraction texte d'un .docx (python-docx)."""
+    if not _DocxDocument:
+        raise HTTPException(422, "Lecture DOCX indisponible sur ce serveur.")
+    try:
+        d = _DocxDocument(io.BytesIO(data))
+        parts = [p.text for p in d.paragraphs if p.text and p.text.strip()]
+        for tbl in d.tables:
+            for row in tbl.rows:
+                for cell in row.cells:
+                    if cell.text and cell.text.strip():
+                        parts.append(cell.text)
+        return "\n".join(parts).strip()
+    except Exception as e:
+        raise HTTPException(422, f"Lecture DOCX impossible: {e}")
+
+def extract_text_image(img_bytes: bytes) -> str:
+    """OCR d'une image (JPG/PNG/HEIC…) via tesseract."""
+    if not _ocr_available():
+        return ""
+    try:
+        img = Image.open(io.BytesIO(img_bytes))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        txt = pytesseract.image_to_string(img, lang=OCR_LANG)
+        return (txt or "").strip()
+    except Exception as e:
+        logger.warning(f"[img-ocr] {e}")
+        return ""
+
+async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg") -> dict:
+    """Analyse d'un CV en IMAGE via vision Gemini : renvoie le JSON du profil directement.
+    Repli sur OCR si Gemini est indisponible (le texte OCR sera analysé par le pipeline standard)."""
+    if not (GEMINI_API_KEY and Image):
+        return {}
+    system = ("Tu es expert en analyse de CV. Sur cette IMAGE de CV, extrais toutes les informations. "
+              "Si ce n'est PAS un CV, mets \"est_cv\": false. Ajoute un \"bilan\" court (forces, axes, pistes). "
+              "Réponds en JSON strict, uniquement le JSON.")
+    schema = ('{"est_cv":true,"raison_rejet":"","identite":{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]},'
+              '"formation":[{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}],'
+              '"competences":{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]},'
+              '"experience":[{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}],'
+              '"projets":[{"nom":"","description":"","technologies":[],"url":""}],"certifications":[],'
+              '"preferences":{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]},'
+              '"bilan":{"forces":["..."],"axes":["..."],"pistes":["..."]},"niveau_global":"junior|mid|senior","resume_profil":""}')
+    payload = {
+        "contents": [{"parts": [
+            {"text": system + "\nSchéma attendu : " + schema},
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2500, "responseMimeType": "application/json"},
+    }
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        r = await http().post(url, json=payload, timeout=45.0)
+        if r.status_code != 200:
+            logger.warning(f"[vision] {r.status_code}: {r.text[:150]}")
+            return {}
+        cands = r.json().get("candidates") or []
+        if not cands:
+            return {}
+        raw = "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", []))
+        return _llm_parse_json(raw) or {}
+    except Exception as e:
+        logger.warning(f"[vision] {e}")
+        return {}
 
 def pdf_to_b64(buf: io.BytesIO) -> str:
     buf.seek(0)
@@ -1901,6 +2028,12 @@ def get_menu(session, key):
         opts = [
             ("🇫🇷 Campus France", "act:campusfrance"),
             ("🗺️ Mon parcours", "act:parcours"),
+            ("🎓 Parcoursup", "act:parcoursup"),
+            ("📘 MonMaster", "act:monmaster"),
+            ("🧾 eCandidat", "act:ecandidat"),
+            ("📜 DAP (L1 hors UE)", "act:dap"),
+            ("🛂 Visa (Capago/VFS)", "act:visa"),
+            ("⚖️ Recours refus", "act:recours"),
             ("🏫 Trouver une école", "act:ecoles"),
             ("🏠 Logement", "act:logement"),
             ("🎤 Prépa entretien", "act:entretien"),
@@ -2083,7 +2216,9 @@ _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "pr
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
             "formations": "/formations", "supprimer": "/supprimer",
             "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
-            "compresser": "/compresser", "procedure": "/procedure", "budget": "/budget"}
+            "compresser": "/compresser", "procedure": "/procedure", "budget": "/budget",
+            "parcoursup": "/parcoursup", "monmaster": "/monmaster", "ecandidat": "/ecandidat",
+            "dap": "/dap", "visa": "/visa", "recours": "/recours"}
 _ACT_HELP = {
     "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
     "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
@@ -2187,14 +2322,43 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         logger.info(f"[compress] {session.get('channel')} {orig_kb}->{kb} Ko (cible {target_kb})")
         return
     if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
-        await deliver_text(session, "❌ PDF illisible ou trop lourd (max 20 Mo).")
+        await deliver_text(session, "❌ Fichier illisible ou trop lourd (max 20 Mo).")
         return
+    fn = (filename or "cv").lower()
+    is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
+    is_docx = fn.endswith((".docx", ".dotx"))
+    is_image = fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")) or pdf_bytes[:3] in (b"\xff\xd8\xff", b"\x89PN")
+    profil_from_vision = None
+    cv_text = ""
     try:
-        cv_text = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
-    except Exception:
+        if is_pdf:
+            cv_text = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
+        elif is_docx:
+            cv_text = await asyncio.to_thread(extract_text_docx, pdf_bytes)
+        elif is_image:
+            # 1) Vision Gemini (le mieux sur photos) — renvoie DIRECTEMENT le JSON profil
+            mime = "image/png" if fn.endswith(".png") else ("image/webp" if fn.endswith(".webp") else "image/jpeg")
+            profil_from_vision = await analyze_cv_image_vision(pdf_bytes, mime)
+            if not profil_from_vision:
+                # 2) Repli OCR
+                cv_text = await asyncio.to_thread(extract_text_image, pdf_bytes)
+        else:
+            await deliver_text(session, "❌ Format non supporté. Envoie ton CV en *PDF*, *DOCX* ou *image* (JPG/PNG).")
+            return
+    except HTTPException as he:
+        await deliver_text(session, f"❌ {he.detail}")
+        return
+    except Exception as e:
+        logger.error(f"[cv] extraction {fn}: {e}")
         cv_text = ""
-    if not cv_text or len(cv_text.strip()) < 50:
-        if not _ocr_available():
+    if profil_from_vision is None and (not cv_text or len(cv_text.strip()) < 50):
+        if is_image and not _ocr_available():
+            await deliver_text(session, "❌ Image reçue mais l'OCR n'est pas disponible.\n\nEnvoie plutôt ton CV (PDF, Word ou image) ou DOCX.")
+        elif is_image:
+            await deliver_text(session, "❌ Je n'arrive pas à lire cette image. Prends une photo *plus nette* (bonne lumière, cadrée sur le CV), ou envoie un PDF/DOCX.")
+        elif is_docx:
+            await deliver_text(session, "❌ Le DOCX semble vide.\n\nRenvoie-le, ou exporte en PDF depuis Word.")
+        elif not _ocr_available():
             await deliver_text(session, "❌ Ce PDF semble scanné (image) et l'OCR n'est pas disponible.\n\nEnvoie un PDF avec texte sélectionnable (Word/LibreOffice).")
         else:
             await deliver_text(session, "❌ Impossible de lire ce PDF, même après OCR.\n\nVérifie que le document est lisible (bonne qualité) ou envoie un PDF avec texte sélectionnable.")
@@ -2208,12 +2372,15 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
     prompt = f"""Analyse ce document:
 {{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"bilan":{{"forces":["..."],"axes":["..."],"pistes":["..."]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
 Document: {cv_text[:6000]}"""
-    try:
-        profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
-    except Exception as e:
-        logger.error(f"[cv] analyse LLM échouée: {e}")
-        await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute — je m'en occupe dès que possible.")
-        return
+    if profil_from_vision:
+        profil = profil_from_vision   # analyse vision directe (image) : pas de deuxième appel LLM
+    else:
+        try:
+            profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+        except Exception as e:
+            logger.error(f"[cv] analyse LLM échouée: {e}")
+            await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute — je m'en occupe dès que possible.")
+            return
     if not isinstance(profil, dict) or not profil:
         await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
         return
@@ -2456,14 +2623,16 @@ async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), 
     session["chat_id"] = chat_id
     session["username"] = username
     fn = (file.filename or "").lower()
-    is_pdf = file.content_type == "application/pdf" or fn.endswith(".pdf")
-    is_img = (file.content_type or "").startswith("image/") or fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic"))
+    ct = (file.content_type or "").lower()
+    is_pdf = ct == "application/pdf" or fn.endswith(".pdf")
+    is_img = ct.startswith("image/") or fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic"))
+    is_docx = "word" in ct or fn.endswith((".docx", ".dotx"))
     if session.get("tool_mode") == "img2pdf":
         if not (is_img or is_pdf):
             await deliver_text(session, "🖼️ Envoie une *image* (en fichier/document), ou /annuler.")
             return {"ok": True}
-    elif not is_pdf:
-        await deliver_text(session, "❌ Envoie un *PDF*.\n_(Pour transformer des images en PDF : /enpdf.)_")
+    elif not (is_pdf or is_img or is_docx):
+        await deliver_text(session, "❌ Format non supporté. Envoie ton CV en *PDF*, *DOCX* ou *image* (JPG/PNG).")
         return {"ok": True}
     pdf_bytes = await file.read()
     await process_cv(session, pdf_bytes, file.filename or "cv.pdf")
