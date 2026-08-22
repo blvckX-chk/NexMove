@@ -93,12 +93,17 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.23.0"
+VERSION         = "2.24.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
 MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
 MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
+# --- Contact / support : où renvoyer les messages /contact ---
+ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # ton chat_id Telegram (@userinfobot pour le trouver)
+CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
+CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
+CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
 # Sources d'emplois structurées (open data). arbeitnow = sans clé ; Adzuna = clés gratuites optionnelles.
 ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
@@ -624,6 +629,10 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/visa"
     if "recours" in low or "refus" in low or "contestation" in low or "appel" in low:
         return "/recours"
+    if low in ("version", "quelle version", "c'est quelle version", "numero de version") or "version du bot" in low:
+        return "/version"
+    if any(k in low for k in ("contact", "contacter", "joindre", "rencontrer", "rendez-vous", "rendez vous", "rdv", "parler à quelqu'un", "parler a quelqu'un", "un humain", "un conseiller")):
+        return "/contact" + ((" " + t) if len(t) > 15 else "")
     if "campus france" in low or "études en france" in low or "etudes en france" in low:
         return "/campusfrance"
     if "canada" in low or "québec" in low or "quebec" in low:
@@ -636,7 +645,8 @@ def _free_text_to_command(low: str, t: str) -> str:
 _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "entretien", "campusfrance",
                   "canada", "procedure", "budget", "eligibilite", "dossier", "postuler", "compresser",
                   "traduire", "status", "profil", "parcours", "aide", "fusionner", "enpdf", "decouper",
-                  "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours"}
+                  "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
+                  "contact", "version", "rencontrer"}
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -717,7 +727,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
-            "/profil · /status · /rappels · /digest · /supprimer\n\n"
+            "/profil · /status · /rappels · /digest · /supprimer\n"
+            "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
@@ -1159,6 +1170,57 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg = await conseil_grounded(profil, titre, query, consigne, cta=cta)
             except Exception as e:
                 logger.error(f"{_cmd_proc}: {e}"); msg = f"😕 Infos {_cmd_proc} indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/version") or low.startswith("/about"):
+        prov = ", ".join([p["name"] for p in _LLM_PROVIDERS if p["key"]]) or "aucun"
+        flags = []
+        if _ocr_available(): flags.append("OCR")
+        if _DOCX_OK: flags.append("Word")
+        if _embeddings_available(): flags.append("Sémantique")
+        if GEMINI_API_KEY: flags.append("Vision")
+        if ADZUNA_APP_ID and ADZUNA_APP_KEY: flags.append("Adzuna")
+        msg = (f"🧭 *NexMove — version {VERSION}*\n"
+               f"🤖 IA : {prov}\n"
+               f"🧩 Modules : {' · '.join(flags) or 'base'}\n"
+               f"📚 {len(SOURCE_FEEDS)} sources de veille · 6 procédures FR parallèles (Parcoursup, MonMaster, eCandidat, DAP, Visa, Recours).\n\n"
+               "Un souci ? Une idée ? → /contact")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/contact") or low.startswith("/support") or low.startswith("/rencontrer") or low.startswith("/rdv"):
+        parts = t.split(maxsplit=1)
+        message_user = parts[1].strip() if len(parts) > 1 else ""
+        # Bloc "comment nous joindre" — toujours affiché
+        contacts = []
+        if CONTACT_WHATSAPP: contacts.append(f"📱 WhatsApp : {CONTACT_WHATSAPP}")
+        if CONTACT_EMAIL:    contacts.append(f"✉️ Email : {CONTACT_EMAIL}")
+        if CONTACT_CALENDAR: contacts.append(f"📅 Prendre rendez-vous : {CONTACT_CALENDAR}")
+        contact_bloc = "\n".join(contacts) if contacts else "_(canaux directs non configurés — utilise /contact <ton message>)_"
+        if not message_user:
+            msg = ("💬 *Nous contacter*\n" + contact_bloc + "\n\n"
+                   "Ou écris ici : */contact ton message* — je le transmets à l'équipe.\n"
+                   "Envie d'échanger avec un conseiller ? */rencontrer <disponibilités>*.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        # Forward vers l'admin Telegram si configuré
+        ok = False
+        if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
+            uid = session.get("user_id"); uname = session.get("username", "utilisateur")
+            forward = (f"📨 *Nouveau contact NexMove*\n"
+                       f"👤 @{_md_clean(uname)} (`{uid}`)\n"
+                       f"🕒 {datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}\n\n"
+                       f"{_md_clean(message_user)[:2000]}")
+            try:
+                ok = await send_message(ADMIN_CHAT_ID, forward)
+            except Exception as e:
+                logger.error(f"[contact] forward: {e}")
+        if ok:
+            msg = f"✅ Merci, ton message a été transmis à l'équipe. Nous te recontactons vite.\n\n{contact_bloc}"
+        else:
+            msg = ("📝 Message bien noté. Pour être sûr d'être recontacté rapidement, joins-nous directement :\n\n"
+                   + contact_bloc)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -2059,6 +2121,8 @@ def get_menu(session, key):
             ("👤 Mon profil", "act:profil"),
             ("📊 Mon suivi", "act:status"),
             ("🗜️ Compresser un PDF", "act:compresser"),
+            ("💬 Nous contacter", "act:contact"),
+            ("ℹ️ Version", "act:version"),
             ("🗑️ Effacer données", "act:supprimer"),
             ("⬅️ Retour", "m:root")])
     return ("🧭 *NexMove* — que veux-tu faire ?", [
@@ -2218,7 +2282,8 @@ _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "pr
             "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
             "compresser": "/compresser", "procedure": "/procedure", "budget": "/budget",
             "parcoursup": "/parcoursup", "monmaster": "/monmaster", "ecandidat": "/ecandidat",
-            "dap": "/dap", "visa": "/visa", "recours": "/recours"}
+            "dap": "/dap", "visa": "/visa", "recours": "/recours",
+            "contact": "/contact", "version": "/version", "rencontrer": "/rencontrer"}
 _ACT_HELP = {
     "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
     "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",

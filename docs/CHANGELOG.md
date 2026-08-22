@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.24 — Contact & version
+- **`/version`** (alias `/about`) — affiche la version du bot, les IA actives, les modules (OCR, Word, Vision,
+  Sémantique, Adzuna) et le nombre de sources. Utile pour le support et pour que tu voies l'état en un coup d'œil.
+- **`/contact <message>`** (alias `/support`, `/rencontrer`, `/rdv`) — transmet directement le message au chat
+  admin (Telegram) si `ADMIN_CHAT_ID` est configuré ; sinon affiche les canaux (WhatsApp, email, calendrier).
+  Route aussi les intentions en langage naturel (« parler à quelqu'un », « prendre rdv », « contacter »…).
+- Boutons `💬 Nous contacter` et `ℹ️ Version` dans le menu « Mon espace ». Env vars : `ADMIN_CHAT_ID`,
+  `CONTACT_EMAIL`, `CONTACT_WHATSAPP`, `CONTACT_CALENDAR`.
+
 ## v2.23 — CV multi-formats & procédures françaises parallèles
 - **CV en tous formats** : PDF texte + PDF scanné (OCR) ✅ déjà, **+ DOCX** (python-docx) **+ image** (JPG/PNG/WEBP/HEIC).
   Images analysées d'abord par **vision Gemini** (robuste sur photos), repli **OCR tesseract**. Endpoint et
