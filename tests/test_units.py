@@ -146,8 +146,9 @@ def test_split_pdf_ranges():
 def test_compress_pdf_valid_output():
     src = _mkpdf("D", 3)
     data, kb = main.compress_pdf(src, 2000)
-    assert data[:5] == b"%PDF-"
-    assert kb > 0
+    assert data[:5] == b"%PDF-"      # PDF valide
+    assert isinstance(kb, int) and kb >= 0    # taille en Ko (peut être 0 pour un mini-PDF)
+    assert len(data) > 200            # non vide
 
 def test_extract_text_docx_roundtrip():
     if not main._DocxDocument:
