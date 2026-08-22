@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.27 — Refactor PR-B : `llm.py` + `http_client.py` extraits (IA isolée)
+- **`api/http_client.py`** (nouveau) : le pool `httpx.AsyncClient` partagé sort du monolithe. Utilisable
+  par tout module (`from http_client import http`).
+- **`api/llm.py`** (nouveau, ~230 lignes) : routeur multi-fournisseurs (Cerebras→Groq→Gemini), embeddings
+  (multi-modèles, cache 7 j via `db.cache`), vision Gemini pour l'analyse d'un CV image. Comportement
+  identique — mêmes défauts de modèles, même bascule, même parseur JSON tolérant.
+- **~210 lignes retirées** de `main.py` (3 260 → 3 064).
+- **`tests/test_llm.py`** (+10 tests) : parseur JSON (fences ```/```json), cosine, structure des providers,
+  garde-fous sans clé. **46/46 verts** (36 + 10). Zéro régression.
+- Étape suivante prévue (PR-C) : extraire `channels/` (Telegram/WhatsApp/Messenger).
+
 ## v2.26 — Refactor PR-A : `db.py` extrait (persistance isolée)
 - **`api/db.py`** (nouveau) : les 3 stores SQLite (`SessionManager`, `OppStore`, `Cache`) sortis du monolithe,
   comportement identique (méthodes, signatures, DDL, chemins). Chemin de base configurable via
