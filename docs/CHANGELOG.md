@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.26 — Refactor PR-A : `db.py` extrait (persistance isolée)
+- **`api/db.py`** (nouveau) : les 3 stores SQLite (`SessionManager`, `OppStore`, `Cache`) sortis du monolithe,
+  comportement identique (méthodes, signatures, DDL, chemins). Chemin de base configurable via
+  `NEXMOVE_DB_PATH`. `main.py` ne fait plus qu'un `from db import …`.
+- **~230 lignes retirées** de `main.py` (fichier passe de ~3 490 à ~3 260 lignes).
+- **`tests/test_db.py`** (8 tests) : session roundtrip, dédup offres, user_stats, candidatures + rappels,
+  feedback borné à ±25, journal /contact, cache TTL. **36/36 verts en local et en CI.**
+- Étape suivante prévue (PR-B) : extraire `llm.py` (routeur multi-fournisseurs + embeddings).
+
 ## v2.25 — Photos Telegram, journal /contact, tests + CI
 - **Photos Telegram directes** : WF1 parse désormais `message.photo` (prend la plus grande taille) et route
   vers `/api/chat-cv` ; `process_cv` détecte l'image (`.jpg`) et l'analyse par **vision Gemini** (repli OCR).
