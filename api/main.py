@@ -56,11 +56,11 @@ CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
 # Modèles LLM configurables par env : les fournisseurs déprécient régulièrement leurs modèles,
 # on peut donc les corriger sans toucher au code (juste .env + redémarrage).
-GROQ_MODEL       = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-GROQ_MODEL_FAST  = os.getenv("GROQ_MODEL_FAST", "llama-3.1-8b-instant")
-CEREBRAS_MODEL   = os.getenv("CEREBRAS_MODEL", "llama-3.3-70b")
-CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "llama3.1-8b")
-GEMINI_MODEL     = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")   # gemini-2.0-flash déprécié (août 2026)
+GROQ_MODEL       = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+GROQ_MODEL_FAST  = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
+CEREBRAS_MODEL   = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
+CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "gemma-4-31b")
+GEMINI_MODEL     = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")   # gemini-2.0-flash déprécié
 GEMINI_MODEL_FAST = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite")
 OCR_LANG        = os.getenv("OCR_LANG", "fra+eng")   # packs tesseract requis: tesseract-ocr-fra tesseract-ocr-eng
 OCR_MAX_PAGES   = int(os.getenv("OCR_MAX_PAGES", "8"))
@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.22.1"
+VERSION         = "2.22.2"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
