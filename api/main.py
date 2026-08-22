@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.24.0"
+VERSION         = "2.25.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -457,9 +457,30 @@ class OppStore:
         if not row:
             return 0
         return max(-25, min(25, int(row[0]) * 8))
+    def _ensure_contacts(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS contacts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT, username TEXT,
+            message TEXT, forwarded INTEGER DEFAULT 0, created_at TEXT)""")
+        con.commit(); con.close()
+    def add_contact(self, user_id, username, message, forwarded: bool) -> int:
+        con = sqlite3.connect(self._path, timeout=10)
+        cur = con.execute("INSERT INTO contacts(user_id,username,message,forwarded,created_at) VALUES(?,?,?,?,?)",
+                          (str(user_id), str(username or ""), str(message or "")[:4000],
+                           1 if forwarded else 0, datetime.now(timezone.utc).isoformat()))
+        cid = cur.lastrowid
+        con.commit(); con.close()
+        return int(cid or 0)
+    def list_contacts(self, limit: int = 20) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("""SELECT id, user_id, username, message, forwarded, created_at
+                              FROM contacts ORDER BY id DESC LIMIT ?""", (int(limit),)).fetchall()
+        con.close()
+        return rows
 
 opp_store = OppStore()
 opp_store._ensure_feedback()
+opp_store._ensure_contacts()
 
 class Cache:
     def __init__(self, path: str = "data/sessions.db"):
@@ -1216,11 +1237,34 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 ok = await send_message(ADMIN_CHAT_ID, forward)
             except Exception as e:
                 logger.error(f"[contact] forward: {e}")
+        try:
+            opp_store.add_contact(session.get("user_id"), session.get("username"), message_user, ok)
+        except Exception as e:
+            logger.warning(f"[contact] log: {e}")
         if ok:
             msg = f"✅ Merci, ton message a été transmis à l'équipe. Nous te recontactons vite.\n\n{contact_bloc}"
         else:
-            msg = ("📝 Message bien noté. Pour être sûr d'être recontacté rapidement, joins-nous directement :\n\n"
+            msg = ("📝 Message bien noté (enregistré, l'équipe le verra). Pour être recontacté rapidement, joins-nous directement :\n\n"
                    + contact_bloc)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/contacts_log") or low.startswith("/contacts-log") or low.startswith("/messages_log"):
+        # Historique des /contact — RÉSERVÉ à l'admin
+        if not ADMIN_CHAT_ID or str(session.get("chat_id") or "") != str(ADMIN_CHAT_ID):
+            msg = "🔒 Commande réservée à l'administrateur."
+        else:
+            rows = opp_store.list_contacts(20)
+            if not rows:
+                msg = "📭 Aucun message /contact enregistré."
+            else:
+                lignes = []
+                for (cid, uid, uname, txt, fwd, dt) in rows:
+                    when = str(dt)[5:16].replace("T", " ")
+                    flag = "📨" if fwd else "📥"
+                    ex = _md_clean(str(txt))[:120]
+                    lignes.append(f"{flag} #{cid} · {when} · @{_md_clean(str(uname) or 'x')} (`{uid}`)\n   {ex}")
+                msg = "📇 *20 derniers messages /contact*\n\n" + "\n\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

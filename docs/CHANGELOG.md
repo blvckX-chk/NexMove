@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.25 — Photos Telegram, journal /contact, tests + CI
+- **Photos Telegram directes** : WF1 parse désormais `message.photo` (prend la plus grande taille) et route
+  vers `/api/chat-cv` ; `process_cv` détecte l'image (`.jpg`) et l'analyse par **vision Gemini** (repli OCR).
+  Fini l'obligation d'envoyer en « Fichier ».
+- **Journal `/contact` en base** : chaque message est logué (table `contacts`), même si le forward Telegram
+  échoue. Nouvelle commande **`/contacts_log`** (réservée à `ADMIN_CHAT_ID`) : les 20 derniers messages.
+- **Filet de sécurité (risque n°1 de l'audit)** : ajout de `tests/test_units.py` (**28 tests unitaires**,
+  fonctions pures : validation onboarding, tri diplômes, routeur d'intention, nationalité→pays, feedback,
+  pages PDF, RSS tolérant, PDF ops, extraction DOCX, MIME…) + workflow **GitHub Actions** `ci.yml` (ruff
+  errors-only + compile + pytest à chaque push/PR). Régression = build rouge, plus jamais en prod.
+
 ## v2.24 — Contact & version
 - **`/version`** (alias `/about`) — affiche la version du bot, les IA actives, les modules (OCR, Word, Vision,
   Sémantique, Adzuna) et le nombre de sources. Utile pour le support et pour que tu voies l'état en un coup d'œil.
