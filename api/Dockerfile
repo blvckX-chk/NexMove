@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Modules Python de l'app (PR-A/B: db.py, llm.py, http_client.py extraits du monolithe).
 # Ajouter ici tout nouveau module Python créé (PR-C: channels.py, etc.).
-COPY main.py db.py llm.py http_client.py .
+COPY main.py db.py llm.py http_client.py channels.py .
 
 # .env est fourni via env_file dans docker-compose ; le volume ./data:/app/data conserve sessions.db
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
