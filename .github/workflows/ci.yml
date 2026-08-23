@@ -26,7 +26,6 @@ jobs:
           pip install pytest ruff
 
       - name: Ruff (lint léger — errors only)
-        # On ne bloque pas encore sur le style, seulement sur les vraies erreurs
         run: ruff check api/ --select=E9,F63,F7,F82 --output-format=github
 
       - name: Compile (tous les modules Python de api/)
@@ -36,3 +35,40 @@ jobs:
         env:
           FORGE_NEX_API_KEY: ci-test-key
         run: python -m pytest tests/ -q
+
+  # ─── Test d'intégration Docker : attrape les bugs "Dockerfile oublie un module" ─────
+  # (comme le ModuleNotFoundError: 'http_client' qu'on a eu en v2.27.1 -> v2.27.2)
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t nexmove-ci api/
+
+      - name: Run container (env minimal)
+        run: |
+          docker run -d --name nexmove-ci -p 8000:8000 \
+            -e FORGE_NEX_API_KEY=ci-test-key \
+            nexmove-ci
+          # laisse le temps à uvicorn de démarrer (2 workers)
+          for i in $(seq 1 20); do
+            sleep 1
+            if curl -sSf http://127.0.0.1:8000/health >/dev/null 2>&1; then
+              echo "✅ /health répond après ${i}s"; exit 0
+            fi
+          done
+          echo "❌ /health n'a jamais répondu — logs :"
+          docker logs nexmove-ci --tail 80
+          exit 1
+
+      - name: Vérifier /health renvoie la bonne version
+        run: |
+          curl -s http://127.0.0.1:8000/health | tee /tmp/health.json
+          test "$(python3 -c "import json; print(json.load(open('/tmp/health.json'))['status'])")" = "ok"
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f nexmove-ci || true

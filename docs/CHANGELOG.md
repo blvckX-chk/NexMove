@@ -2,6 +2,25 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.28 — Refactor PR-C : `channels.py` extrait + smoke test Docker en CI
+- **`api/channels.py`** (nouveau, ~200 lignes) : Telegram (`send_message`, `edit_message`, `answer_callback`,
+  `_send_telegram_document`, `_tg_keyboard`), WhatsApp Cloud API (`wa_text/menu/document/get_media`),
+  Messenger (`fb_text/menu/document`), + helper `_mime_for`. Comportement identique.
+- **~180 lignes retirées** de `main.py` (3 064 → 2 891).
+- **`tests/test_channels.py`** (+10 tests) : MIME, clavier inline, garde-fous sans token. **56/56 verts**.
+- **🛡️ Smoke test Docker en CI** : nouveau job `docker-smoke` qui build l'image, lance le container, et
+  vérifie que `/health` répond. **Aurait attrapé le bug v2.27.1** (`ModuleNotFoundError: http_client`)
+  avant qu'il n'arrive en prod.
+- Étape suivante prévue (PR-D) : extraire `tools.py` (PDF ops, compression, DOCX, vision).
+
+## v2.27.2 — Fix Dockerfile : les nouveaux modules manquaient dans l'image
+- `COPY main.py .` → `COPY main.py db.py llm.py http_client.py .` — sans ça, `ModuleNotFoundError` au
+  démarrage du container (PR-A/B cassées en prod). Le smoke test Docker (v2.28) verrouille cette classe de bugs.
+
+## v2.27.1 — Fix test CI trop strict
+- `test_compress_pdf_valid_output` : `kb == 0` est légitime pour un mini-PDF. On vérifie signature `%PDF-`
+  + taille en octets > 200. CI durcie : ruff/compile couvrent tout `api/` (pas juste `main.py`).
+
 ## v2.27 — Refactor PR-B : `llm.py` + `http_client.py` extraits (IA isolée)
 - **`api/http_client.py`** (nouveau) : le pool `httpx.AsyncClient` partagé sort du monolithe. Utilisable
   par tout module (`from http_client import http`).

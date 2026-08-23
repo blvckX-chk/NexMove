@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.27.2"
+VERSION         = "2.28.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1628,78 +1628,13 @@ def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
     p = d.add_paragraph(); r = p.add_run(ident.get("nom", "") or ""); r.bold = True
     buf = io.BytesIO(); d.save(buf); return buf
 
-def _mime_for(filename: str) -> str:
-    fn = (filename or "").lower()
-    if fn.endswith(".docx"):
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    if fn.endswith(".pdf"):
-        return "application/pdf"
-    return "application/octet-stream"
-
-async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
-    if not TELEGRAM_TOKEN:
-        return False
-    try:
-        r = await http().post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
-            data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
-            files={"document": (filename, pdf_bytes, _mime_for(filename))},
-            timeout=45.0,
-        )
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"sendDocument erreur: {e}")
-        return False
-
-async def _tg(method, payload):
-    if not TELEGRAM_TOKEN:
-        return False
-    try:
-        r = await http().post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}", json=payload, timeout=25.0)
-        if r.status_code != 200:
-            logger.error(f"tg {method} {r.status_code}: {r.text[:150]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"tg {method}: {e}")
-        return False
-
-async def send_message(chat_id, text, keyboard=None):
-    payload = {"chat_id": str(chat_id), "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
-    if keyboard:
-        payload["reply_markup"] = keyboard
-    ok = await _tg("sendMessage", payload)
-    if not ok:
-        # Repli sans Markdown : un * _ [ ] déséquilibré (texte LLM/utilisateur) provoque un 400
-        # "can't parse entities" et le message serait perdu. On renvoie en texte brut.
-        payload.pop("parse_mode", None)
-        ok = await _tg("sendMessage", payload)
-    return ok
-
-async def _send_telegram_message(chat_id, text):
-    return await send_message(chat_id, text)
-
-async def edit_message(chat_id, message_id, text, keyboard=None):
-    try:
-        mid = int(message_id)
-    except Exception:
-        return await send_message(chat_id, text, keyboard)
-    payload = {"chat_id": str(chat_id), "message_id": mid, "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
-    if keyboard:
-        payload["reply_markup"] = keyboard
-    ok = await _tg("editMessageText", payload)
-    if not ok:
-        payload.pop("parse_mode", None)
-        ok = await _tg("editMessageText", payload)
-    return ok
-
-async def answer_callback(cb_id, text=""):
-    return await _tg("answerCallbackQuery", {"callback_query_id": str(cb_id), "text": text[:180]})
-
-def _btn(text, data):
-    return {"text": text, "callback_data": data}
-
-def _kb(rows):
-    return {"inline_keyboard": rows}
+# ── Canaux (Telegram/WhatsApp/Messenger) extraits dans channels.py (PR-C) ──
+from channels import (
+    TELEGRAM_TOKEN, WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, MESSENGER_TOKEN,
+    _mime_for, send_message, edit_message, answer_callback, _send_telegram_document,
+    _tg_keyboard, wa_text, wa_menu, wa_document, wa_get_media,
+    fb_text, fb_menu, fb_document,
+)  # noqa: F401
 
 def get_menu(session, key):
     if key == "find":
@@ -1751,115 +1686,7 @@ def get_menu(session, key):
         ("📄 Candidater", "m:apply"), ("🎓 Formations", "act:formations"),
         ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
 
-def _tg_keyboard(options):
-    rows, cur = [], []
-    for (lbl, aid) in options:
-        cur.append(_btn(lbl, aid))
-        if len(cur) == 2:
-            rows.append(cur); cur = []
-    if cur:
-        rows.append(cur)
-    return _kb(rows)
-
-# ---------- WhatsApp Cloud API ----------
-async def wa_send(payload):
-    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
-        return False
-    try:
-        r = await http().post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages",
-                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, json=payload, timeout=25.0)
-        if r.status_code != 200:
-            logger.error(f"wa {r.status_code}: {r.text[:200]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"wa send: {e}")
-        return False
-
-async def wa_text(to, text):
-    return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "text",
-                          "text": {"body": (text or "")[:4000], "preview_url": True}})
-
-async def wa_menu(to, title, options):
-    opts = [(l[:20], a) for (l, a) in options][:10]
-    if len(opts) <= 3:
-        inter = {"type": "button", "body": {"text": (title or "Menu")[:1000]},
-                 "action": {"buttons": [{"type": "reply", "reply": {"id": a[:200], "title": l}} for (l, a) in opts]}}
-    else:
-        inter = {"type": "list", "body": {"text": (title or "Menu")[:1000]},
-                 "action": {"button": "Choisir", "sections": [{"title": "Options",
-                            "rows": [{"id": a[:200], "title": l} for (l, a) in opts]}]}}
-    return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "interactive", "interactive": inter})
-
-async def wa_document(to, filename, data, caption=""):
-    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
-        return False
-    try:
-        _mt = _mime_for(filename)
-        up = await http().post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/media",
-                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                               data={"messaging_product": "whatsapp", "type": _mt},
-                               files={"file": (filename, data, _mt)}, timeout=45.0)
-        if up.status_code != 200:
-            logger.error(f"wa media {up.status_code}: {up.text[:200]}")
-            return False
-        mid = up.json().get("id")
-        return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "document",
-                              "document": {"id": mid, "filename": filename, "caption": (caption or "")[:900]}})
-    except Exception as e:
-        logger.error(f"wa doc: {e}")
-        return False
-
-async def wa_get_media(media_id):
-    if not WHATSAPP_TOKEN:
-        return None
-    try:
-        cli = http()
-        meta = await cli.get(f"https://graph.facebook.com/v21.0/{media_id}",
-                             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, timeout=30.0)
-        url = meta.json().get("url")
-        if not url:
-            return None
-        r = await cli.get(url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, timeout=30.0)
-        return r.content if r.status_code == 200 else None
-    except Exception as e:
-        logger.error(f"wa get_media: {e}")
-        return None
-
-# ---------- Messenger (Facebook Page) ----------
-async def fb_send(payload):
-    if not MESSENGER_TOKEN:
-        return False
-    try:
-        r = await http().post("https://graph.facebook.com/v21.0/me/messages",
-                              params={"access_token": MESSENGER_TOKEN}, json=payload, timeout=25.0)
-        if r.status_code != 200:
-            logger.error(f"fb {r.status_code}: {r.text[:200]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"fb send: {e}")
-        return False
-
-async def fb_text(to, text):
-    return await fb_send({"recipient": {"id": str(to)}, "message": {"text": (text or "")[:1900]}})
-
-async def fb_menu(to, text, options):
-    qrs = [{"content_type": "text", "title": l[:20], "payload": a[:900]} for (l, a) in options[:13]]
-    return await fb_send({"recipient": {"id": str(to)}, "message": {"text": (text or "Menu")[:640], "quick_replies": qrs}})
-
-async def fb_document(to, filename, data, caption=""):
-    if not MESSENGER_TOKEN:
-        return False
-    try:
-        if caption:
-            await fb_text(to, caption)
-        r = await http().post("https://graph.facebook.com/v21.0/me/messages", params={"access_token": MESSENGER_TOKEN},
-                              data={"recipient": json.dumps({"id": str(to)}),
-                                    "message": json.dumps({"attachment": {"type": "file", "payload": {"is_reusable": False}}})},
-                              files={"filedata": (filename, data, _mime_for(filename))}, timeout=45.0)
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"fb doc: {e}")
-        return False
+# (WhatsApp/Messenger + _tg_keyboard -> channels.py, PR-C)
 
 # ---------- Couche canal (dispatch) ----------
 async def deliver_menu(session, title, options):
