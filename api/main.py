@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.29.0"
+VERSION         = "2.29.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -604,8 +604,14 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             try:
                 msg = await conseil_grounded(profil,
                     "🇨🇦 *Immigration Canada — voies adaptées à ton profil*",
-                    f"immigration Canada permis d'études PGWP Entrée express PEQ Arrima Québec francophone {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
-                    "Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : permis d'études (attestation/PAL, preuve de fonds) si étudiant ; PGWP puis Entrée express / résidence permanente si diplômé/travailleur ; PEQ/Arrima Québec (avantage francophone). Sois HONNÊTE sur les conditions (fonds, langue, points).",
+                    f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
+                    ("Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : "
+                     "permis d'études (attestation provinciale/PAL, preuve de fonds à jour) si étudiant ; PGWP puis Entrée "
+                     "express / RP si diplômé/travailleur ; PEQ/Arrima Québec si visé Québec (avantage francophone). "
+                     "IMPORTANT — Entrée express : mentionne les *rondes fondées sur les catégories* d'IRCC (invitations "
+                     "à CRS plus BAS pour ces catégories prioritaires) et dis si le profil est éligible : francophones "
+                     "hors Québec (NCLC 7+ en français), santé, métiers spécialisés, STIM, transports, éducation, "
+                     "agriculture. Sois HONNÊTE sur les conditions (fonds, langue, points CRS, expérience canadienne)."),
                     cta="Ensuite : /dossier <programme canadien> · /entretien visa · /logement <ville>.")
             except Exception as e:
                 logger.error(f"canada: {e}"); msg = "😕 Conseils Canada indisponibles, réessaie."
