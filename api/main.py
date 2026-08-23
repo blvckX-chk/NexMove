@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.28.0"
+VERSION         = "2.29.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1956,8 +1956,15 @@ def _extract_incoming(channel, raw):
         elif t == "document":
             d = raw.get("document", {})
             doc = {"id": d.get("id"), "filename": d.get("filename", "cv.pdf")}
+        elif t == "image":
+            # Photo directe (WhatsApp) — traitée comme un CV en image via vision Gemini
+            im = raw.get("image", {})
+            ext = ".png" if "png" in (im.get("mime_type") or "") else ".jpg"
+            doc = {"id": im.get("id"), "filename": f"cv{ext}"}
         elif t == "button":
             callback = raw.get("button", {}).get("payload")
+        elif t in ("audio", "voice", "video", "sticker"):
+            text = "__wa_unsupported__"   # message poli renvoyé plus bas
     elif channel == "messenger":
         pb = raw.get("postback"); msg = raw.get("message")
         if pb:
@@ -2006,6 +2013,9 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
         session_manager.set(user_id, session)
         return
     if text is not None:
+        if text == "__wa_unsupported__":
+            await deliver_text(session, "🎙️ Je ne traite pas encore les messages audio/vidéo/sticker. Écris-moi en *texte* ou envoie ton CV en *PDF/Word/image*.")
+            return
         if not check_rate_limit(user_id):
             await deliver_text(session, "⚠️ Trop de messages. Attends une minute.")
             return

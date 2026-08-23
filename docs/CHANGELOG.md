@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.29 — WhatsApp : photos directes + rejet poli audio/vidéo + guide de mise en service
+- **Photos WhatsApp directement** : le parseur gère maintenant `type: "image"` (JPG/PNG) — l'image part
+  vers **vision Gemini** comme pour Telegram. Fini l'obligation d'envoyer en « Document ».
+- **Rejet poli** des audios, vocaux, vidéos, stickers : « Écris-moi en texte ou envoie ton CV en
+  PDF/Word/image » au lieu du silence.
+- **`docs/GUIDE-WHATSAPP.md`** (nouveau) : procédure complète (Meta Business, App WhatsApp, tokens, webhook
+  ngrok, whitelist testeurs, coûts, dépannage). ~30 min de config côté Meta, le code est déjà prêt.
+- **`tests/test_whatsapp_incoming.py`** (+10 tests) : texte, document PDF, image JPG/PNG, boutons
+  interactive (button_reply / list_reply / template button), rejets audio/vidéo/sticker. **66/66 verts**.
+
 ## v2.28 — Refactor PR-C : `channels.py` extrait + smoke test Docker en CI
 - **`api/channels.py`** (nouveau, ~200 lignes) : Telegram (`send_message`, `edit_message`, `answer_callback`,
   `_send_telegram_document`, `_tg_keyboard`), WhatsApp Cloud API (`wa_text/menu/document/get_media`),
