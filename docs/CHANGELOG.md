@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.31 — Profils persistés par identifiant (code de récupération) (PR-D3)
+- **`ProfileStore`** (`db.py`) : chaque profil validé reçoit un **code de récupération stable** `NEX-XXXXX`.
+  Le profil est archivé en **versions** ; on ne restaure QUE la **plus complète** (`profile_quality`) — donc
+  « on garde les meilleures données » même si l'utilisateur change d'appareil ou de canal.
+- **`/moncode`** : affiche (et crée au besoin) le code de récupération.
+- **`/moi <code>`** : restaure le meilleur profil sur le compte courant → **portage Telegram ↔ WhatsApp**
+  et récupération après changement d'appareil. Le code est aussi affiché à la fin de l'onboarding.
+- **+8 tests** (code stable, restauration inter-utilisateurs, conservation de la meilleure version,
+  `profile_quality`, code inconnu, commandes `/moi`/`/moncode`). **85/85 verts**.
+
 ## v2.30 — Onboarding ADAPTATIF + nom de secours + intention mémorisée (PR-D1)
 - **Onboarding adaptatif** : les questions s'adaptent aux réponses. Un **stage/job LOCAL** (objectif
   « travailler » + son propre pays) ne demande plus la **nationalité/passeport**, ni le **financement

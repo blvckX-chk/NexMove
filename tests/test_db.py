@@ -100,3 +100,49 @@ def test_cache_ttl(tmp_path, monkeypatch):
     assert c.get("k") == {"v": 42}
     c.set("k2", "x", ttl=-1)   # expiré
     assert c.get("k2") is None
+
+
+# ------------------ ProfileStore : persistance par identifiant + versions ------------------
+def _profil_riche(nom="Judicael"):
+    return {"profil": {"identite": {"nom": nom},
+                       "formation": [{"diplome": "Master"}, {"diplome": "Licence"}],
+                       "experience": [{"poste": "Dev"}],
+                       "competences": {"techniques": ["python", "cloud"]},
+                       "bilan": {"forces": ["x"]},
+                       "preferences": {"objectif": "étudier", "pays_cibles": "France",
+                                       "nationalite": "béninoise", "niveau": "professionnel"}}}
+
+def test_profile_save_returns_stable_code(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.ProfileStore()
+    code1 = ps.save("u1", _profil_riche())
+    code2 = ps.save("u1", _profil_riche())
+    assert code1.startswith("NEX-") and code1 == code2          # code stable par utilisateur
+    assert ps.code_for("u1") == code1
+
+def test_profile_restore_on_new_user(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.ProfileStore()
+    code = ps.save("telegram-1", _profil_riche("Marie"))
+    data = ps.restore(code, "whatsapp-9")                       # portage inter-canaux
+    assert data and data["profil"]["identite"]["nom"] == "Marie"
+    assert ps.code_for("whatsapp-9") == code
+
+def test_profile_keeps_best_version(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.ProfileStore()
+    riche = _profil_riche()
+    code = ps.save("u1", riche)
+    pauvre = {"profil": {"identite": {"nom": "—"}, "preferences": {"objectif": "tous"}}}
+    ps.save("u1", pauvre)                                       # version plus pauvre
+    best = ps.best(code)
+    assert best["profil"]["identite"]["nom"] == "Judicael"      # on garde la meilleure
+
+def test_profile_quality_monotone(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    assert db.profile_quality(_profil_riche()) > db.profile_quality({"profil": {"preferences": {}}})
+
+def test_profile_restore_inconnu_none(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.ProfileStore()
+    assert ps.restore("NEX-ZZZZZ", "u1") is None

@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.30.0"
+VERSION         = "2.31.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -182,7 +182,8 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
                  GROQ_API_KEY, CEREBRAS_API_KEY)  # noqa: F401
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
-from db import SessionManager, OppStore, Cache, session_manager, opp_store, cache  # noqa: F401
+from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
+                profile_store, profile_quality)
 
 
 # (Embeddings/vision : voir llm.py — PR-B)
@@ -426,7 +427,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
-            "/profil · /status · /rappels · /digest · /supprimer\n"
+            "/profil · /moncode (sauvegarde) · /moi <code> (restaurer) · /status · /rappels · /digest · /supprimer\n"
             "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
@@ -1016,6 +1017,45 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/moncode"):
+        code = session.get("recovery_code") or profile_store.code_for(session.get("user_id"))
+        if not code and session.get("onboarding_complete"):
+            try:
+                code = profile_store.save(session.get("user_id"), session)
+                session["recovery_code"] = code
+            except Exception as e:
+                logger.error(f"moncode save: {e}")
+        if code:
+            msg = (f"🔐 *Ton code de récupération :* `{code}`\n\n"
+                   f"Depuis un autre appareil ou WhatsApp, tape */moi {code}* pour retrouver ce profil.\n"
+                   "_Je garde toujours ta version la plus complète._")
+        else:
+            msg = "Tu n'as pas encore de profil enregistré. Envoie ton *CV (PDF, Word ou image)* pour démarrer."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/moi"):
+        parts = t.split(maxsplit=1)
+        code = parts[1].strip().upper() if len(parts) > 1 else ""
+        if not code:
+            msg = "Donne ton code après la commande : */moi NEX-XXXXX* (reçu à la fin de ton profil, ou via /moncode)."
+        else:
+            data = profile_store.restore(code, session.get("user_id"))
+            if not data:
+                msg = f"❌ Aucun profil trouvé pour le code *{_md_clean(code)}*. Vérifie-le (format NEX-XXXXX) ou refais /start."
+            else:
+                profil = data.get("profil") or {}
+                session["profil"] = profil
+                session["etape"] = "ACTIF"; session["onboarding_complete"] = True
+                session["cv_parsed"] = True; session["recovery_code"] = code
+                nom = (profil.get("identite") or {}).get("nom") or "—"
+                msg = (f"✅ *Profil restauré* ({_md_clean(code)}) — content de te revoir, {_md_clean(nom)} !\n\n"
+                       + _resume_prefs(profil.get("preferences", {}) or {})
+                       + "\n\nTape /veille pour tes opportunités, ou /menu.")
+                session["_show_menu"] = True
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/supprimer"):
         cleared = {"user_id": session.get("user_id"), "chat_id": session.get("chat_id"),
                    "username": session.get("username"), "etape": "WELCOME", "profil": {},
@@ -1300,6 +1340,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         if detecter_reponse_positive(t):
             session["etape"] = "ACTIF"; session["onboarding_complete"] = True
+            # Persistance du profil par identifiant : code de récupération stable (inter-canaux).
+            try:
+                session["recovery_code"] = profile_store.save(session.get("user_id"), session)
+            except Exception as e:
+                logger.error(f"profile save: {e}")
             msg = "🎉 *Profil validé !* Voici déjà des pistes pour toi :\n"
             # Première veille AUTOMATIQUE : de la valeur immédiate (levier de rétention).
             try:
@@ -1327,6 +1372,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 label = pending.split()[0].lstrip("/").capitalize()
                 msg += f"\n\n📌 Tu m'avais demandé quelque chose au début — clique ci-dessous pour que je m'en occupe (ou tape *{pending.split()[0]}*)."
                 session["_kb_options"] = [("▶️ " + label, "act:pending")]
+            code = session.get("recovery_code")
+            if code:
+                msg += (f"\n\n🔐 *Ton code de récupération :* `{code}`\n"
+                        "_Garde-le : tape /moi <code> depuis WhatsApp ou un autre appareil pour retrouver ton profil._")
             msg += ("\n\n▶️ *La suite :* /veille (plus d'offres) · /campusfrance (études en France) · "
                     "/ecoles · /canada · /menu.\n_Je t'enverrai chaque jour les meilleures offres liées à ton profil._")
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding

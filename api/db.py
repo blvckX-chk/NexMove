@@ -4,9 +4,36 @@ Base : `data/sessions.db` (mono-fichier, WAL). Toutes les méthodes ouvrent leur
 propre connexion (timeout 10s) et la referment ; c'est le pattern historique.
 """
 from __future__ import annotations
-import os, json, sqlite3, hashlib, time
+import os, json, sqlite3, hashlib, time, secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+
+# Alphabet du code de récupération : sans caractères ambigus (0/O, 1/I/L).
+_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def _new_recovery_code() -> str:
+    return "NEX-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(5))
+
+
+def profile_quality(data: dict) -> int:
+    """Score de richesse d'un profil — sert à ne garder QUE la meilleure version enregistrée."""
+    d = data or {}
+    profil = d.get("profil", d) or {}
+    prefs = profil.get("preferences") or {}
+    q = 0
+    nom = (profil.get("identite") or {}).get("nom") or ""
+    if nom and nom not in ("—", "N/A", "NA"):
+        q += 2
+    q += min(len(profil.get("formation") or []), 3) * 2
+    q += min(len(profil.get("experience") or []), 3) * 2
+    comp = profil.get("competences") or {}
+    q += min(sum(len(v or []) for v in comp.values()), 10)
+    q += sum(1 for k in ("objectif", "pays_cibles", "nationalite", "financement", "niveau",
+                         "mots_cles", "langues_opportunite", "certifs_langue") if prefs.get(k))
+    if profil.get("bilan"):
+        q += 2
+    return q
 
 DB_PATH = os.getenv("NEXMOVE_DB_PATH", "data/sessions.db")
 
@@ -243,6 +270,91 @@ class OppStore:
         return rows
 
 
+class ProfileStore:
+    """Persistance des profils par IDENTIFIANT (code de récupération).
+    - Chaque utilisateur reçoit un code stable (NEX-XXXXX) à la 1re sauvegarde.
+    - Chaque sauvegarde archive une VERSION ; on ne restaure que la MEILLEURE (plus riche),
+      pour « garder les meilleures données » même si l'utilisateur change de canal/appareil.
+    """
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS profiles (
+            code TEXT PRIMARY KEY, user_id TEXT, data TEXT, quality INTEGER DEFAULT 0,
+            version INTEGER DEFAULT 1, created_at TEXT, updated_at TEXT)""")
+        con.execute("CREATE TABLE IF NOT EXISTS profile_user_map (user_id TEXT PRIMARY KEY, code TEXT)")
+        con.execute("""CREATE TABLE IF NOT EXISTS profile_versions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT, user_id TEXT,
+            data TEXT, quality INTEGER DEFAULT 0, created_at TEXT)""")
+        con.commit(); con.close()
+
+    def code_for(self, user_id: str) -> Optional[str]:
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT code FROM profile_user_map WHERE user_id=?", (str(user_id),)).fetchone()
+        con.close()
+        return row[0] if row else None
+
+    def _fresh_code(self, con) -> str:
+        for _ in range(8):
+            code = _new_recovery_code()
+            if not con.execute("SELECT 1 FROM profiles WHERE code=?", (code,)).fetchone():
+                return code
+        return _new_recovery_code() + secrets.choice(_CODE_ALPHABET)
+
+    def save(self, user_id: str, data: dict) -> str:
+        """Enregistre une version du profil et renvoie le code de récupération (créé si besoin).
+        La ligne `profiles` conserve la MEILLEURE version (quality maximale)."""
+        now = datetime.now(timezone.utc).isoformat()
+        q = profile_quality(data)
+        payload = json.dumps(data, ensure_ascii=False)
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT code FROM profile_user_map WHERE user_id=?", (str(user_id),)).fetchone()
+            code = row[0] if row else self._fresh_code(con)
+            if not row:
+                con.execute("INSERT OR REPLACE INTO profile_user_map(user_id,code) VALUES(?,?)", (str(user_id), code))
+            # Historique (toujours archivé)
+            con.execute("INSERT INTO profile_versions(code,user_id,data,quality,created_at) VALUES(?,?,?,?,?)",
+                        (code, str(user_id), payload, q, now))
+            # Ligne principale : on ne remplace que si la nouvelle version est AU MOINS aussi riche.
+            cur = con.execute("SELECT quality, version FROM profiles WHERE code=?", (code,)).fetchone()
+            if cur is None:
+                con.execute("INSERT INTO profiles(code,user_id,data,quality,version,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                            (code, str(user_id), payload, q, 1, now, now))
+            elif q >= int(cur[0] or 0):
+                con.execute("UPDATE profiles SET user_id=?, data=?, quality=?, version=?, updated_at=? WHERE code=?",
+                            (str(user_id), payload, q, int(cur[1] or 1) + 1, now, code))
+            con.commit()
+            return code
+        finally:
+            con.close()
+
+    def best(self, code: str) -> Optional[dict]:
+        """Meilleure version connue pour ce code (profiles = déjà la max ; repli sur l'historique)."""
+        code = (code or "").strip().upper()
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT data, quality FROM profiles WHERE code=?", (code,)).fetchone()
+            best_data, best_q = (json.loads(row[0]), int(row[1] or 0)) if row else (None, -1)
+            vrow = con.execute("SELECT data, quality FROM profile_versions WHERE code=? ORDER BY quality DESC LIMIT 1", (code,)).fetchone()
+            if vrow and int(vrow[1] or 0) > best_q:
+                best_data = json.loads(vrow[0])
+            return best_data
+        finally:
+            con.close()
+
+    def restore(self, code: str, new_user_id: str) -> Optional[dict]:
+        """Restaure le meilleur profil du code sur un nouvel utilisateur (portage inter-canaux)."""
+        data = self.best(code)
+        if data is None:
+            return None
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("INSERT OR REPLACE INTO profile_user_map(user_id,code) VALUES(?,?)",
+                    (str(new_user_id), (code or "").strip().upper()))
+        con.commit(); con.close()
+        return data
+
+
 class Cache:
     """Cache TTL sur SQLite (utilisé pour Tavily 6 h et embeddings 7 j)."""
     def __init__(self, path: str = DB_PATH):
@@ -274,4 +386,5 @@ session_manager = SessionManager()
 opp_store = OppStore()
 opp_store._ensure_feedback()
 opp_store._ensure_contacts()
+profile_store = ProfileStore()
 cache = Cache()

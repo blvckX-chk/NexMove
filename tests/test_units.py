@@ -261,3 +261,23 @@ def test_flux_intention_dormante_captee_avant_cv():
     msg, session = _run(main.process_text_message(session, "je cherche une bourse de master au Canada"))
     assert session.get("pending_intent", "").startswith("/")
     assert "prêt" in msg.lower() or "noté" in msg.lower()
+
+
+# ------------------ Commandes /moi et /moncode (chemins sans écriture DB) ------------------
+def test_cmd_moi_code_inconnu():
+    session = {"user_id": "t-moi", "etape": "ACTIF", "profil": {}, "historique": [],
+               "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/moi NEX-ZZZZZ"))
+    assert "aucun profil" in msg.lower()
+
+def test_cmd_moi_sans_code_guide():
+    session = {"user_id": "t-moi2", "etape": "ACTIF", "profil": {}, "historique": [],
+               "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/moi"))
+    assert "nex-" in msg.lower()
+
+def test_cmd_moncode_sans_profil():
+    session = {"user_id": "t-code", "etape": "WELCOME", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "/moncode"))
+    assert "pas encore" in msg.lower()
