@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.35 — Entrée express Canada : rondes IRCC en TEMPS RÉEL (PR-D4c)
+- **`/canada`** s'appuie maintenant sur les **dernières rondes d'invitations réelles** d'IRCC (open data
+  officiel `ee_rounds_123`), au lieu d'une info figée. Les rondes sont **injectées comme données de
+  référence** dans le conseil ET affichées telles quelles (catégorie, CRS, nombre d'invitations, date).
+- **Cache 6 h** (`fetch_ircc_rounds`) pour éviter de refrapper l'API à chaque `/canada` ; parsing tolérant
+  (`_parse_ee_rounds`) ; URL surchargeable via `IRCC_ROUNDS_URL`.
+- **+5 tests** (parsing catégories, tolérance JSON vide/malformé, mise en forme, cache-hit sans réseau).
+  **107/107 verts**.
+
 ## v2.34 — Catalogue de sources structuré + filtrage adaptatif au profil (PR-D2)
 - **`SOURCE_CATALOG`** : les flux de veille portent désormais un **`type`** (bourse/emploi/fellowship/ong)
   et un **`scope`** (local/intl/both), et sont **activables par flag d'env** (`active_env`, ex.

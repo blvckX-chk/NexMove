@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.34.0"
+VERSION         = "2.35.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -714,17 +714,25 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             msg = "📄 Fais d'abord /start puis envoie ton CV — je détermine ensuite la meilleure voie Canada pour toi."
         else:
             try:
-                msg = await conseil_grounded(profil,
-                    "🇨🇦 *Immigration Canada — voies adaptées à ton profil*",
-                    f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
-                    ("Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : "
+                rounds = await fetch_ircc_rounds(6)      # rondes réelles (open data IRCC, cache 6 h)
+                rounds_txt = _format_ircc_rounds(rounds)
+                consigne = ("Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : "
                      "permis d'études (attestation provinciale/PAL, preuve de fonds à jour) si étudiant ; PGWP puis Entrée "
                      "express / RP si diplômé/travailleur ; PEQ/Arrima Québec si visé Québec (avantage francophone). "
                      "IMPORTANT — Entrée express : mentionne les *rondes fondées sur les catégories* d'IRCC (invitations "
                      "à CRS plus BAS pour ces catégories prioritaires) et dis si le profil est éligible : francophones "
                      "hors Québec (NCLC 7+ en français), santé, métiers spécialisés, STIM, transports, éducation, "
-                     "agriculture. Sois HONNÊTE sur les conditions (fonds, langue, points CRS, expérience canadienne)."),
+                     "agriculture. Sois HONNÊTE sur les conditions (fonds, langue, points CRS, expérience canadienne).")
+                if rounds_txt:
+                    consigne += ("\n\nDONNÉES RÉELLES à jour (dernières rondes Entrée express IRCC — cite-les et "
+                                 f"appuie-toi dessus pour dire quelles catégories tirent en ce moment) :\n{rounds_txt}")
+                msg = await conseil_grounded(profil,
+                    "🇨🇦 *Immigration Canada — voies adaptées à ton profil*",
+                    f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
+                    consigne,
                     cta="Ensuite : /dossier <programme canadien> · /entretien visa · /logement <ville>.")
+                if rounds_txt:
+                    msg += f"\n\n📅 *Dernières rondes Entrée express (IRCC, temps réel) :*\n{rounds_txt}"
             except Exception as e:
                 logger.error(f"canada: {e}"); msg = "😕 Conseils Canada indisponibles, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2493,6 +2501,56 @@ SOURCE_CATALOG = [
     {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
      "active_env": "ENABLE_RELIEFWEB"},
 ]
+
+# ── IRCC Entrée express : rondes d'invitations en TEMPS RÉEL (open data officiel, cache 6 h) ──
+IRCC_ROUNDS_URL = os.getenv("IRCC_ROUNDS_URL",
+                            "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json")
+
+def _parse_ee_rounds(data: dict, limit: int = 12) -> list:
+    """Extrait les dernières rondes du JSON open data IRCC (tolérant aux champs manquants)."""
+    rounds = (data or {}).get("rounds") or []
+    out = []
+    for r in rounds:
+        if not isinstance(r, dict):
+            continue
+        out.append({
+            "date": (r.get("drawDate") or r.get("drawDateFull") or "").strip(),
+            "categorie": (r.get("drawName") or "").strip(),
+            "invitations": (r.get("drawSize") or "").strip(),
+            "crs": (r.get("drawCRS") or "").strip(),
+        })
+    return out[:limit]
+
+async def fetch_ircc_rounds(limit: int = 6) -> list:
+    ck = "ircc_ee_rounds"
+    cached = cache.get(ck)
+    if cached is not None:
+        return cached[:limit]
+    try:
+        r = await http().get(IRCC_ROUNDS_URL, headers={"User-Agent": _BROWSER_UA},
+                             timeout=20.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        parsed = _parse_ee_rounds(r.json(), limit=12)
+        cache.set(ck, parsed, ttl=6 * 3600)
+        return parsed[:limit]
+    except Exception as e:
+        logger.warning(f"[ircc] {e}")
+        return []
+
+def _format_ircc_rounds(rounds: list) -> str:
+    lignes = []
+    for r in rounds or []:
+        cat = r.get("categorie") or "Ronde générale"
+        det = []
+        if r.get("crs"):
+            det.append(f"CRS {r['crs']}")
+        if r.get("invitations"):
+            det.append(f"{r['invitations']} invitations")
+        suffix = f" — {', '.join(det)}" if det else ""
+        d = f" ({r['date']})" if r.get("date") else ""
+        lignes.append(f"• {_md_clean(cat)}{suffix}{d}")
+    return "\n".join(lignes[:6])
 
 
 def _source_active(s: dict) -> bool:

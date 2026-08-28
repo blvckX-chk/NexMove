@@ -379,3 +379,40 @@ def test_sources_for_profile_local_exclut_intl():
 def test_sources_for_profile_intl_garde_tout():
     urls = main._sources_for_profile({"objectif": "étudier", "pays_cibles": "France"})
     assert "https://www.scholars4dev.com/feed/" in urls       # intl gardé pour études à l'étranger
+
+
+# ------------------ IRCC Entrée express : parsing des rondes temps réel (D4c) ------------------
+_IRCC_SAMPLE = {"rounds": [
+    {"drawNumber": "339", "drawDate": "2026-08-25", "drawName": "Healthcare and social services occupations (Version 1)",
+     "drawSize": "1,500", "drawCRS": "463"},
+    {"drawNumber": "338", "drawDate": "2026-08-12", "drawName": "French language proficiency (Version 1)",
+     "drawSize": "2,500", "drawCRS": "470"},
+    {"drawNumber": "337", "drawDate": "2026-08-06", "drawName": "General",
+     "drawSize": "3,000", "drawCRS": "518"},
+]}
+
+def test_parse_ee_rounds_extrait_categories():
+    rounds = main._parse_ee_rounds(_IRCC_SAMPLE, limit=6)
+    assert len(rounds) == 3
+    assert rounds[0]["categorie"].startswith("Healthcare")
+    assert rounds[0]["crs"] == "463" and rounds[0]["invitations"] == "1,500"
+
+def test_parse_ee_rounds_tolerant_vide():
+    assert main._parse_ee_rounds({}, limit=6) == []
+    assert main._parse_ee_rounds({"rounds": [None, 42]}, limit=6) == []
+
+def test_format_ircc_rounds_lisible():
+    txt = main._format_ircc_rounds(main._parse_ee_rounds(_IRCC_SAMPLE))
+    assert "Healthcare" in txt and "CRS 463" in txt and "1,500 invitations" in txt
+    assert txt.count("•") == 3
+
+def test_format_ircc_rounds_vide():
+    assert main._format_ircc_rounds([]) == ""
+
+
+def test_fetch_ircc_rounds_cache_hit(monkeypatch):
+    # Cache déjà peuplé -> pas d'appel réseau, on renvoie la valeur en cache.
+    sample = main._parse_ee_rounds(_IRCC_SAMPLE, limit=12)
+    monkeypatch.setattr(main.cache, "get", lambda k: sample)
+    rounds = _run(main.fetch_ircc_rounds(2))
+    assert len(rounds) == 2 and rounds[0]["categorie"].startswith("Healthcare")
