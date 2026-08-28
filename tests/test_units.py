@@ -174,3 +174,90 @@ def test_progress_bar_shape():
     assert main._progress_bar(3, 8, 8) == "▓▓▓░░░░░ 3/8"
     assert main._progress_bar(0, 5, 5).startswith("░")
     assert main._progress_bar(10, 5, 5).startswith("▓▓▓▓▓")  # borné
+
+
+# ------------------ Onboarding ADAPTATIF (plan de questions selon les réponses) ------------------
+def test_plan_stage_local_sans_nationalite_ni_financement():
+    """Un stage/job visant le propre pays : pas de question nationalité/passeport ni financement d'études."""
+    plan = main._build_pref_plan({"objectif": "travailler", "pays_cibles": "Bénin"})
+    assert "nationalite" not in plan
+    assert "financement" not in plan
+    assert "certifs_langue" not in plan   # non pertinent pour un job local
+    assert plan[0] == "objectif" and "mots_cles" in plan
+
+def test_plan_travail_international_demande_nationalite():
+    plan = main._build_pref_plan({"objectif": "travailler", "pays_cibles": "Canada"})
+    assert "nationalite" in plan and "certifs_langue" in plan
+    assert "financement" not in plan   # un job, pas des études
+
+def test_plan_etudes_demande_tout():
+    plan = main._build_pref_plan({"objectif": "étudier", "pays_cibles": "France"})
+    for champ in ("objectif", "pays_cibles", "nationalite", "financement", "certifs_langue"):
+        assert champ in plan
+
+def test_plan_objectif_inconnu_avant_pays_reste_prudent():
+    """Tant que les pays ne sont pas connus, on garde la nationalité (on ne prive pas l'utilisateur)."""
+    plan = main._build_pref_plan({"objectif": "travailler"})
+    assert "nationalite" in plan   # _vise_international -> True par défaut
+
+def test_vise_international():
+    assert main._vise_international({"pays_cibles": "France"}) is True
+    assert main._vise_international({"pays_cibles": "tous"}) is True
+    assert main._vise_international({"pays_cibles": "Bénin"}) is False
+    assert main._vise_international({}) is True   # inconnu -> prudent
+
+
+# ------------------ Repli : deviner le nom depuis le nom de fichier du CV ------------------
+def test_name_from_filename_underscore():
+    assert main._name_from_filename("CV_Judicael.pdf") == "Judicael"
+
+def test_name_from_filename_tirets():
+    assert main._name_from_filename("cv-jean-dupont.pdf") == "Jean Dupont"
+
+def test_name_from_filename_bruit_seul_donne_vide():
+    assert main._name_from_filename("cv.pdf") == ""
+    assert main._name_from_filename("mon_cv_final.pdf") == ""
+
+def test_name_from_filename_chiffres_ignores():
+    assert main._name_from_filename("CV_Marie_2026_v2.pdf") == "Marie"
+
+
+# ------------------ Flux d'onboarding adaptatif (bout en bout, hors réseau) ------------------
+import asyncio as _asyncio
+
+def _run(coro):
+    loop = _asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+def test_flux_onboarding_stage_local_ne_demande_jamais_nationalite():
+    """Après CV, objectif=travailler + pays=Bénin : la question nationalité ne doit JAMAIS apparaître."""
+    session = {"user_id": "t-local", "etape": "CV_RECU", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    questions = []
+    # 1) confirme le CV -> passe en PREFERENCES, pose 'objectif'
+    q, session = _run(main.process_text_message(session, "oui"))
+    questions.append(q)
+    # 2) répond aux questions jusqu'à sortir de PREFERENCES (garde-fou 12 tours)
+    reponses = {"objectif": "travailler", "pays_cibles": "Bénin", "langues_opportunite": "français",
+                "niveau": "professionnel", "mots_cles": "cybersécurité"}
+    for _ in range(12):
+        if session.get("etape") != "PREFERENCES":
+            break
+        champ = session.get("pref_current")
+        rep = reponses.get(champ, "peu importe")
+        q, session = _run(main.process_text_message(session, rep))
+        questions.append(q)
+    joined = "\n".join(questions).lower()
+    assert "nationalité" not in joined and "passeport" not in joined
+    assert session.get("etape") in ("PREF_TYPE_EMPLOI", "CONFIRMATION")
+
+def test_flux_intention_dormante_captee_avant_cv():
+    """Une intention forte tapée avant l'envoi du CV est mémorisée (pending_intent)."""
+    session = {"user_id": "t-intent", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "je cherche une bourse de master au Canada"))
+    assert session.get("pending_intent", "").startswith("/")
+    assert "prêt" in msg.lower() or "noté" in msg.lower()

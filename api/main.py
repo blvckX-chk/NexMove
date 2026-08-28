@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.29.1"
+VERSION         = "2.30.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -240,6 +240,24 @@ def _sort_formations(formation):
 def _is_travail(objectif) -> bool:
     return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
 
+# Mots parasites d'un nom de fichier de CV (à ignorer pour deviner le nom du candidat).
+_CV_FILENAME_NOISE = {"cv", "resume", "résumé", "resumé", "curriculum", "vitae", "final", "finale",
+                      "copie", "copy", "doc", "document", "def", "version", "new", "nouveau",
+                      "mon", "my", "the", "pdf", "docx", "word", "scan", "scanned", "photo",
+                      "img", "image", "portfolio", "profil", "profile", "candidature", "maj"}
+
+def _name_from_filename(filename: str) -> str:
+    """Devine un nom à partir du nom de fichier du CV — repli quand l'OCR/LLM ne trouve pas le nom
+    (ex. « CV_Judicael.pdf » -> « Judicael », « cv-jean-dupont.pdf » -> « Jean Dupont »)."""
+    base = (filename or "").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    base = re.sub(r"[_\-.+]+", " ", base)
+    base = re.sub(r"\d+", " ", base)
+    mots = [m for m in base.split()
+            if len(m) > 1 and m.lower() not in _CV_FILENAME_NOISE and re.search(r"[A-Za-zÀ-ÿ]", m)]
+    if not mots:
+        return ""
+    return " ".join(m.capitalize() for m in mots[:3]).strip()
+
 def _free_text_to_command(low: str, t: str) -> str:
     """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
     if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
@@ -286,33 +304,81 @@ def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     plein = round(taille * min(done, total) / total)
     return "▓" * plein + "░" * (taille - plein) + f" {min(done,total)}/{total}"
 
-PREF_QUESTIONS = [
-    ("objectif", "🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)"),
-    ("nationalite", "🛂 Quelle est ta nationalité (pays du passeport) ?"),
-    ("pays_cibles", "🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… — ou ton *propre pays* pour des offres locales, ou « tous »)"),
-    ("financement", "💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?"),
-    ("certifs_langue", "🗣️ Certifications de langue ?\n(IELTS/TOEFL/TCF/DELF + score, ou « aucune »)"),
-    ("langues_opportunite", "🌐 Langue des opportunités ? (français / anglais / les deux)"),
-    ("niveau", "🎓 Ton niveau ? (étudiant / professionnel)"),
-    ("mots_cles", "🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)"),
-]
-
-# Choix cliquables pour les questions à réponse fermée (les autres restent en texte libre).
-PREF_CHOICES = {
-    "objectif": ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"],
-    "financement": ["Bourse indispensable", "Auto-financement", "Peu importe"],
-    "langues_opportunite": ["Français", "Anglais", "Les deux"],
-    "niveau": ["Étudiant", "Professionnel"],
+# Source unique de vérité de l'onboarding : champ -> (question, choix cliquables).
+# L'ORDRE et l'INCLUSION des questions sont calculés dynamiquement (_build_pref_plan) selon
+# les réponses déjà données — onboarding ADAPTATIF (ex. pas de nationalité/passeport ni de
+# financement d'études pour un simple stage/job LOCAL).
+PREF_FIELDS: dict[str, tuple[str, Optional[list]]] = {
+    "objectif":            ("🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)",
+                            ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"]),
+    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… — ou ton *propre pays* pour des offres locales, ou « tous »)",
+                            None),
+    "nationalite":         ("🛂 Quelle est ta nationalité (pays du passeport) ?", None),
+    "financement":         ("💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?",
+                            ["Bourse indispensable", "Auto-financement", "Peu importe"]),
+    "certifs_langue":      ("🗣️ Certifications de langue ?\n(IELTS/TOEFL/TCF/DELF + score, ou « aucune »)", None),
+    "langues_opportunite": ("🌐 Langue des opportunités ? (français / anglais / les deux)",
+                            ["Français", "Anglais", "Les deux"]),
+    "niveau":              ("🎓 Ton niveau ? (étudiant / professionnel)",
+                            ["Étudiant", "Professionnel"]),
+    "mots_cles":           ("🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)", None),
 }
+# Compat : quelques helpers/tests attendent encore ces noms (dérivés de la source ci-dessus).
+PREF_QUESTIONS = [(f, q) for f, (q, _c) in PREF_FIELDS.items()]
+PREF_CHOICES = {f: c for f, (_q, c) in PREF_FIELDS.items() if c}
 
 _CONFIRM_KB = [("✅ Oui, c'est bon", "onb:oui"), ("🔄 Recommencer", "onb:non")]
 
-def _pref_question(session: dict, idx: int) -> str:
-    """Renvoie l'intitulé de la question et arme les boutons de choix (si la question est fermée)."""
-    field, q = PREF_QUESTIONS[idx]
-    choix = PREF_CHOICES.get(field)
+# Indices d'une cible de mobilité internationale (=> nationalité/passeport + certifs pertinents).
+_INTL_HINTS = ("france", "canada", "belg", "allemag", "suisse", "luxembourg", "pays-bas",
+               "europe", "usa", "état-unis", "etats-unis", "états unis", "etats unis",
+               "royaume", " uk", "angleterre", "étrang", "etrang", "international", "monde",
+               "ailleurs", "expat", "dubai", "émirat", "emirat", "qatar", "maroc", "tunisie",
+               "algér", "alger", "afrique du sud", "sénégal", "senegal", "côte d'ivoire",
+               "cote d'ivoire", "abidjan", "portugal", "espagne", "italie", "chine", "japon",
+               "australie", "turquie", "russie", "inde")
+
+def _vise_international(prefs: dict) -> bool:
+    """L'utilisateur vise-t-il (aussi) l'étranger ? Si les pays ne sont pas encore connus,
+    on renvoie True (on ne prive pas l'utilisateur d'une question tant qu'on ne sait pas)."""
+    pays = str(prefs.get("pays_cibles", "")).lower().strip()
+    if not pays:
+        return True
+    if any(k in pays for k in ("tous", "peu importe", "partout", "n'importe", "monde")):
+        return True
+    return any(h in pays for h in _INTL_HINTS)
+
+def _build_pref_plan(prefs: dict) -> list[str]:
+    """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
+    Recalculée à chaque étape : la nationalité (passeport) et le financement d'études ne sont
+    demandés QUE s'ils ont du sens (mobilité internationale / parcours d'études-bourse)."""
+    objectif = str(prefs.get("objectif", "")).lower()
+    etudes  = any(k in objectif for k in ("étud", "etud", "bourse", "fellowship", "master",
+                                          "doctorat", "licence", "tous", "tout"))
+    travail = _is_travail(objectif)
+    plan = ["objectif", "pays_cibles"]
+    # Nationalité : mobilité internationale, études/immigration, ou objectif indéterminé.
+    if etudes or (travail and _vise_international(prefs)) or not (travail or etudes):
+        plan.append("nationalite")
+    # Financement d'études : pas pertinent pour un simple job.
+    if etudes or not travail:
+        plan.append("financement")
+    # Certifs de langue : surtout pour l'international (admission, visa).
+    if etudes or _vise_international(prefs):
+        plan.append("certifs_langue")
+    plan += ["langues_opportunite", "niveau", "mots_cles"]
+    return plan
+
+def _ask_pref(session: dict, field: str) -> str:
+    """Renvoie l'intitulé de la question `field` et arme les boutons de choix (si fermée)."""
+    q, choix = PREF_FIELDS[field]
+    session["pref_current"] = field
     session["_kb_options"] = [(c, "pref:" + c) for c in choix] if choix else None
     return q
+
+def _pref_question(session: dict, idx: int) -> str:
+    """Compat : première question du plan (utilisé au (re)démarrage de l'onboarding)."""
+    return _ask_pref(session, "objectif")
 
 def valider_pref(field: str, value: str) -> tuple[bool, str]:
     """Vérifie la cohérence d'une réponse d'onboarding.
@@ -446,7 +512,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if low.startswith("/start"):
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
-        session["onboarding_complete"] = False; session["pref_index"] = 0
+        session["onboarding_complete"] = False; session["pref_current"] = None
         msg = ("👋 *Bienvenue sur NexMove !*\n"
                "_Ton agent IA pour préparer ton prochain départ : études, emploi, bourses et mobilité internationale._\n\n"
                "Voici comment ça marche :\n"
@@ -954,7 +1020,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cleared = {"user_id": session.get("user_id"), "chat_id": session.get("chat_id"),
                    "username": session.get("username"), "etape": "WELCOME", "profil": {},
                    "historique": [], "cv_parsed": False, "cv_file_id": None,
-                   "onboarding_complete": False, "pref_index": 0, "derniere_activite": now}
+                   "onboarding_complete": False, "pref_current": None, "derniere_activite": now}
         msg = "🗑️ Tes données ont été effacées. Fais /start pour recommencer."
         cleared["historique"] = [{"role": "assistant", "content": msg, "ts": now}]
         return msg, cleared
@@ -1171,31 +1237,34 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     etape = session.get("etape", "WELCOME")
 
     if etape == "CV_RECU" and detecter_reponse_positive(t):
-        session["etape"] = "PREFERENCES"; session["pref_index"] = 0
-        q = _pref_question(session, 0)
+        session["etape"] = "PREFERENCES"
+        q = _ask_pref(session, "objectif")
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
 
     if etape == "PREFERENCES":
-        idx = session.get("pref_index", 0)
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
-        if 0 <= idx < len(PREF_QUESTIONS):
-            field = PREF_QUESTIONS[idx][0]
+        # 1) Enregistrer la réponse à la question EN COURS (si valide).
+        field = session.get("pref_current")
+        if field:
             ok, indice = valider_pref(field, t)
             if not ok:
                 _push(session, "user", t)
-                q = f"🤔 {indice}\n\n{_pref_question(session, idx)}"
+                q = f"🤔 {indice}\n\n{_ask_pref(session, field)}"
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
             prefs[field] = t
             profil["preferences"] = prefs; session["profil"] = profil
-        idx += 1; session["pref_index"] = idx
         _push(session, "user", t)
-        if idx < len(PREF_QUESTIONS):
-            q = _pref_question(session, idx)
+        # 2) Prochaine question du plan ADAPTATIF (recalculé selon les réponses déjà données).
+        plan = _build_pref_plan(prefs)
+        nxt = next((f for f in plan if not prefs.get(f)), None)
+        if nxt:
+            q = _ask_pref(session, nxt)
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
+        session["pref_current"] = None
         # Question conditionnelle : type de poste (seulement si l'objectif est de travailler)
         if _is_travail(prefs.get("objectif")) and not prefs.get("type_emploi"):
             session["etape"] = "PREF_TYPE_EMPLOI"
@@ -1250,20 +1319,40 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             except Exception as e:
                 logger.error(f"auto-veille: {e}")
                 msg += "\nTape /veille pour tes premières opportunités."
+            # Intention forte captée AVANT la fin de l'onboarding : on la relance maintenant.
+            # La commande reste stockée côté serveur (session["pending_intent"]) ; le bouton
+            # ne porte qu'un jeton court (contrainte Telegram : callback_data <= 64 octets).
+            pending = session.get("pending_intent", "")
+            if pending:
+                label = pending.split()[0].lstrip("/").capitalize()
+                msg += f"\n\n📌 Tu m'avais demandé quelque chose au début — clique ci-dessous pour que je m'en occupe (ou tape *{pending.split()[0]}*)."
+                session["_kb_options"] = [("▶️ " + label, "act:pending")]
             msg += ("\n\n▶️ *La suite :* /veille (plus d'offres) · /campusfrance (études en France) · "
                     "/ecoles · /canada · /menu.\n_Je t'enverrai chaque jour les meilleures offres liées à ton profil._")
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
         else:
-            session["etape"] = "PREFERENCES"; session["pref_index"] = 0
-            msg = "Pas de souci, on reprend.\n\n" + _pref_question(session, 0)
+            session["etape"] = "PREFERENCES"
+            # On repart de zéro : vider les réponses pour re-parcourir le plan adaptatif.
+            profil = session.get("profil", {}) or {}
+            profil["preferences"] = {}; session["profil"] = profil
+            msg = "Pas de souci, on reprend.\n\n" + _ask_pref(session, "objectif")
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     # Pas encore onboardé : réponse déterministe (pas de LLM bavard qui re-salue / vouvoie / redemande le CV)
     if not session.get("onboarding_complete"):
         _push(session, "user", t)
-        msg = ("📄 Pour démarrer, envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil et je te fais un bilan "
-               "d'orientation. Besoin d'un guide ? Tape /tuto.")
+        # Intention forte exprimée AVANT la fin de l'onboarding : on ne la perd pas, on la
+        # mémorise pour la déclencher automatiquement une fois le profil prêt.
+        intent_cmd = _free_text_to_command(low, t)
+        if intent_cmd and len(t) > 3:
+            session["pending_intent"] = intent_cmd
+            msg = ("📌 Noté — *je m'en occupe dès que ton profil est prêt*.\n\n"
+                   "Envoie-moi d'abord ton *CV (PDF, Word ou image)* pour que je personnalise mes réponses. "
+                   "Besoin d'un guide ? Tape /tuto.")
+        else:
+            msg = ("📄 Pour démarrer, envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil et je te fais un bilan "
+                   "d'orientation. Besoin d'un guide ? Tape /tuto.")
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1781,6 +1870,12 @@ async def handle_action(session, data, callback_id=None):
         return session
     if data.startswith("act:"):
         act = data[4:]
+        if act == "pending":
+            # Rejoue l'intention forte captée pendant l'onboarding (commande stockée côté serveur).
+            cmd = session.pop("pending_intent", "") or "/veille"
+            msg, session = await process_text_message(session, cmd)
+            await deliver_text(session, msg, with_menu=True)
+            return session
         if act in _ACT_HELP:
             await deliver_text(session, _ACT_HELP[act], with_menu=True)
             return session
@@ -1914,7 +2009,13 @@ Document: {cv_text[:6000]}"""
         return
     # Diplôme principal en premier (le plus élevé/récent) — sinon le bot retenait la licence au lieu du master
     profil["formation"] = _sort_formations(profil.get("formation"))
-    nom = profil.get("identite", {}).get("nom", "N/A")
+    nom = (profil.get("identite", {}).get("nom") or "").strip()
+    if not nom or nom.upper() in ("N/A", "NA", "-", "—"):
+        # Repli : deviner le nom depuis le nom de fichier du CV (ex. « CV_Judicael.pdf »).
+        devine = _name_from_filename(filename)
+        nom = devine or "—"
+        if devine:
+            profil.setdefault("identite", {})["nom"] = devine   # persister pour lettres/dossiers
     forms = profil.get("formation", []) or []
     if forms:
         lignes_f = []

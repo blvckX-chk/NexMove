@@ -2,6 +2,21 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.30 — Onboarding ADAPTATIF + nom de secours + intention mémorisée (PR-D1)
+- **Onboarding adaptatif** : les questions s'adaptent aux réponses. Un **stage/job LOCAL** (objectif
+  « travailler » + son propre pays) ne demande plus la **nationalité/passeport**, ni le **financement
+  d'études**, ni les **certifs de langue** — ces questions restent réservées à la mobilité internationale
+  et aux parcours d'études/bourses. Plan de questions recalculé à chaque étape (`_build_pref_plan`).
+  → Corrige le retour testeur : « demander la nationalité pour un stage local, ce n'est pas logique ».
+- **Nom de secours depuis le fichier** : quand l'OCR/LLM ne détecte pas le nom sur le CV, on le devine
+  depuis le **nom du fichier** (`CV_Judicael.pdf` → « Judicael », `cv-jean-dupont.pdf` → « Jean Dupont »)
+  au lieu d'afficher « N/A ». Le nom deviné est persisté (utile pour lettres/dossiers).
+- **Intention mémorisée** : une demande forte tapée **avant la fin de l'onboarding** (ex. « je cherche une
+  bourse de master au Canada ») n'est plus perdue — elle est mémorisée puis **relancée** à la fin du profil
+  (message + bouton « ▶️ … »).
+- **+11 tests** (`_build_pref_plan`, `_vise_international`, `_name_from_filename`, flux d'onboarding local
+  bout en bout, capture d'intention). **77/77 verts**.
+
 ## v2.29 — WhatsApp : photos directes + rejet poli audio/vidéo + guide de mise en service
 - **Photos WhatsApp directement** : le parseur gère maintenant `type: "image"` (JPG/PNG) — l'image part
   vers **vision Gemini** comme pour Telegram. Fini l'obligation d'envoyer en « Document ».
