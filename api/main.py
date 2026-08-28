@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.31.0"
+VERSION         = "2.32.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -101,6 +101,9 @@ MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
 MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
 # --- Contact / support : où renvoyer les messages /contact ---
 ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # ton chat_id Telegram (@userinfobot pour le trouver)
+# Quotas journaliers des utilisateurs GRATUITS pour les options coûteuses (l'admin est illimité).
+FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
+FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
 CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
 CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
 CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
@@ -183,7 +186,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
-                profile_store, profile_quality)
+                profile_store, profile_quality, usage_store)
 
 
 # (Embeddings/vision : voir llm.py — PR-B)
@@ -240,6 +243,31 @@ def _sort_formations(formation):
 
 def _is_travail(objectif) -> bool:
     return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
+
+def _is_admin(session: dict) -> bool:
+    """Vrai si la session est celle de l'administrateur (quotas illimités)."""
+    if not ADMIN_CHAT_ID:
+        return False
+    return str(ADMIN_CHAT_ID) in (str(session.get("chat_id") or ""), str(session.get("user_id") or ""))
+
+def _quota_check(session: dict, feature: str, limit: int) -> tuple[bool, int]:
+    """(autorisé, restant). L'admin est toujours autorisé et n'est pas décompté."""
+    if _is_admin(session) or limit <= 0:
+        return True, 999
+    used = usage_store.count(session.get("user_id"), feature)
+    return used < limit, max(0, limit - used)
+
+def _quota_bump(session: dict, feature: str) -> None:
+    if not _is_admin(session):
+        try:
+            usage_store.bump(session.get("user_id"), feature)
+        except Exception as e:
+            logger.error(f"quota bump {feature}: {e}")
+
+def _quota_exceeded_msg(feature_label: str) -> str:
+    return (f"🚦 Tu as atteint ta *limite gratuite du jour* pour {feature_label}.\n\n"
+            "Réessaie demain, ou tape /contact pour un accès étendu. "
+            "_Cette limite protège le service et reste généreuse pour un usage normal._")
 
 # Mots parasites d'un nom de fichier de CV (à ignorer pour deviner le nom du candidat).
 _CV_FILENAME_NOISE = {"cv", "resume", "résumé", "resumé", "curriculum", "vitae", "final", "finale",
@@ -1987,6 +2015,11 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
     if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
         await deliver_text(session, "❌ Fichier illisible ou trop lourd (max 20 Mo).")
         return
+    # Quota gratuit : l'analyse de CV (LLM/vision) est coûteuse ; l'admin est illimité.
+    ok, _ = _quota_check(session, "cv", FREE_CV_DAILY)
+    if not ok:
+        await deliver_text(session, _quota_exceeded_msg("l'analyse de CV"))
+        return
     fn = (filename or "cv").lower()
     is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
     is_docx = fn.endswith((".docx", ".dotx"))
@@ -2093,6 +2126,7 @@ Document: {cv_text[:6000]}"""
     session["etape"] = "CV_RECU"
     session["profil"] = profil
     session["cv_parsed"] = True
+    _quota_bump(session, "cv")   # analyse réussie -> décompte le quota (admin exclu)
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     _push(session, "assistant", message)
     session_manager.set(session.get("user_id"), session)

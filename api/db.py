@@ -355,6 +355,42 @@ class ProfileStore:
         return data
 
 
+class UsageStore:
+    """Compteurs d'usage par jour et par fonctionnalité — support des quotas gratuits.
+    (L'admin n'est jamais compté : la vérification se fait côté appelant.)"""
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS usage (
+            user_id TEXT, day TEXT, feature TEXT, count INTEGER DEFAULT 0,
+            PRIMARY KEY(user_id, day, feature))""")
+        con.commit(); con.close()
+
+    @staticmethod
+    def _today() -> str:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    def count(self, user_id: str, feature: str, day: Optional[str] = None) -> int:
+        day = day or self._today()
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT count FROM usage WHERE user_id=? AND day=? AND feature=?",
+                          (str(user_id), day, str(feature))).fetchone()
+        con.close()
+        return int(row[0]) if row else 0
+
+    def bump(self, user_id: str, feature: str, day: Optional[str] = None) -> int:
+        """Incrémente et renvoie le nouveau compteur du jour."""
+        day = day or self._today()
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""INSERT INTO usage(user_id,day,feature,count) VALUES(?,?,?,1)
+                       ON CONFLICT(user_id,day,feature) DO UPDATE SET count=count+1""",
+                    (str(user_id), day, str(feature)))
+        n = con.execute("SELECT count FROM usage WHERE user_id=? AND day=? AND feature=?",
+                       (str(user_id), day, str(feature))).fetchone()[0]
+        con.commit(); con.close()
+        return int(n)
+
+
 class Cache:
     """Cache TTL sur SQLite (utilisé pour Tavily 6 h et embeddings 7 j)."""
     def __init__(self, path: str = DB_PATH):
@@ -387,4 +423,5 @@ opp_store = OppStore()
 opp_store._ensure_feedback()
 opp_store._ensure_contacts()
 profile_store = ProfileStore()
+usage_store = UsageStore()
 cache = Cache()

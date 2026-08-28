@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.32 — Quotas gratuits + admin illimité (PR-D4a)
+- **`UsageStore`** (`db.py`) : compteurs d'usage **par jour et par fonctionnalité** (table `usage`).
+- **Quota d'analyse de CV** : `FREE_CV_DAILY` (défaut **8/jour**) pour les utilisateurs gratuits — l'op la
+  plus coûteuse (LLM/vision). Message poli quand la limite est atteinte, décompte **uniquement** sur analyse
+  réussie (un upload illisible ne consomme rien).
+- **Admin illimité** : `_is_admin` (via `ADMIN_CHAT_ID`) n'est jamais compté ni bloqué.
+- Helpers réutilisables `_quota_check` / `_quota_bump` / `_quota_exceeded_msg` + `FREE_GUIDE_DAILY` (défaut
+  **12/jour**) déjà prêts pour le futur mode **/guide** (captures d'écran → vision Gemini).
+- **+5 tests** (compteurs par jour/feature/user, admin illimité, sous-limite, limite 0 = désactivée).
+  **90/90 verts**.
+
 ## v2.31 — Profils persistés par identifiant (code de récupération) (PR-D3)
 - **`ProfileStore`** (`db.py`) : chaque profil validé reçoit un **code de récupération stable** `NEX-XXXXX`.
   Le profil est archivé en **versions** ; on ne restaure QUE la **plus complète** (`profile_quality`) — donc

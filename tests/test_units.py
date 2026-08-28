@@ -281,3 +281,24 @@ def test_cmd_moncode_sans_profil():
                "onboarding_complete": False}
     msg, session = _run(main.process_text_message(session, "/moncode"))
     assert "pas encore" in msg.lower()
+
+
+# ------------------ Quotas : admin illimité + garde gratuite ------------------
+def test_quota_admin_illimite(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    sess = {"user_id": "u1", "chat_id": "42"}
+    assert main._is_admin(sess) is True
+    ok, restant = main._quota_check(sess, "cv", 1)
+    assert ok is True and restant == 999          # admin jamais bloqué
+
+def test_quota_non_admin_sous_limite(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    sess = {"user_id": "quota-fresh-user-xyz", "chat_id": "7"}
+    assert main._is_admin(sess) is False
+    ok, restant = main._quota_check(sess, "feature-inexistante-xyz", 5)
+    assert ok is True and restant == 5            # rien consommé encore
+
+def test_quota_limit_zero_desactive(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "")
+    ok, _ = main._quota_check({"user_id": "u9", "chat_id": "9"}, "cv", 0)
+    assert ok is True                             # limite 0 => pas de quota

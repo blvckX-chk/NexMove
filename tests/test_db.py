@@ -146,3 +146,23 @@ def test_profile_restore_inconnu_none(tmp_path, monkeypatch):
     db = _fresh_db(tmp_path, monkeypatch)
     ps = db.ProfileStore()
     assert ps.restore("NEX-ZZZZZ", "u1") is None
+
+
+# ------------------ UsageStore : compteurs journaliers (quotas) ------------------
+def test_usage_bump_and_count(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    us = db.UsageStore()
+    assert us.count("u1", "cv") == 0
+    assert us.bump("u1", "cv") == 1
+    assert us.bump("u1", "cv") == 2
+    assert us.count("u1", "cv") == 2
+    assert us.count("u1", "guide") == 0        # feature indépendante
+    assert us.count("u2", "cv") == 0           # user indépendant
+
+def test_usage_par_jour_isole(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    us = db.UsageStore()
+    us.bump("u1", "cv", day="2026-01-01")
+    us.bump("u1", "cv", day="2026-01-01")
+    assert us.count("u1", "cv", day="2026-01-01") == 2
+    assert us.count("u1", "cv", day="2026-01-02") == 0
