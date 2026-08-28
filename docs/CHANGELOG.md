@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.36 — Coach d'entretien interactif `/simulation` (extra)
+- **`/simulation`** lance un **entretien blanc** adapté au profil : *Campus France / Études en France*,
+  *visa consulaire*, ou *emploi* (`/simulation visa`, `/simulation emploi`…). Le bot pose `SIM_MAX_Q`
+  questions (défaut 5), donne un **feedback** après chaque réponse, puis un **bilan** final (points forts,
+  axes, conseils actionnables).
+- Banque de questions de **repli** par type si le LLM est indisponible → la simulation marche toujours.
+- `/terminer` clôt avec le bilan ; `/annuler` quitte sans bilan. Mode isolé du CV/guide/outils PDF.
+- **+5 tests** (types, repli borné, garde onboarding, flux complet LLM mocké, /annuler). **112/112 verts**.
+
 ## v2.35 — Entrée express Canada : rondes IRCC en TEMPS RÉEL (PR-D4c)
 - **`/canada`** s'appuie maintenant sur les **dernières rondes d'invitations réelles** d'IRCC (open data
   officiel `ee_rounds_123`), au lieu d'une info figée. Les rondes sont **injectées comme données de

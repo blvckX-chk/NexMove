@@ -416,3 +416,46 @@ def test_fetch_ircc_rounds_cache_hit(monkeypatch):
     monkeypatch.setattr(main.cache, "get", lambda k: sample)
     rounds = _run(main.fetch_ircc_rounds(2))
     assert len(rounds) == 2 and rounds[0]["categorie"].startswith("Healthcare")
+
+
+# ------------------ /simulation : coach d'entretien interactif (extra) ------------------
+def test_sim_type_key():
+    assert main._sim_type_key("visa étudiant") == "visa"
+    assert main._sim_type_key("emploi dev") == "emploi"
+    assert main._sim_type_key("") == "campus"
+    assert main._sim_type_key("campus france") == "campus"
+
+def test_sim_fallback_question_bornee():
+    session = {"sim_type": "visa", "sim_count": 99}
+    q = main._sim_fallback_q(session)
+    assert isinstance(q, str) and len(q) > 5     # index borné, pas d'IndexError
+
+def test_cmd_simulation_exige_onboarding():
+    session = {"user_id": "s0", "etape": "WELCOME", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "/simulation"))
+    assert "cv" in msg.lower() and not session.get("sim_mode")
+
+def test_flux_simulation_complet(monkeypatch):
+    # LLM stubbé : questions/feedback déterministes, aucun réseau.
+    async def _fake_groq(system, prompt, temperature=0.2, max_tokens=1000, json_mode=True, **kw):
+        if not json_mode:
+            return "Bilan : bon projet, travaille les chiffres."
+        return {"feedback": "Bien.", "question": "Question suivante ?"}
+    monkeypatch.setattr(main, "call_groq", _fake_groq)
+    monkeypatch.setattr(main, "SIM_MAX_Q", 3)
+    session = {"user_id": "s1", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}},
+               "historique": [], "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/simulation campus france"))
+    assert session.get("sim_mode") is True and "❓" in msg
+    # 3 réponses -> à la 3e, bilan + fin de simulation
+    for i in range(3):
+        msg, session = _run(main.process_text_message(session, f"réponse {i}"))
+    assert session.get("sim_mode") is False
+    assert "bilan" in msg.lower()
+
+def test_cmd_annuler_quitte_simulation():
+    session = {"user_id": "s2", "etape": "ACTIF", "sim_mode": True, "profil": {},
+               "historique": [], "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/annuler"))
+    assert session.get("sim_mode") is False

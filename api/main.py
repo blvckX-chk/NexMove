@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.35.0"
+VERSION         = "2.36.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -104,6 +104,7 @@ ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # ton chat_id Telegram (@
 # Quotas journaliers des utilisateurs GRATUITS pour les options coûteuses (l'admin est illimité).
 FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
 FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
+SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
 CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
 CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
@@ -453,7 +454,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "/eligibilite <cible> · /budget <ville>\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
-            "/formations <domaine> (te distinguer)\n\n"
+            "/formations <domaine> (te distinguer)\n"
+            "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
@@ -535,10 +537,139 @@ def _resume_prefs(prefs):
             + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
 
+# ── /simulation : coach d'entretien interactif ──
+_SIM_TYPES = {
+    "campus": ("entretien Campus France / Études en France",
+               "motivation du projet d'études, cohérence du parcours, financement, projet de retour au pays"),
+    "visa":   ("entretien consulaire (visa étudiant)",
+               "sincérité du projet, attaches au pays d'origine, ressources financières, intention de retour"),
+    "emploi": ("entretien d'embauche",
+               "compétences et expériences concrètes, motivation, adéquation au poste, savoir-être"),
+}
+_SIM_FALLBACK = {
+    "campus": ["Présente-toi et explique ton projet d'études en France.",
+               "Pourquoi cette formation précise et cet établissement ?",
+               "En quoi ce cursus complète-t-il ton parcours actuel ?",
+               "Comment finances-tu tes études et ta vie sur place ?",
+               "Quel est ton projet professionnel après le diplôme ?"],
+    "visa":   ["Quel est l'objet exact de ton séjour en France ?",
+               "Quelles sont tes attaches (famille, biens, projets) dans ton pays ?",
+               "Comment prouves-tu que tu disposes des ressources nécessaires ?",
+               "Que feras-tu concrètement à la fin de tes études ?",
+               "Pourquoi reviendrais-tu dans ton pays plutôt que de rester ?"],
+    "emploi": ["Présente ton parcours en deux minutes.",
+               "Parle-moi d'une réalisation dont tu es fier·e et de ton rôle exact.",
+               "Pourquoi ce poste et cette entreprise t'intéressent-ils ?",
+               "Raconte une difficulté rencontrée et comment tu l'as gérée.",
+               "Où te vois-tu dans trois ans ?"],
+}
+
+def _sim_type_key(arg: str) -> str:
+    a = (arg or "").lower()
+    if "visa" in a or "consul" in a:
+        return "visa"
+    if any(k in a for k in ("emploi", "job", "embauche", "travail", "recrut", "poste")):
+        return "emploi"
+    return "campus"
+
+def _sim_fallback_q(session: dict) -> str:
+    bank = _SIM_FALLBACK.get(session.get("sim_type", "campus"), _SIM_FALLBACK["campus"])
+    idx = min(session.get("sim_count", 0), len(bank) - 1)
+    return bank[idx]
+
+def _sim_profil_txt(session: dict) -> str:
+    profil = session.get("profil", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    forms = [f.get("diplome", "") for f in (profil.get("formation") or []) if f.get("diplome")][:2]
+    return (f"résumé: {profil.get('resume_profil','')[:200]} | formations: {', '.join(forms) or '—'} | "
+            f"objectif: {prefs.get('objectif','')} | pays: {prefs.get('pays_cibles','')}")
+
+async def _sim_llm(session: dict, answer: str) -> dict:
+    key = session.get("sim_type", "campus")
+    label, focus = _SIM_TYPES.get(key, _SIM_TYPES["campus"])
+    hist = session.get("sim_history", [])
+    contexte = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist[-4:] if h.get("a"))
+    system = (f"Tu es un examinateur bienveillant qui fait passer un {label} à un candidat francophone "
+              f"d'Afrique de l'Ouest. Points évalués : {focus}. À partir de sa DERNIÈRE réponse, donne un "
+              "feedback court et constructif (1-2 phrases : un point fort + un axe précis d'amélioration), "
+              "puis pose LA question suivante (une seule, de plus en plus précise, jamais déjà posée). "
+              "Tutoie. Réponds en JSON strict.")
+    prompt = (f"Profil du candidat : {_sim_profil_txt(session)}\n"
+              f"Échanges précédents :\n{contexte or '(début)'}\n\n"
+              f"Dernière réponse du candidat : « {answer[:600]} »\n\n"
+              'JSON: {"feedback":"","question":""}')
+    try:
+        r = await call_groq(system, prompt, temperature=0.4, max_tokens=400)
+        return r if isinstance(r, dict) else {}
+    except Exception as e:
+        logger.warning(f"[sim] {e}")
+        return {}
+
+async def _sim_debrief(session: dict) -> str:
+    key = session.get("sim_type", "campus")
+    label, focus = _SIM_TYPES.get(key, _SIM_TYPES["campus"])
+    hist = session.get("sim_history", [])
+    echanges = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist if h.get("a"))
+    system = (f"Tu es coach d'{label}. Fais un BILAN synthétique et motivant de la simulation : 3 points forts, "
+              "3 axes d'amélioration concrets, et 2 conseils actionnables pour le vrai entretien. Tutoie, sois précis.")
+    try:
+        r = await call_groq(system, f"Points évalués : {focus}\nÉchanges :\n{echanges[:2500]}",
+                            temperature=0.4, max_tokens=600, json_mode=False)
+        return (r or "").strip() or "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté et les exemples concrets."
+    except Exception as e:
+        logger.warning(f"[sim] debrief {e}")
+        return "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté du projet et les exemples concrets."
+
+async def _simulation_start(session: dict, arg: str) -> tuple[str, dict]:
+    key = _sim_type_key(arg)
+    session["sim_mode"] = True
+    session["sim_type"] = key
+    session["sim_count"] = 0
+    session["sim_history"] = []
+    session["tool_mode"] = None; session["guide_mode"] = False
+    label, _f = _SIM_TYPES[key]
+    r = await _sim_llm(session, "")
+    q = (r.get("question") or "").strip() or _sim_fallback_q(session)
+    session["sim_history"] = [{"q": q}]
+    msg = (f"🎤 *Simulation — {label}*\nJe te pose {SIM_MAX_Q} questions, réponds naturellement comme au vrai "
+           "entretien. _Tape /terminer pour t'arrêter et recevoir ton bilan._\n\n"
+           f"❓ {q}")
+    return msg, session
+
+async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
+    hist = session.get("sim_history", [])
+    if hist and "a" not in hist[-1]:
+        hist[-1]["a"] = answer
+    session["sim_history"] = hist
+    session["sim_count"] = session.get("sim_count", 0) + 1
+    if session["sim_count"] >= SIM_MAX_Q:
+        debrief = await _sim_debrief(session)
+        session["sim_mode"] = False
+        session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        msg = (f"🎬 *Fin de la simulation — bilan :*\n\n{debrief}\n\n"
+               "🔁 Refaire : /simulation · 📄 Prépare ton dossier : /dossier <cible> · 🎯 /entretien pour les conseils.")
+        _push(session, "assistant", msg)
+        return msg, session
+    r = await _sim_llm(session, answer)
+    fb = (r.get("feedback") or "").strip()
+    q = (r.get("question") or "").strip() or _sim_fallback_q(session)
+    hist.append({"q": q}); session["sim_history"] = hist
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    reste = SIM_MAX_Q - session["sim_count"]
+    msg = (f"💬 {fb}\n\n" if fb else "") + f"❓ *Question {session['sim_count'] + 1}/{SIM_MAX_Q}* — {q}\n_(encore {reste})_"
+    _push(session, "assistant", msg)
+    return msg, session
+
+
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
+
+    # Mode /simulation (coach d'entretien) : capte les réponses libres (les commandes passent normalement).
+    if session.get("sim_mode") and not low.startswith("/"):
+        _push(session, "user", t)
+        return await _simulation_turn(session, t)
 
     if low.startswith("/start"):
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
@@ -576,6 +707,18 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
                "*quoi faire à cette étape précise*.\n\n"
                "_Tape /annuler pour quitter le mode guidage._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/simulation") or low.startswith("/simuler") or low.startswith("/entrainement"):
+        if not session.get("onboarding_complete"):
+            msg = "📄 Fais d'abord /start et envoie ton CV — la simulation s'adapte à ton profil."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        _push(session, "user", t)
+        msg, session = await _simulation_start(session, arg)
+        _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     if low.startswith("/campusfrance") or low.startswith("/campus"):
@@ -781,6 +924,14 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         return msg, session
 
     if low.startswith("/terminer") or low.startswith("/fini") or low.startswith("/generer") or low.startswith("/générer"):
+        if session.get("sim_mode"):
+            _push(session, "user", t)
+            debrief = await _sim_debrief(session)
+            session["sim_mode"] = False
+            msg = (f"🎬 *Simulation terminée — bilan :*\n\n{debrief}\n\n"
+                   "🔁 Refaire : /simulation · 📄 /dossier <cible> · 🎯 /entretien.")
+            _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
         mode = session.get("tool_mode")
         files = _tool_files(session.get("user_id"))
         if mode not in ("merge", "img2pdf"):
@@ -805,6 +956,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _tool_clear(session.get("user_id"))
         session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
         session["guide_mode"] = False; session.pop("guide_context", None)
+        session["sim_mode"] = False
         msg = "🚫 Opération annulée."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
