@@ -7,6 +7,11 @@ from typing import Optional, Any
 
 import fitz
 import httpx
+try:
+    from PIL import Image as _PILImg, ImageDraw as _PILDraw, ImageFont as _PILFont
+    _PIL_OK = True
+except Exception:
+    _PIL_OK = False
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Security, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
@@ -93,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.37.0"
+VERSION         = "2.38.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -470,7 +475,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
-            "/profil · /moncode (sauvegarde) · /moi <code> (restaurer) · /status · /rappels · /digest · /supprimer\n"
+            "/profil · /moncode (sauvegarde) · /moi <code> (restaurer) · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
             "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
@@ -1465,6 +1470,32 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/timeline") or low.startswith("/planning") or low.startswith("/feuille"):
+        if not session.get("onboarding_complete"):
+            msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if not _PIL_OK:
+            msg = "🖼️ La génération d'image n'est pas disponible sur ce serveur. Tape /status pour ta progression en texte."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        cf = int(session.get("cf_stage", 0) or 0)
+        deadlines = opp_store.list_candidatures(session.get("user_id"))
+        prenom = ((session.get("profil", {}) or {}).get("identite", {}) or {}).get("nom", "") or ""
+        titre = f"Feuille de route — {prenom.split()[0]}" if prenom.strip() else "Ma feuille de route Campus France"
+        try:
+            png = await asyncio.to_thread(render_timeline_png, CF_STAGES, cf, titre, deadlines)
+            if png:
+                await deliver_file(session, "NexMove_timeline.png", png, "🗺️ Ta feuille de route visuelle")
+                msg = "🗺️ Voici ta *feuille de route* ! Étapes ✅ faites · 🟠 en cours · ⚪ à venir.\nFais /etape quand tu avances, puis /timeline pour la remettre à jour."
+            else:
+                msg = "😕 Génération de la feuille de route impossible pour le moment."
+        except Exception as e:
+            logger.error(f"[timeline] {e}")
+            msg = "😕 Génération de la feuille de route impossible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/status"):
         prefs = (session.get("profil", {}) or {}).get("preferences", {}) or {}
         if session.get("onboarding_complete"):
@@ -2189,6 +2220,81 @@ async def handle_action(session, data, callback_id=None):
     title, opts = get_menu(session, "root")
     await deliver_menu(session, title, opts)
     return session
+
+def _tl_font(size: int):
+    for name in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                 "DejaVuSans-Bold.ttf"):
+        try:
+            return _PILFont.truetype(name, size)
+        except Exception:
+            continue
+    return _PILFont.load_default()
+
+def _tl_wrap(text: str, n: int = 46) -> list:
+    words, lines, cur = str(text).split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 <= n:
+            cur = (cur + " " + w).strip()
+        else:
+            lines.append(cur); cur = w
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+def render_timeline_png(stages, current_idx: int, title: str = "Ma feuille de route",
+                        deadlines=None) -> bytes:
+    """Rend une frise verticale (PNG) : étapes faites/en cours/à venir + échéances.
+    Fonction pure (renvoie des octets PNG) — testable hors réseau."""
+    if not _PIL_OK:
+        return b""
+    W = 900
+    pad, rail_x, row_h = 40, 70, 78
+    deadlines = deadlines or []
+    head_h = 90
+    body_h = max(len(stages), 1) * row_h
+    dl_h = (40 + len(deadlines) * 30 + 20) if deadlines else 0
+    H = head_h + body_h + dl_h + pad
+    bg, ink, muted = (255, 255, 255), (17, 24, 39), (107, 114, 128)
+    green, orange, grey = (34, 197, 94), (249, 115, 22), (203, 213, 225)
+    img = _PILImg.new("RGB", (W, H), bg)
+    d = _PILDraw.Draw(img)
+    d.text((pad, 28), title, fill=ink, font=_tl_font(30))
+    d.line([(pad, head_h - 12), (W - pad, head_h - 12)], fill=(229, 231, 235), width=2)
+    f_stage, f_small = _tl_font(21), _tl_font(17)
+    for i, st in enumerate(stages):
+        cy = head_h + i * row_h + 26
+        done, current = i < current_idx, i == current_idx
+        col = green if done else (orange if current else grey)
+        if i < len(stages) - 1:
+            d.line([(rail_x, cy + 14), (rail_x, cy + row_h)], fill=(226, 232, 240), width=4)
+        d.ellipse([rail_x - 16, cy - 16, rail_x + 16, cy + 16], fill=col)
+        mark = "✓" if done else ("●" if current else str(i + 1))
+        d.text((rail_x - 6, cy - 11), mark, fill=(255, 255, 255), font=f_small)
+        tx = rail_x + 40
+        lines = _tl_wrap(st, 52)
+        d.text((tx, cy - 16), lines[0], fill=ink if (done or current) else muted, font=f_stage)
+        if len(lines) > 1:
+            d.text((tx, cy + 8), lines[1], fill=muted, font=f_small)
+        if current:
+            badge = "  EN COURS"
+            d.text((tx, cy + 30), badge, fill=orange, font=f_small)
+    if deadlines:
+        y = head_h + body_h + 6
+        d.line([(pad, y), (W - pad, y)], fill=(229, 231, 235), width=2)
+        d.text((pad, y + 10), "Échéances", fill=ink, font=_tl_font(22))
+        y += 42
+        for (cible, dl, statut) in deadlines[:8]:
+            txt = f"• {str(cible)[:48]}"
+            if dl:
+                txt += f"  —  {dl}"
+            if statut:
+                txt += f"  ({statut})"
+            d.text((pad + 6, y), txt, fill=muted, font=f_small)
+            y += 30
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
 
 async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
     """Mode /guide : analyse une capture d'écran (vision Gemini) et renvoie un guidage concret."""

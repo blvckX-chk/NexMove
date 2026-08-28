@@ -341,7 +341,9 @@ def test_guide_screenshot_image_appelle_vision_et_decompte(monkeypatch):
         return "1) Tu es sur Études en France. 2) Clique sur « Je candidate »."
     monkeypatch.setattr(main, "deliver_text", _fake_deliver)
     monkeypatch.setattr(main, "analyze_screenshot_vision", _fake_vision)
-    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "")   # utilisateur gratuit
+    # Quota découplé de la vraie base (le singleton usage_store écrit sur data/sessions.db).
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (True, 5))
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
     session = {"user_id": "g5", "channel": "telegram", "guide_mode": True, "historique": []}
     _run(main._process_guide_screenshot(session, b"\xff\xd8\xff\xe0 jpeg-bytes", "cap.jpg"))
     assert any("Études en France" in m for m in envois)
@@ -492,3 +494,42 @@ def test_cmd_alerte_max_10():
                "onboarding_complete": True, "alertes": [f"kw{i}" for i in range(10)]}
     msg, session = _run(main.process_text_message(session, "/alerte onzieme"))
     assert "maximum" in msg.lower() and len(session["alertes"]) == 10
+
+
+# ------------------ Feuille de route visuelle PNG (extra) ------------------
+def test_render_timeline_png_valide():
+    if not main._PIL_OK:
+        return  # Pillow absent : skip
+    png = main.render_timeline_png(main.CF_STAGES, 2, "Test", [("Master X", "2026-09-01", "en_preparation")])
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"     # signature PNG
+    assert len(png) > 1000
+
+def test_render_timeline_png_sans_deadlines():
+    if not main._PIL_OK:
+        return
+    png = main.render_timeline_png(["Étape 1", "Étape 2"], 0, "Court")
+    assert png[:4] == b"\x89PNG"
+
+def test_tl_wrap_coupe():
+    lines = main._tl_wrap("un deux trois quatre cinq six sept huit", n=12)
+    assert all(len(l) <= 12 for l in lines) and len(lines) >= 2
+
+def test_cmd_timeline_exige_onboarding():
+    session = {"user_id": "tl0", "etape": "WELCOME", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "/timeline"))
+    assert "profil" in msg.lower() or "cv" in msg.lower()
+
+def test_cmd_timeline_genere_png(monkeypatch):
+    envois = []
+    async def _fake_deliver_file(session, name, data, caption=""):
+        envois.append((name, data))
+        return True
+    monkeypatch.setattr(main, "deliver_file", _fake_deliver_file)
+    session = {"user_id": "tl1", "channel": "telegram", "etape": "ACTIF",
+               "profil": {"identite": {"nom": "Judicael"}}, "historique": [],
+               "onboarding_complete": True, "cf_stage": 3}
+    msg, session = _run(main.process_text_message(session, "/timeline"))
+    if main._PIL_OK:
+        assert envois and envois[0][0].endswith(".png")
+        assert envois[0][1][:4] == b"\x89PNG"

@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.38 — Feuille de route visuelle `/timeline` (PNG) (extra)
+- **`/timeline`** (alias `/planning`, `/feuille`) génère une **image PNG** de la feuille de route de
+  l'utilisateur : étapes Campus France ✅ faites / 🟠 en cours / ⚪ à venir, avec ses **échéances** de dossiers.
+- Rendu Pillow (`render_timeline_png`, fonction pure) avec repli propre si Pillow absent ; police DejaVu
+  (accents) avec repli. Généré hors boucle événementielle (`asyncio.to_thread`).
+- **+5 tests** (PNG valide, sans échéances, wrap de texte, garde onboarding, génération via commande).
+  **121/121 verts**.
+
 ## v2.37 — Alertes mots-clés personnalisées `/alerte` (extra)
 - **`/alerte <mot-clé>`** : l'utilisateur enregistre ses mots-clés (max 10). `/alerte` liste, `/alerte off
   <mot>` retire, `/alerte off` vide tout.
