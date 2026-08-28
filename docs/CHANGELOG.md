@@ -2,6 +2,18 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.34 — Catalogue de sources structuré + filtrage adaptatif au profil (PR-D2)
+- **`SOURCE_CATALOG`** : les flux de veille portent désormais un **`type`** (bourse/emploi/fellowship/ong)
+  et un **`scope`** (local/intl/both), et sont **activables par flag d'env** (`active_env`, ex.
+  `ENABLE_RELIEFWEB=1` pour ReliefWeb). `SOURCE_FEEDS` en est dérivé (rétro-compat).
+- **Type/scope hérités** à l'ingestion : chaque offre ingérée reçoit le bon type (fini le « bourse »
+  systématique) et son périmètre — stockés en base (colonne `scope`, `add_source`).
+- **Filtrage adaptatif** : `search_sources(prefer_scope=…)` fait remonter les sources du **bon périmètre** ;
+  un objectif purement **local** n'est plus inondé de sources 100 % internationales (et inversement).
+  `_sources_for_profile(prefs)` sélectionne les sources pertinentes selon le profil.
+- **+8 tests** (intégrité catalogue, flag d'activation, sélection locale/intl, scope en base,
+  `prefer_scope`, défaut `both`). **102/102 verts**.
+
 ## v2.33 — Mode /guide : guidage par capture d'écran (vision) (PR-D4b)
 - **`/guide`** active un mode où l'utilisateur envoie une **capture d'écran** (Campus France / Études en
   France, Parcoursup, Mon Master, eCandidat, formulaire, e-mail d'admission…) et reçoit un **guidage

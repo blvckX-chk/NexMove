@@ -166,3 +166,29 @@ def test_usage_par_jour_isole(tmp_path, monkeypatch):
     us.bump("u1", "cv", day="2026-01-01")
     assert us.count("u1", "cv", day="2026-01-01") == 2
     assert us.count("u1", "cv", day="2026-01-02") == 0
+
+
+# ------------------ sources : type/scope + filtrage adaptatif ------------------
+def test_source_scope_roundtrip_et_prefer(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    st = db.OppStore()
+    st.add_source({"titre": "Stage cybersécurité Cotonou", "url": "https://x/local",
+                   "resume": "stage local", "type": "emploi", "scope": "local"})
+    st.add_source({"titre": "Bourse cybersécurité Europe", "url": "https://x/intl",
+                   "resume": "bourse intl", "type": "bourse", "scope": "intl"})
+    # Sans préférence : les deux matchent le mot-clé.
+    res = st.search_sources(["cybersécurité"])
+    assert len(res) == 2
+    # Préférence locale : la source locale passe devant.
+    res_local = st.search_sources(["cybersécurité"], prefer_scope="local")
+    assert res_local[0]["scope"] == "local"
+    # Préférence internationale : l'intl passe devant.
+    res_intl = st.search_sources(["cybersécurité"], prefer_scope="intl")
+    assert res_intl[0]["scope"] == "intl"
+
+def test_source_default_scope_both(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    st = db.OppStore()
+    st.add_source({"titre": "Offre data", "url": "https://x/d", "resume": "data", "type": "emploi"})
+    res = st.search_sources(["data"], prefer_scope="local")
+    assert res and res[0]["scope"] == "both"    # 'both' jamais pénalisé

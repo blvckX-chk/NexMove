@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.33.0"
+VERSION         = "2.34.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2479,18 +2479,48 @@ async def tavily_search(query: str, max_results: int = 7) -> list:
         return []
 
 # Flux RSS de bourses / opportunités (sources réelles, sans clé API)
-SOURCE_FEEDS = [
-    "https://www.scholars4dev.com/feed/",
-    "https://opportunitydesk.org/feed/",
-    "https://www.opportunitiesforafricans.com/feed/",
-    # Sources additionnelles (bourses, mobilité, jeunesse, Afrique)
-    "https://afterschoolafrica.com/feed/",
-    "https://www.opportunitiesforyouth.org/feed/",
-    "https://youthop.com/feed/",
-    "https://mladiinfo.eu/feed/",
+# ── Catalogue de sources STRUCTURÉ (scope: local/intl/both, type: bourse/emploi/fellowship/ong) ──
+# `active_env` (optionnel) : la source n'est active que si la variable d'env correspondante est vraie.
+SOURCE_CATALOG = [
+    {"url": "https://www.scholars4dev.com/feed/",              "type": "bourse",     "scope": "intl"},
+    {"url": "https://opportunitydesk.org/feed/",               "type": "bourse",     "scope": "both"},
+    {"url": "https://www.opportunitiesforafricans.com/feed/",  "type": "bourse",     "scope": "both"},
+    {"url": "https://afterschoolafrica.com/feed/",             "type": "bourse",     "scope": "both"},
+    {"url": "https://www.opportunitiesforyouth.org/feed/",     "type": "fellowship", "scope": "both"},
+    {"url": "https://youthop.com/feed/",                       "type": "fellowship", "scope": "both"},
+    {"url": "https://mladiinfo.eu/feed/",                      "type": "bourse",     "scope": "intl"},
+    # Humanitaire / ONG (emplois & consultances) — activable via ENABLE_RELIEFWEB=1
+    {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
+     "active_env": "ENABLE_RELIEFWEB"},
 ]
-# Flux RSS supplémentaires ajoutables sans toucher au code (séparés par des virgules)
-SOURCE_FEEDS += [u.strip() for u in os.getenv("SOURCE_FEEDS_EXTRA", "").split(",") if u.strip()]
+
+
+def _source_active(s: dict) -> bool:
+    env = s.get("active_env")
+    return True if not env else str(os.getenv(env, "")).strip().lower() in ("1", "true", "yes", "on", "oui")
+
+
+# Flux RSS supplémentaires ajoutables sans toucher au code (URLs séparées par des virgules ; scope 'both').
+for _u in (u.strip() for u in os.getenv("SOURCE_FEEDS_EXTRA", "").split(",") if u.strip()):
+    SOURCE_CATALOG.append({"url": _u, "type": "bourse", "scope": "both"})
+
+_SOURCE_META = {s["url"]: s for s in SOURCE_CATALOG}
+# Liste plate des feeds ACTIFS (rétro-compat : ingest_feeds itère dessus).
+SOURCE_FEEDS = [s["url"] for s in SOURCE_CATALOG if _source_active(s)]
+
+
+def _sources_for_profile(prefs: dict) -> list[str]:
+    """Sélection ADAPTATIVE des sources selon le profil : un objectif purement LOCAL
+    n'inonde pas l'utilisateur de sources uniquement internationales, et inversement."""
+    local_only = _is_travail(prefs.get("objectif")) and not _vise_international(prefs)
+    out = []
+    for s in SOURCE_CATALOG:
+        if not _source_active(s):
+            continue
+        if local_only and s["scope"] == "intl":
+            continue          # visée locale : on écarte les sources 100 % internationales
+        out.append(s["url"])
+    return out
 # EURAXESS : flux RSS explicite (facultatif) d'une recherche filtrée.
 EURAXESS_RSS = os.getenv("EURAXESS_RSS", "")
 # EURAXESS API : endpoint de recherche ({q} = requête). Vide -> on tente des endpoints candidats.
@@ -2549,7 +2579,10 @@ async def fetch_rss(url: str) -> list:
 async def ingest_feeds() -> int:
     total = 0
     for url in SOURCE_FEEDS:
+        meta = _SOURCE_META.get(url, {})
         for it in await fetch_rss(url):
+            it.setdefault("type", meta.get("type", "bourse"))   # type/scope hérités de la source
+            it.setdefault("scope", meta.get("scope", "both"))
             if opp_store.add_source(it):
                 total += 1
     return total
@@ -2984,7 +3017,9 @@ async def collect(_auth: bool = Depends(verify_api_key)):
                 for key in ("mots_cles", "objectif", "pays_cibles"):
                     kws += str(prefs.get(key, "")).replace(",", " ").split()
                 kws += (profil.get("competences", {}).get("techniques", []))[:6]
-                srcs = opp_store.search_sources(kws)
+                # Filtrage adaptatif : privilégie le périmètre visé (local si job local, sinon intl).
+                prefer = None if _vise_international(prefs) else ("local" if _is_travail(prefs.get("objectif")) else None)
+                srcs = opp_store.search_sources(kws, prefer_scope=prefer)
                 comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
                 profil_txt = (f"{profil.get('resume_profil','')} | objectif: {prefs.get('objectif','')} | "
                               f"domaine: {prefs.get('mots_cles','')} | pays: {prefs.get('pays_cibles','')} | compétences: {comps}")

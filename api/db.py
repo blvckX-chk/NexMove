@@ -104,10 +104,12 @@ class OppStore:
                 pass
         con.execute("""CREATE TABLE IF NOT EXISTS sources_offres (
             id TEXT PRIMARY KEY, titre TEXT, url TEXT, resume TEXT, date TEXT, created_at TEXT)""")
-        try:
-            con.execute("ALTER TABLE sources_offres ADD COLUMN type TEXT DEFAULT 'bourse'")
-        except Exception:
-            pass
+        for ddl in ("ALTER TABLE sources_offres ADD COLUMN type TEXT DEFAULT 'bourse'",
+                    "ALTER TABLE sources_offres ADD COLUMN scope TEXT DEFAULT 'both'"):
+            try:
+                con.execute(ddl)
+            except Exception:
+                pass
         con.commit(); con.close()
 
     # ---- sources (pool global de veille) ----
@@ -117,26 +119,34 @@ class OppStore:
         try:
             if con.execute("SELECT 1 FROM sources_offres WHERE id=?", (oid,)).fetchone():
                 return False
-            con.execute("INSERT INTO sources_offres(id,titre,url,resume,date,type,created_at) VALUES(?,?,?,?,?,?,?)",
+            con.execute("INSERT INTO sources_offres(id,titre,url,resume,date,type,scope,created_at) VALUES(?,?,?,?,?,?,?,?)",
                         (oid, it.get("titre", ""), it.get("url", ""), it.get("resume", ""), it.get("date", ""),
-                         it.get("type", "bourse"), datetime.now(timezone.utc).isoformat()))
+                         it.get("type", "bourse"), it.get("scope", "both"), datetime.now(timezone.utc).isoformat()))
             con.commit(); return True
         finally:
             con.close()
 
-    def search_sources(self, keywords, limit=80):
+    def search_sources(self, keywords, limit=80, prefer_scope=None):
+        """Recherche par mots-clés dans le pool de veille.
+        `prefer_scope` ('local'/'intl') fait remonter les sources du bon périmètre (filtrage adaptatif)."""
         con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("SELECT titre,url,resume,type FROM sources_offres ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = con.execute("SELECT titre,url,resume,type,scope FROM sources_offres ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         con.close()
         kws = [str(k).lower() for k in keywords if k and len(str(k)) > 2]
         scored = []
-        for (titre, url, resume, typ) in rows:
+        for (titre, url, resume, typ, scope) in rows:
             txt = (str(titre) + " " + str(resume)).lower()
             sc = sum(1 for k in kws if k in txt)
-            if sc > 0:
-                scored.append((sc, {"titre": titre, "url": url, "resume": resume, "type": typ or "bourse"}))
+            if sc <= 0:
+                continue
+            scope = scope or "both"
+            # Bonus/malus adaptatif selon le périmètre visé par l'utilisateur.
+            if prefer_scope and scope != "both":
+                sc += 2 if scope == prefer_scope else -1
+            scored.append((sc, {"titre": titre, "url": url, "resume": resume,
+                                "type": typ or "bourse", "scope": scope}))
         scored.sort(key=lambda x: -x[0])
-        return [d for _, d in scored[:10]]
+        return [d for sc, d in scored[:10] if sc > 0]
 
     # ---- candidatures (dossiers suivis) ----
     def add_candidature(self, user_id, cible, deadline="", deadline_iso=""):

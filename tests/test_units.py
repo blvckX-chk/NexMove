@@ -355,3 +355,27 @@ def test_guide_screenshot_vide_garde_fou(monkeypatch):
     session = {"user_id": "g6", "channel": "telegram", "guide_mode": True, "historique": []}
     _run(main._process_guide_screenshot(session, None, "cap.jpg"))
     assert any("illisible" in m.lower() for m in envois)
+
+
+# ------------------ Catalogue de sources + sélection adaptative (D2) ------------------
+def test_catalog_integrite():
+    for s in main.SOURCE_CATALOG:
+        assert s["scope"] in ("local", "intl", "both")
+        assert s["type"] in ("bourse", "emploi", "fellowship", "ong")
+        assert s["url"].startswith("http")
+
+def test_source_active_flag(monkeypatch):
+    monkeypatch.delenv("ENABLE_RELIEFWEB", raising=False)
+    assert main._source_active({"url": "x"}) is True                     # pas de flag -> actif
+    assert main._source_active({"url": "x", "active_env": "ENABLE_RELIEFWEB"}) is False
+    monkeypatch.setenv("ENABLE_RELIEFWEB", "1")
+    assert main._source_active({"url": "x", "active_env": "ENABLE_RELIEFWEB"}) is True
+
+def test_sources_for_profile_local_exclut_intl():
+    urls = main._sources_for_profile({"objectif": "travailler", "pays_cibles": "Bénin"})
+    assert "https://www.scholars4dev.com/feed/" not in urls   # intl exclu pour un job local
+    assert "https://opportunitydesk.org/feed/" in urls        # 'both' conservé
+
+def test_sources_for_profile_intl_garde_tout():
+    urls = main._sources_for_profile({"objectif": "étudier", "pays_cibles": "France"})
+    assert "https://www.scholars4dev.com/feed/" in urls       # intl gardé pour études à l'étranger
