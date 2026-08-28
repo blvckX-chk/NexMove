@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.32.0"
+VERSION         = "2.33.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -181,6 +181,7 @@ class MobilityRequest(BaseModel):
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
 from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
+                 analyze_screenshot_vision,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY)  # noqa: F401
 
@@ -445,7 +446,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🔎 *Trouver des opportunités*\n"
             "/veille · /mobilite <pays ou domaine>\n\n"
             "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
-            "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n\n"
+            "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n"
+            "🧭 Bloqué sur une plateforme ? /guide — envoie une *capture d'écran*, je te guide.\n\n"
             "🌍 *Autres destinations*\n"
             "/canada · /procedure <pays> (Belgique, Allemagne, Suisse, Luxembourg, Pays-Bas…)\n"
             "/eligibilite <cible> · /budget <ville>\n\n"
@@ -557,9 +559,24 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         session["_show_menu"] = True
         return AIDE_TXT, session
 
-    if low.startswith("/tuto") or low.startswith("/guide"):
+    if low.startswith("/tuto"):
         _push(session, "user", t); _push(session, "assistant", TUTO_TXT); session["derniere_activite"] = now
         return TUTO_TXT, session
+
+    if low.startswith("/guide"):
+        # Mode guidage par capture d'écran (vision) : l'utilisateur envoie des captures, on l'oriente.
+        session["guide_mode"] = True
+        session["tool_mode"] = None
+        # Contexte optionnel : /guide campus france -> aide ciblée
+        parts = t.split(maxsplit=1)
+        session["guide_context"] = parts[1].strip() if len(parts) > 1 else ""
+        msg = ("🧭 *Mode guidage activé.*\n\n"
+               "Envoie-moi une *capture d'écran* de là où tu es bloqué·e (Campus France / Études en France, "
+               "Parcoursup, Mon Master, eCandidat, un formulaire, un e-mail d'admission…) et je te dis "
+               "*quoi faire à cette étape précise*.\n\n"
+               "_Tape /annuler pour quitter le mode guidage._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
 
     if low.startswith("/campusfrance") or low.startswith("/campus"):
         try:
@@ -779,6 +796,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
     if low.startswith("/annuler") or low.startswith("/cancel"):
         _tool_clear(session.get("user_id"))
         session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
+        session["guide_mode"] = False; session.pop("guide_context", None)
         msg = "🚫 Opération annulée."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -1965,8 +1983,44 @@ async def handle_action(session, data, callback_id=None):
     await deliver_menu(session, title, opts)
     return session
 
+async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
+    """Mode /guide : analyse une capture d'écran (vision Gemini) et renvoie un guidage concret."""
+    if not img_bytes or len(img_bytes) > 20 * 1024 * 1024:
+        await deliver_text(session, "❌ Capture illisible ou trop lourde (max 20 Mo). Reprends une capture nette.")
+        return
+    fn = (filename or "capture").lower()
+    is_image = fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")) or (img_bytes[:3] in (b"\xff\xd8\xff", b"\x89PN"))
+    if not is_image:
+        await deliver_text(session, "📸 Envoie une *capture d'écran* (image JPG/PNG) de l'écran où tu es bloqué·e. "
+                                    "_Tape /annuler pour quitter le mode guidage._")
+        return
+    # Quota gratuit (option coûteuse : vision) — admin illimité.
+    ok, _ = _quota_check(session, "guide", FREE_GUIDE_DAILY)
+    if not ok:
+        await deliver_text(session, _quota_exceeded_msg("le guidage par capture d'écran"))
+        return
+    mime = "image/png" if fn.endswith(".png") else ("image/webp" if fn.endswith(".webp") else "image/jpeg")
+    try:
+        guidance = await analyze_screenshot_vision(img_bytes, mime, session.get("guide_context", ""))
+    except Exception as e:
+        logger.error(f"[guide] {e}"); guidance = ""
+    if not guidance:
+        await deliver_text(session, "😕 Je n'arrive pas à lire cette capture (ou le service vision est momentanément "
+                                    "indisponible). Reprends une capture *nette*, ou réessaie dans un instant.")
+        return
+    _quota_bump(session, "guide")
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _push(session, "assistant", guidance)
+    logger.info(f"[guide] {session.get('channel')} capture analysée")
+    await deliver_text(session, "🧭 " + guidance + "\n\n_Envoie la capture suivante, ou tape /annuler pour quitter._")
+
+
 async def process_cv(session, pdf_bytes, filename="cv.pdf"):
     uid = session.get("user_id")
+    # Mode /guide : la capture d'écran est analysée par la vision (pas comme un CV).
+    if session.get("guide_mode"):
+        await _process_guide_screenshot(session, pdf_bytes, filename)
+        return
     # Boîte à outils PDF : fusion / images->PDF (tampon) ou découpe (immédiat)
     mode = session.get("tool_mode")
     if mode in ("merge", "img2pdf"):

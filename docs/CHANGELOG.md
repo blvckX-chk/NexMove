@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.33 — Mode /guide : guidage par capture d'écran (vision) (PR-D4b)
+- **`/guide`** active un mode où l'utilisateur envoie une **capture d'écran** (Campus France / Études en
+  France, Parcoursup, Mon Master, eCandidat, formulaire, e-mail d'admission…) et reçoit un **guidage
+  concret étape par étape** — analyse par **vision Gemini** (`analyze_screenshot_vision`, `llm.py`).
+- `/guide <contexte>` (ex. `/guide campus france`) cible l'aide ; `/annuler` quitte le mode.
+- Branché sur les **quotas** (`FREE_GUIDE_DAILY`, défaut 12/jour ; admin illimité) : décompte uniquement
+  sur analyse réussie ; capture non-image → demande polie ; vision indisponible → message clair.
+- `/guide` n'est plus un alias de `/tuto` (le tuto reste sur `/tuto`).
+- **+5 tests** (activation, contexte, /annuler, non-image, vision mockée). **95/95 verts**.
+
 ## v2.32 — Quotas gratuits + admin illimité (PR-D4a)
 - **`UsageStore`** (`db.py`) : compteurs d'usage **par jour et par fonctionnalité** (table `usage`).
 - **Quota d'analyse de CV** : `FREE_CV_DAILY` (défaut **8/jour**) pour les utilisateurs gratuits — l'op la

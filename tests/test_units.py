@@ -302,3 +302,56 @@ def test_quota_limit_zero_desactive(monkeypatch):
     monkeypatch.setattr(main, "ADMIN_CHAT_ID", "")
     ok, _ = main._quota_check({"user_id": "u9", "chat_id": "9"}, "cv", 0)
     assert ok is True                             # limite 0 => pas de quota
+
+
+# ------------------ Mode /guide (guidage par capture d'écran) ------------------
+def test_cmd_guide_active_le_mode():
+    session = {"user_id": "g1", "etape": "ACTIF", "profil": {}, "historique": [],
+               "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/guide"))
+    assert session.get("guide_mode") is True
+    assert "guidage" in msg.lower() and "capture" in msg.lower()
+
+def test_cmd_guide_avec_contexte():
+    session = {"user_id": "g2", "etape": "ACTIF", "profil": {}, "historique": [],
+               "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/guide campus france"))
+    assert session.get("guide_context") == "campus france"
+
+def test_cmd_annuler_quitte_guide():
+    session = {"user_id": "g3", "etape": "ACTIF", "guide_mode": True, "profil": {},
+               "historique": [], "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/annuler"))
+    assert session.get("guide_mode") is False
+
+def test_guide_screenshot_non_image_demande_capture(monkeypatch):
+    envois = []
+    async def _fake_deliver(session, text, **kw):
+        envois.append(text)
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    session = {"user_id": "g4", "channel": "telegram", "guide_mode": True, "historique": []}
+    _run(main._process_guide_screenshot(session, b"%PDF-1.4 not an image", "doc.pdf"))
+    assert any("capture" in m.lower() for m in envois)
+
+def test_guide_screenshot_image_appelle_vision_et_decompte(monkeypatch):
+    envois = []
+    async def _fake_deliver(session, text, **kw):
+        envois.append(text)
+    async def _fake_vision(img, mime="image/jpeg", context=""):
+        return "1) Tu es sur Études en France. 2) Clique sur « Je candidate »."
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    monkeypatch.setattr(main, "analyze_screenshot_vision", _fake_vision)
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "")   # utilisateur gratuit
+    session = {"user_id": "g5", "channel": "telegram", "guide_mode": True, "historique": []}
+    _run(main._process_guide_screenshot(session, b"\xff\xd8\xff\xe0 jpeg-bytes", "cap.jpg"))
+    assert any("Études en France" in m for m in envois)
+
+
+def test_guide_screenshot_vide_garde_fou(monkeypatch):
+    envois = []
+    async def _fake_deliver(session, text, **kw):
+        envois.append(text)
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    session = {"user_id": "g6", "channel": "telegram", "guide_mode": True, "historique": []}
+    _run(main._process_guide_screenshot(session, None, "cap.jpg"))
+    assert any("illisible" in m.lower() for m in envois)

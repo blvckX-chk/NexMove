@@ -244,3 +244,43 @@ async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg") ->
     except Exception as e:
         logger.warning(f"[vision] {e}")
         return {}
+
+
+async def analyze_screenshot_vision(img_bytes: bytes, mime: str = "image/jpeg", context: str = "") -> str:
+    """Mode /guide : analyse une CAPTURE D'ÉCRAN d'une plateforme (Campus France, Parcoursup,
+    Études en France, un formulaire, un mail…) et renvoie un texte de guidage concret (étapes)."""
+    if not (GEMINI_API_KEY and _PILImage):
+        return ""
+    system = (
+        "Tu es NexMove, un conseiller en mobilité/orientation qui aide des francophones d'Afrique de "
+        "l'Ouest (Bénin…) à s'inscrire sur des plateformes (Campus France « Études en France », Parcoursup, "
+        "Mon Master, eCandidat, DAP, portails de visa, formulaires, e-mails d'admission…). "
+        "À partir de la CAPTURE D'ÉCRAN, fais 3 choses, en français, en TUTOYANT, sans blabla :\n"
+        "1) Identifie la plateforme/l'écran et OÙ en est l'utilisateur.\n"
+        "2) Explique QUOI FAIRE MAINTENANT, étape par étape (clics, champs à remplir, pièces à joindre).\n"
+        "3) Signale les pièges/erreurs visibles et le point de vigilance suivant.\n"
+        "Si l'image est illisible ou hors sujet, dis-le et demande une capture plus nette. "
+        "Réponds en texte court et actionnable (pas de JSON, pas de Markdown lourd)."
+    )
+    if context:
+        system += f"\nContexte fourni par l'utilisateur : {context[:300]}"
+    payload = {
+        "contents": [{"parts": [
+            {"text": system},
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 900},
+    }
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        r = await http().post(url, json=payload, timeout=45.0)
+        if r.status_code != 200:
+            logger.warning(f"[guide-vision] {r.status_code}: {r.text[:150]}")
+            return ""
+        cands = r.json().get("candidates") or []
+        if not cands:
+            return ""
+        return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", [])).strip()
+    except Exception as e:
+        logger.warning(f"[guide-vision] {e}")
+        return ""
