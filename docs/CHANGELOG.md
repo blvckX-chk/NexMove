@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.37 — Alertes mots-clés personnalisées `/alerte` (extra)
+- **`/alerte <mot-clé>`** : l'utilisateur enregistre ses mots-clés (max 10). `/alerte` liste, `/alerte off
+  <mot>` retire, `/alerte off` vide tout.
+- Dans `/veille`, `/mobilite` et le **digest quotidien**, les offres qui matchent une alerte **remontent en
+  tête** (+20 au score), sont **taguées 🔔** et un bandeau annonce le nombre d'offres correspondantes.
+- **+4 tests** (matching, ajout/liste/suppression, garde longueur, plafond 10). **116/116 verts**.
+
 ## v2.36 — Coach d'entretien interactif `/simulation` (extra)
 - **`/simulation`** lance un **entretien blanc** adapté au profil : *Campus France / Études en France*,
   *visa consulaire*, ou *emploi* (`/simulation visa`, `/simulation emploi`…). Le bot pose `SIM_MAX_Q`

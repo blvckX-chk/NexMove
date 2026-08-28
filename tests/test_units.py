@@ -459,3 +459,36 @@ def test_cmd_annuler_quitte_simulation():
                "historique": [], "onboarding_complete": True}
     msg, session = _run(main.process_text_message(session, "/annuler"))
     assert session.get("sim_mode") is False
+
+
+# ------------------ Alertes mots-clés personnalisées (extra) ------------------
+def test_alertes_match():
+    assert main._alertes_match({"titre": "Bourse Master Cybersécurité", "raison": ""}, ["cybersécurité"]) == "cybersécurité"
+    assert main._alertes_match({"titre": "Stage Data", "raison": "cloud AWS"}, ["cloud"]) == "cloud"
+    assert main._alertes_match({"titre": "Offre RH"}, ["data", "cloud"]) == ""
+    assert main._alertes_match({"titre": "x"}, []) == ""
+
+def test_cmd_alerte_ajout_liste_suppr():
+    session = {"user_id": "a1", "etape": "ACTIF", "profil": {}, "historique": [], "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/alerte cybersécurité"))
+    assert "ajoutée" in msg.lower() and session["alertes"] == ["cybersécurité"]
+    # doublon
+    msg, session = _run(main.process_text_message(session, "/alerte cybersécurité"))
+    assert "déjà" in msg.lower() and session["alertes"] == ["cybersécurité"]
+    # liste
+    msg, session = _run(main.process_text_message(session, "/alerte"))
+    assert "cybersécurité" in msg.lower()
+    # suppression
+    msg, session = _run(main.process_text_message(session, "/alerte off cybersécurité"))
+    assert session["alertes"] == []
+
+def test_cmd_alerte_trop_courte():
+    session = {"user_id": "a2", "etape": "ACTIF", "profil": {}, "historique": [], "onboarding_complete": True}
+    msg, session = _run(main.process_text_message(session, "/alerte x"))
+    assert "2 lettres" in msg and not session.get("alertes")
+
+def test_cmd_alerte_max_10():
+    session = {"user_id": "a3", "etape": "ACTIF", "profil": {}, "historique": [],
+               "onboarding_complete": True, "alertes": [f"kw{i}" for i in range(10)]}
+    msg, session = _run(main.process_text_message(session, "/alerte onzieme"))
+    assert "maximum" in msg.lower() and len(session["alertes"]) == 10

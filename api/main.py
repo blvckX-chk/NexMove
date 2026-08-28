@@ -93,7 +93,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.36.0"
+VERSION         = "2.37.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -245,6 +245,17 @@ def _sort_formations(formation):
 
 def _is_travail(objectif) -> bool:
     return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
+
+def _alertes_match(opp: dict, alertes) -> str:
+    """Renvoie le 1er mot-clé d'alerte présent dans l'offre, sinon ''."""
+    if not alertes:
+        return ""
+    txt = (str(opp.get("titre", "")) + " " + str(opp.get("raison", "")) + " "
+           + str(opp.get("organisation", "")) + " " + str(opp.get("type", ""))).lower()
+    for a in alertes:
+        if a and str(a).lower() in txt:
+            return a
+    return ""
 
 def _is_admin(session: dict) -> bool:
     """Vrai si la session est celle de l'administrateur (quotas illimités)."""
@@ -445,7 +456,7 @@ def valider_pref(field: str, value: str) -> tuple[bool, str]:
 
 AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🔎 *Trouver des opportunités*\n"
-            "/veille · /mobilite <pays ou domaine>\n\n"
+            "/veille · /mobilite <pays ou domaine> · 🔔 /alerte <mot-clé>\n\n"
             "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
             "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n"
             "🧭 Bloqué sur une plateforme ? /guide — envoie une *capture d'écran*, je te guide.\n\n"
@@ -1276,7 +1287,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cible = parts[1].strip() if len(parts) > 1 else ""
         try:
             seen = set(session.get("seen_urls", []))
-            res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"), exclude_urls=seen)
+            res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"),
+                                  exclude_urls=seen, alertes=session.get("alertes", []))
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
             opps = res.get("opportunites", [])
             for o in opps:
@@ -1399,12 +1411,47 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/alerte"):
+        alertes = list(session.get("alertes", []) or [])
+        parts = t.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        low_arg = arg.lower()
+        if not arg:
+            if alertes:
+                msg = ("🔔 *Tes alertes mots-clés :*\n" + "\n".join(f"• {_md_clean(a)}" for a in alertes)
+                       + "\n\nAjouter : /alerte <mot> · Retirer : /alerte off <mot>")
+            else:
+                msg = ("🔔 *Alertes mots-clés* — sois prévenu·e en priorité quand une offre contient TES mots-clés.\n\n"
+                       "Ex : /alerte cybersécurité · /alerte bourse master\nRetirer : /alerte off <mot>")
+        elif low_arg in ("off", "clear", "reset", "vider", "stop"):
+            session["alertes"] = []
+            msg = "🔕 Toutes tes alertes ont été retirées."
+        elif low_arg.split(maxsplit=1)[0] in ("off", "supprimer", "retirer", "stop", "-"):
+            cible = arg.split(maxsplit=1)[1].strip().lower() if len(arg.split(maxsplit=1)) > 1 else ""
+            alertes = [a for a in alertes if a.lower() != cible]
+            session["alertes"] = alertes
+            msg = f"🔕 Alerte « {_md_clean(cible)} » retirée." if cible else "Précise le mot à retirer : /alerte off <mot>."
+        else:
+            kw = arg.strip()
+            if len(kw) < 2:
+                msg = "Donne un mot-clé d'au moins 2 lettres (ex : /alerte data)."
+            elif kw.lower() in [a.lower() for a in alertes]:
+                msg = f"🔔 « {_md_clean(kw)} » est déjà dans tes alertes."
+            elif len(alertes) >= 10:
+                msg = "⚠️ Maximum 10 alertes. Retires-en une : /alerte off <mot>."
+            else:
+                alertes.append(kw); session["alertes"] = alertes
+                msg = f"🔔 Alerte ajoutée : « {_md_clean(kw)} ». Je te la signalerai en priorité dans /veille et le digest."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/veille"):
         if not session.get("onboarding_complete"):
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
         else:
             try:
-                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"),
+                                      alertes=session.get("alertes", []))
                 new = 0
                 for opp in res.get("opportunites", []):
                     if opp_store.add(session.get("user_id"), opp):
@@ -3036,9 +3083,10 @@ def _attach_feedback(session, opps):
         session["last_offers"] = lo
         session["_feedback_kb"] = kb
 
-async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None) -> dict:
+async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None) -> dict:
     profil = profil or {}
     exclude_urls = exclude_urls or set()
+    alertes = alertes or []
     prefs = profil.get("preferences", {}) or {}
     nationalite = prefs.get("nationalite") or "béninoise"
     financement = prefs.get("financement") or "non précisé"
@@ -3166,9 +3214,22 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
     opps = [o for o in opps if _open(o)]
     if exclude_urls:   # anti-doublons entre deux /mobilite d'affilée
         opps = [o for o in opps if str(o.get("url", "") or o.get("portail_officiel", "")) not in exclude_urls]
+    # Alertes mots-clés : les offres qui matchent remontent en tête + tag 🔔.
+    n_alertes = 0
+    if alertes and opps:
+        for o in opps:
+            kw = _alertes_match(o, alertes)
+            if kw:
+                n_alertes += 1
+                o["score_composite"] = min(100, (o.get("score_composite") or 0) + 20)
+                r = str(o.get("raison", "") or "")
+                o["raison"] = f"🔔 correspond à ton alerte « {kw} ». " + r
+        opps.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
     titre_aff = _md_clean(domaine)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
     msg = f"🌍 *NexMove — {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
+    if n_alertes:
+        msg += f"🔔 *{n_alertes} offre(s) correspondent à tes alertes !*\n"
     if pays_detecte:
         msg += f"🗺️ Visa {pays_detecte} : {visa_info['facilite']}/100, ~{visa_info['delai']}j\n\n"
     for i, opp in enumerate(opps[:5], 1):
@@ -3216,7 +3277,7 @@ async def collect(_auth: bool = Depends(verify_api_key)):
             prefs = profil.get("preferences", {}) or {}
             if COLLECT_OSINT_PER_USER:
                 try:
-                    res = await run_osint(profil, "", s.get("user_id"))
+                    res = await run_osint(profil, "", s.get("user_id"), alertes=s.get("alertes", []))
                     for opp in res.get("opportunites", []):
                         if opp_store.add(s.get("user_id"), opp):
                             n += 1
