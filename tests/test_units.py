@@ -533,3 +533,63 @@ def test_cmd_timeline_genere_png(monkeypatch):
     if main._PIL_OK:
         assert envois and envois[0][0].endswith(".png")
         assert envois[0][1][:4] == b"\x89PNG"
+
+
+# ------------------ Accueil moins rigide + parcours sans CV (extra) ------------------
+def test_pitch_question_detecte():
+    assert main._is_pitch_question("à quoi tu sers")
+    assert main._is_pitch_question("explique moi à quoi tu sers")
+    assert main._is_pitch_question("bonjour")
+    assert main._is_pitch_question("c'est quoi ce bot")
+    assert not main._is_pitch_question("trouve moi un stage")
+
+def test_wants_no_cv_detecte():
+    assert main._wants_no_cv("je n'ai pas de cv")
+    assert main._wants_no_cv("je veux créer un cv")
+    assert main._wants_no_cv("pas encore de cv")
+    assert not main._wants_no_cv("voici mon cv")
+
+def test_accueil_repond_avant_de_demander_cv():
+    """« à quoi tu sers » AVANT l'onboarding -> on explique, on ne renvoie pas juste « envoie ton CV »."""
+    session = {"user_id": "p1", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "explique moi à quoi tu sers"))
+    assert "opportunités" in msg.lower() or "orientation" in msg.lower()
+    assert "NexMove" in msg
+
+def test_message_accueil_mentionne_creercv():
+    session = {"user_id": "p2", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
+               "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "je ne sais pas trop"))
+    assert "/creercv" in msg
+
+def test_flux_creercv_complet(monkeypatch):
+    # LLM + génération PDF + livraison stubbés (hors réseau/rendu).
+    async def _fake_groq(system, prompt, temperature=0.2, max_tokens=1000, json_mode=True, **kw):
+        return {"est_cv": True, "identite": {"nom": "Judicael Doe"},
+                "formation": [{"diplome": "Licence Informatique", "etablissement": "UAC"}],
+                "experience": [], "competences": {"techniques": ["python", "réseaux"]},
+                "resume_profil": "Étudiant en informatique."}
+    envois = []
+    async def _fake_deliver_file(session, name, data, caption=""):
+        envois.append(name); return True
+    monkeypatch.setattr(main, "call_groq", _fake_groq)
+    monkeypatch.setattr(main, "deliver_file", _fake_deliver_file)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    session = {"user_id": "cvb1", "channel": "telegram", "etape": "ATTENTE_CV", "profil": {},
+               "historique": [], "onboarding_complete": False}
+    # Déclenche via « je n'ai pas de cv »
+    msg, session = _run(main.process_text_message(session, "je n'ai pas de cv"))
+    assert session["etape"] == "CVBUILD" and "prénom" in msg.lower()
+    for rep in ["Judicael Doe", "Licence info UAC 2024", "aucune", "python, réseaux", "français natif"]:
+        msg, session = _run(main.process_text_message(session, rep))
+    # Fin : profil créé, CV livré, on passe en CV_RECU
+    assert session["etape"] == "CV_RECU"
+    assert session["profil"]["identite"]["nom"] == "Judicael Doe"
+    assert any(n.endswith(".pdf") for n in envois)
+
+def test_creercv_annulable():
+    session = {"user_id": "cvb2", "etape": "CVBUILD", "cvbuild_step": 1, "cvbuild_data": {"nom": "X"},
+               "historique": [], "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "/annuler"))
+    assert session["etape"] == "ATTENTE_CV"

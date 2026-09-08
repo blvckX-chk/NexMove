@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.38.0"
+VERSION         = "2.39.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -553,6 +553,101 @@ def _resume_prefs(prefs):
             + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
 
+# ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
+_WELCOME_PITCH = (
+    "🧭 *NexMove, c'est quoi ?*\n"
+    "Je suis ton assistant IA de *mobilité et d'orientation* (Afrique de l'Ouest & international). Concrètement :\n"
+    "• 🔎 je trouve de *vraies* opportunités — emplois, stages, bourses, fellowships — *locales et à l'étranger* ;\n"
+    "• 🎓 je t'accompagne *pas à pas* (études en France/Campus France, Canada, visa…) ;\n"
+    "• 📄 je prépare tes *dossiers* : CV, lettre de motivation, projet d'études ;\n"
+    "• 🧭 je te *guide* sur les plateformes (/guide + capture d'écran) et t'entraîne aux *entretiens* (/simulation).\n\n"
+    "👉 Pour des conseils *personnalisés*, envoie-moi ton *CV* (PDF, Word ou image).\n"
+    "📝 *Pas encore de CV ?* Écris « je n'ai pas de CV » (ou /creercv) — je t'en crée un en 5 questions."
+)
+
+def _is_pitch_question(low: str) -> bool:
+    """Question d'ouverture / salutation à laquelle on répond AVANT de demander le CV."""
+    low = (low or "").strip()
+    if low in ("bonjour", "bonsoir", "salut", "hello", "hi", "hey", "coucou", "cc", "yo", "slt"):
+        return True
+    return any(k in low for k in (
+        "à quoi tu sers", "a quoi tu sers", "quoi tu sers", "à quoi ça sert", "a quoi ca sert",
+        "que fais-tu", "que fais tu", "tu fais quoi", "qu'est-ce que tu fais", "quest ce que tu fais",
+        "c'est quoi", "cest quoi", "qui es-tu", "qui es tu", "qui est tu", "t'es qui", "tes qui",
+        "comment ça marche", "comment ca marche", "comment tu marches", "explique", "présente",
+        "presente", "tu peux faire quoi", "tu sais faire quoi", "ton rôle", "ton role"))
+
+def _wants_no_cv(low: str) -> bool:
+    """L'utilisateur signale qu'il n'a pas de CV / veut en créer un."""
+    low = (low or "").strip()
+    return any(k in low for k in (
+        "pas de cv", "pas encore de cv", "aucun cv", "sans cv", "j'ai pas de cv", "jai pas de cv",
+        "n'ai pas de cv", "nai pas de cv", "pas de curriculum", "créer un cv", "creer un cv",
+        "faire un cv", "fabriquer un cv", "construire un cv", "génère un cv", "genere un cv",
+        "je n'ai pas de cv", "je nai pas de cv"))
+
+# ── Création de CV guidée (pour ceux qui n'ont pas de CV) ──
+CVBUILD_STEPS = [
+    ("nom",         "👤 Comment t'appelles-tu ? (*prénom et nom*)"),
+    ("formation",   "🎓 Ton *dernier diplôme* (ou celui en cours) ? Précise le domaine, l'établissement et l'année.\n_ex : Licence informatique, UAC Cotonou, 2024_"),
+    ("experience",  "💼 As-tu des *expériences, stages ou projets* ? Décris-les brièvement.\n_(tape « aucune » si tu débutes)_"),
+    ("competences", "🛠️ Tes *compétences principales* ? _(ex : Python, réseaux, gestion de projet — séparées par des virgules)_"),
+    ("langues",     "🌐 Quelles *langues* parles-tu et à quel niveau ? _(ex : français natif, anglais B2)_"),
+]
+
+async def _cvbuild_start(session: dict) -> tuple[str, dict]:
+    session["etape"] = "CVBUILD"
+    session["cvbuild_step"] = 0
+    session["cvbuild_data"] = {}
+    session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
+    msg = ("📝 *Créons ton CV ensemble* — 5 petites questions, puis je te génère un CV et j'analyse ton profil.\n"
+           "_Tape /annuler pour arrêter._\n\n" + CVBUILD_STEPS[0][1])
+    _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
+
+async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
+    data = session.get("cvbuild_data", {}) or {}
+    raw = "\n".join(f"{k}: {v}" for k, v in data.items())
+    profil = {}
+    try:
+        system = ("Tu es expert CV. À partir des infos d'un utilisateur SANS CV, construis un profil "
+                  "structuré RÉALISTE (n'invente pas d'expérience) + un bilan d'orientation court. "
+                  "est_cv=true. Réponds en JSON strict, uniquement le JSON.")
+        schema = ('{"est_cv":true,"identite":{"nom":"","email":"","telephone":"","localisation":"","langues":[]},'
+                  '"formation":[{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}],'
+                  '"experience":[{"poste":"","organisation":"","type":"","duree":"","missions":[]}],'
+                  '"competences":{"techniques":[],"outils":[],"soft_skills":[]},'
+                  '"bilan":{"forces":["..."],"axes":["..."],"pistes":["..."]},"niveau_global":"junior|mid|senior","resume_profil":""}')
+        profil = await call_groq(system, f"Infos utilisateur :\n{raw}\n\nSchéma JSON attendu : {schema}",
+                                 temperature=0.2, max_tokens=1500)
+    except Exception as e:
+        logger.error(f"[cvbuild] structuration: {e}")
+    if not isinstance(profil, dict) or not (profil.get("identite") or {}).get("nom"):
+        profil = {"identite": {"nom": data.get("nom", "").strip() or "Candidat"},
+                  "formation": [{"diplome": data.get("formation", "")}] if data.get("formation") else [],
+                  "experience": [], "resume_profil": raw[:200],
+                  "competences": {"techniques": [c.strip() for c in data.get("competences", "").split(",") if c.strip()]}}
+    profil["formation"] = _sort_formations(profil.get("formation"))
+    session["profil"] = profil
+    session["cv_parsed"] = True
+    _quota_bump(session, "cv")
+    session["etape"] = "CV_RECU"
+    nom = (profil.get("identite") or {}).get("nom") or data.get("nom") or "Candidat"
+    try:
+        comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
+        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps)
+        await deliver_file(session, f"CV_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV généré par NexMove")
+    except Exception as e:
+        logger.error(f"[cvbuild] pdf: {e}")
+    recap = (f"✅ *Profil créé* pour *{_md_clean(nom)}* — je t'ai généré un CV ci-dessus "
+             "(tu pourras l'adapter à chaque candidature avec /postuler).\n\n"
+             "On continue avec tes préférences ? Réponds *Oui* 👇 (ou envoie un vrai CV pour l'affiner).")
+    session["_kb_options"] = [("✅ Oui, continuer", "onb:oui"), ("🔄 Recommencer", "onb:reset")]
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _push(session, "assistant", recap)
+    return recap, session
+
+
 # ── /simulation : coach d'entretien interactif ──
 _SIM_TYPES = {
     "campus": ("entretien Campus France / Études en France",
@@ -697,7 +792,8 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
                "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil.\n"
                "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
                "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
-               "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*  (ou tape /tuto pour le guide)")
+               "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*\n"
+               "📝 Pas encore de CV ? Tape /creercv — je t'en crée un. (ou /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -724,6 +820,10 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
                "_Tape /annuler pour quitter le mode guidage._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
+
+    if low.startswith("/creercv") or low.startswith("/creer-cv") or low.startswith("/sanscv") or low.startswith("/nouveaucv"):
+        _push(session, "user", t)
+        return await _cvbuild_start(session)
 
     if low.startswith("/simulation") or low.startswith("/simuler") or low.startswith("/entrainement"):
         if not session.get("onboarding_complete"):
@@ -973,6 +1073,8 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
         session["guide_mode"] = False; session.pop("guide_context", None)
         session["sim_mode"] = False
+        if session.get("etape") == "CVBUILD":
+            session["etape"] = "ATTENTE_CV"
         msg = "🚫 Opération annulée."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -1560,6 +1662,27 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 
     etape = session.get("etape", "WELCOME")
 
+    if etape == "CVBUILD":
+        step = session.get("cvbuild_step", 0)
+        data = session.get("cvbuild_data", {}) or {}
+        if 0 <= step < len(CVBUILD_STEPS):
+            field = CVBUILD_STEPS[step][0]
+            val = t.strip()
+            if val.lower().startswith("/") or len(val) < 2:
+                _push(session, "user", t)
+                q = "🤔 Réponds à la question (sans commande).\n\n" + CVBUILD_STEPS[step][1]
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            data[field] = val
+            session["cvbuild_data"] = data
+        _push(session, "user", t)
+        step += 1; session["cvbuild_step"] = step
+        if step < len(CVBUILD_STEPS):
+            q = CVBUILD_STEPS[step][1]
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        return await _cvbuild_finish(session)
+
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"
         q = _ask_pref(session, "objectif")
@@ -1672,20 +1795,30 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    # Pas encore onboardé : réponse déterministe (pas de LLM bavard qui re-salue / vouvoie / redemande le CV)
+    # Pas encore onboardé : on reste utile SANS être rigide (on répond avant de réclamer le CV)
     if not session.get("onboarding_complete"):
+        # 1) « Je n'ai pas de CV » -> on lance la création guidée
+        if _wants_no_cv(low):
+            _push(session, "user", t)
+            return await _cvbuild_start(session)
+        # 2) Question d'ouverture / salutation -> on explique ce qu'on fait AVANT de demander le CV
+        if _is_pitch_question(low):
+            _push(session, "user", t)
+            _push(session, "assistant", _WELCOME_PITCH); session["derniere_activite"] = now
+            return _WELCOME_PITCH, session
         _push(session, "user", t)
-        # Intention forte exprimée AVANT la fin de l'onboarding : on ne la perd pas, on la
-        # mémorise pour la déclencher automatiquement une fois le profil prêt.
+        # 3) Intention forte exprimée AVANT la fin de l'onboarding : mémorisée pour plus tard.
         intent_cmd = _free_text_to_command(low, t)
         if intent_cmd and len(t) > 3:
             session["pending_intent"] = intent_cmd
             msg = ("📌 Noté — *je m'en occupe dès que ton profil est prêt*.\n\n"
-                   "Envoie-moi d'abord ton *CV (PDF, Word ou image)* pour que je personnalise mes réponses. "
-                   "Besoin d'un guide ? Tape /tuto.")
+                   "Envoie-moi d'abord ton *CV (PDF, Word ou image)* pour que je personnalise mes réponses.\n"
+                   "📝 Pas encore de CV ? Tape /creercv — je t'en crée un.")
         else:
-            msg = ("📄 Pour démarrer, envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil et je te fais un bilan "
-                   "d'orientation. Besoin d'un guide ? Tape /tuto.")
+            msg = ("📄 Pour des conseils *personnalisés*, envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton "
+                   "profil et je te fais un bilan d'orientation.\n"
+                   "📝 *Pas encore de CV ?* Tape /creercv — je t'en crée un en 5 questions.\n"
+                   "❓ Tu veux d'abord savoir ce que je fais ? Écris « à quoi tu sers ».")
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

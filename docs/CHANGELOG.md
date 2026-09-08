@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.39 — Accueil moins rigide + création de CV guidée (conversation)
+- **Début moins rigide** : à une question d'ouverture (« à quoi tu sers », « c'est quoi », salutation…),
+  le bot **explique ce qu'il fait** (pitch) au lieu de répondre seulement « envoie ton CV ». Le message
+  d'accueil propose désormais 3 chemins : envoyer un CV · en créer un · demander ce que fait NexMove.
+- **Parcours sans CV** : « je n'ai pas de CV » ou **`/creercv`** lance une **création guidée** — 5 questions
+  adaptatives (nom, formation, expériences, compétences, langues) → NexMove **structure le profil** (LLM),
+  **génère un CV PDF** et enchaîne sur les préférences. `/annuler` sort proprement.
+- **+8 tests** (détection pitch/no-CV, réponse avant CV, mention `/creercv`, flux `/creercv` complet mocké,
+  annulation). **127/127 verts**.
+
 ## v2.38 — Feuille de route visuelle `/timeline` (PNG) (extra)
 - **`/timeline`** (alias `/planning`, `/feuille`) génère une **image PNG** de la feuille de route de
   l'utilisateur : étapes Campus France ✅ faites / 🟠 en cours / ⚪ à venir, avec ses **échéances** de dossiers.
