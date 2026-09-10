@@ -448,6 +448,7 @@ def test_flux_simulation_complet(monkeypatch):
     monkeypatch.setattr(main, "SIM_MAX_Q", 3)
     session = {"user_id": "s1", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}},
                "historique": [], "onboarding_complete": True}
+    main._apply_premium(session, "premium", 30)   # premium => /simulation illimité (pas de quota)
     msg, session = _run(main.process_text_message(session, "/simulation campus france"))
     assert session.get("sim_mode") is True and "❓" in msg
     # 3 réponses -> à la 3e, bilan + fin de simulation
@@ -489,11 +490,20 @@ def test_cmd_alerte_trop_courte():
     msg, session = _run(main.process_text_message(session, "/alerte x"))
     assert "2 lettres" in msg and not session.get("alertes")
 
-def test_cmd_alerte_max_10():
+def test_cmd_alerte_cap_premium_10():
+    # Premium : plafond à 10 alertes.
     session = {"user_id": "a3", "etape": "ACTIF", "profil": {}, "historique": [],
                "onboarding_complete": True, "alertes": [f"kw{i}" for i in range(10)]}
+    main._apply_premium(session, "premium", 30)
     msg, session = _run(main.process_text_message(session, "/alerte onzieme"))
-    assert "maximum" in msg.lower() and len(session["alertes"]) == 10
+    assert "limite atteinte" in msg.lower() and len(session["alertes"]) == 10
+
+def test_cmd_alerte_cap_free_1():
+    # Gratuit : plafond à 1 alerte, message d'upsell.
+    session = {"user_id": "a4", "chat_id": "7", "etape": "ACTIF", "profil": {}, "historique": [],
+               "onboarding_complete": True, "alertes": ["cybersécurité"]}
+    msg, session = _run(main.process_text_message(session, "/alerte cloud"))
+    assert "limite atteinte" in msg.lower() and len(session["alertes"]) == 1
 
 
 # ------------------ Feuille de route visuelle PNG (extra) ------------------
@@ -593,3 +603,60 @@ def test_creercv_annulable():
                "historique": [], "onboarding_complete": False}
     msg, session = _run(main.process_text_message(session, "/annuler"))
     assert session["etape"] == "ATTENTE_CV"
+
+
+# ------------------ Abonnement premium : tiers, quotas, activation (extra) ------------------
+def test_apply_premium_et_tier():
+    s = {"user_id": "prem1", "chat_id": "9"}
+    exp = main._apply_premium(s, "premium", 30)
+    assert s["premium_tier"] == "premium" and s["premium_until"] == exp
+    assert main._user_tier(s) == "premium" and main._is_premium(s)
+
+def test_premium_expire_retombe_en_free():
+    from datetime import datetime, timezone, timedelta
+    s = {"user_id": "prem2", "chat_id": "9",
+         "premium_tier": "premium",
+         "premium_until": (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()}
+    assert main._user_tier(s) == "free" and not main._is_premium(s)
+
+def test_premium_prolonge_sur_temps_restant():
+    from datetime import datetime, timezone
+    s = {"user_id": "prem3"}
+    exp1 = main._apply_premium(s, "premium", 30)
+    exp2 = main._apply_premium(s, "premium", 30)   # empile
+    d1 = datetime.fromisoformat(exp1); d2 = datetime.fromisoformat(exp2)
+    assert (d2 - d1).days >= 29
+
+def test_quota_premium_illimite(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "")
+    s = {"user_id": "prem4", "chat_id": "7"}
+    main._apply_premium(s, "premium", 30)
+    ok, restant = main._quota_check(s, "cv", 1)
+    assert ok and restant == 999          # premium jamais bloqué
+
+def test_cmd_premium_active_un_code(monkeypatch):
+    # Redeem stubbé pour ne pas toucher la vraie base premium.
+    monkeypatch.setattr(main.premium_store, "redeem", lambda code, uid: {"ok": True, "tier": "premium", "days": 30})
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    s = {"user_id": "prem5", "channel": "telegram", "etape": "ACTIF", "profil": {},
+         "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/premium PRM-ABCDEFGH"))
+    assert "activé" in msg.lower() and main._is_premium(s)
+
+def test_cmd_premium_code_invalide(monkeypatch):
+    monkeypatch.setattr(main.premium_store, "redeem", lambda code, uid: {"ok": False, "reason": "introuvable"})
+    s = {"user_id": "prem6", "channel": "telegram", "etape": "ACTIF", "profil": {},
+         "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/premium PRM-XXXX"))
+    assert "impossible" in msg.lower() and not main._is_premium(s)
+
+def test_cmd_gencodes_reserve_admin(monkeypatch):
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/gencodes premium 30 5"))
+    assert "administrateur" in msg.lower()
+
+def test_cmd_monabo_free():
+    s = {"user_id": "prem7", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/monabo"))
+    assert "gratuit" in msg.lower()

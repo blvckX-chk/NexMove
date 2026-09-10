@@ -401,6 +401,75 @@ class UsageStore:
         return int(n)
 
 
+class PremiumStore:
+    """Codes d'abonnement premium : générés en lots (vendus sur Chariow), activés via /premium.
+    Un code = un tier (premium/pro/vip) + une durée en jours ; usage unique."""
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS premium_codes (
+            code TEXT PRIMARY KEY, tier TEXT, days INTEGER, batch TEXT,
+            status TEXT DEFAULT 'unused', used_by TEXT, used_at TEXT, created_at TEXT)""")
+        con.commit(); con.close()
+
+    def _fresh_code(self, con) -> str:
+        for _ in range(10):
+            code = "PRM-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+            if not con.execute("SELECT 1 FROM premium_codes WHERE code=?", (code,)).fetchone():
+                return code
+        return "PRM-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(10))
+
+    def create_codes(self, tier: str, days: int, count: int, batch: str = "") -> list:
+        now = datetime.now(timezone.utc).isoformat()
+        out = []
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            for _ in range(max(1, int(count))):
+                code = self._fresh_code(con)
+                con.execute("INSERT INTO premium_codes(code,tier,days,batch,status,created_at) VALUES(?,?,?,?, 'unused', ?)",
+                            (code, tier, int(days), batch or now[:10], now))
+                out.append(code)
+            con.commit()
+        finally:
+            con.close()
+        return out
+
+    def info(self, code: str) -> Optional[dict]:
+        code = (code or "").strip().upper()
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT code,tier,days,status,used_by,used_at FROM premium_codes WHERE code=?", (code,)).fetchone()
+        con.close()
+        if not row:
+            return None
+        return {"code": row[0], "tier": row[1], "days": int(row[2] or 0), "status": row[3],
+                "used_by": row[4], "used_at": row[5]}
+
+    def redeem(self, code: str, user_id: str) -> dict:
+        """Consomme un code (usage unique). Renvoie {ok, tier, days} ou {ok:False, reason}."""
+        code = (code or "").strip().upper()
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT tier,days,status FROM premium_codes WHERE code=?", (code,)).fetchone()
+            if not row:
+                return {"ok": False, "reason": "introuvable"}
+            if row[2] == "used":
+                return {"ok": False, "reason": "déjà utilisé"}
+            con.execute("UPDATE premium_codes SET status='used', used_by=?, used_at=? WHERE code=? AND status='unused'",
+                        (str(user_id), datetime.now(timezone.utc).isoformat(), code))
+            if con.total_changes == 0:      # course : consommé entre-temps
+                return {"ok": False, "reason": "déjà utilisé"}
+            con.commit()
+            return {"ok": True, "tier": row[0], "days": int(row[1] or 0)}
+        finally:
+            con.close()
+
+    def stats(self) -> dict:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT status, COUNT(*) FROM premium_codes GROUP BY status").fetchall()
+        con.close()
+        return {s: int(n) for s, n in rows}
+
+
 class Cache:
     """Cache TTL sur SQLite (utilisé pour Tavily 6 h et embeddings 7 j)."""
     def __init__(self, path: str = DB_PATH):
@@ -434,4 +503,5 @@ opp_store._ensure_feedback()
 opp_store._ensure_contacts()
 profile_store = ProfileStore()
 usage_store = UsageStore()
+premium_store = PremiumStore()
 cache = Cache()

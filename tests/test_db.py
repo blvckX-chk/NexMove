@@ -192,3 +192,35 @@ def test_source_default_scope_both(tmp_path, monkeypatch):
     st.add_source({"titre": "Offre data", "url": "https://x/d", "resume": "data", "type": "emploi"})
     res = st.search_sources(["data"], prefer_scope="local")
     assert res and res[0]["scope"] == "both"    # 'both' jamais pénalisé
+
+
+# ------------------ PremiumStore : codes d'abonnement ------------------
+def test_premium_create_and_redeem(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.PremiumStore()
+    codes = ps.create_codes("premium", 30, 3, batch="test")
+    assert len(codes) == 3 and all(c.startswith("PRM-") for c in codes)
+    r = ps.redeem(codes[0], "u1")
+    assert r["ok"] and r["tier"] == "premium" and r["days"] == 30
+
+def test_premium_code_usage_unique(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.PremiumStore()
+    code = ps.create_codes("pro", 90, 1)[0]
+    assert ps.redeem(code, "u1")["ok"] is True
+    r2 = ps.redeem(code, "u2")            # 2e usage refusé
+    assert r2["ok"] is False and r2["reason"] == "déjà utilisé"
+
+def test_premium_code_inconnu(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.PremiumStore()
+    r = ps.redeem("PRM-ZZZZZZZZ", "u1")
+    assert r["ok"] is False and r["reason"] == "introuvable"
+
+def test_premium_stats(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ps = db.PremiumStore()
+    codes = ps.create_codes("premium", 30, 2)
+    ps.redeem(codes[0], "u1")
+    st = ps.stats()
+    assert st.get("used") == 1 and st.get("unused") == 1

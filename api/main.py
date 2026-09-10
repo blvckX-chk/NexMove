@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.39.0"
+VERSION         = "2.40.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -109,7 +109,12 @@ ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # ton chat_id Telegram (@
 # Quotas journaliers des utilisateurs GRATUITS pour les options coûteuses (l'admin est illimité).
 FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
 FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
+FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
+# Tiers payants : plafond d'alertes mots-clés par niveau (l'illimité = grand nombre).
+ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999}
+_PREMIUM_TIERS = ("premium", "pro", "vip")
+_TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin"}
 CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
 CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
 CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
@@ -193,7 +198,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
-                profile_store, profile_quality, usage_store)
+                profile_store, profile_quality, usage_store, premium_store)
 
 
 # (Embeddings/vision : voir llm.py — PR-B)
@@ -268,19 +273,53 @@ def _is_admin(session: dict) -> bool:
         return False
     return str(ADMIN_CHAT_ID) in (str(session.get("chat_id") or ""), str(session.get("user_id") or ""))
 
+def _user_tier(session: dict) -> str:
+    """Niveau effectif : admin > (premium/pro/vip si abonnement en cours) > free."""
+    if _is_admin(session):
+        return "admin"
+    exp = session.get("premium_until")
+    if exp:
+        try:
+            if datetime.fromisoformat(exp) > datetime.now(timezone.utc):
+                tier = session.get("premium_tier", "premium")
+                return tier if tier in _PREMIUM_TIERS else "premium"
+        except Exception:
+            pass
+    return "free"
+
+def _is_premium(session: dict) -> bool:
+    return _user_tier(session) in ("admin",) + _PREMIUM_TIERS
+
 def _quota_check(session: dict, feature: str, limit: int) -> tuple[bool, int]:
-    """(autorisé, restant). L'admin est toujours autorisé et n'est pas décompté."""
-    if _is_admin(session) or limit <= 0:
+    """(autorisé, restant). Admin & abonnés premium : toujours autorisés, non décomptés."""
+    if _is_premium(session) or limit <= 0:
         return True, 999
     used = usage_store.count(session.get("user_id"), feature)
     return used < limit, max(0, limit - used)
 
 def _quota_bump(session: dict, feature: str) -> None:
-    if not _is_admin(session):
+    if not _is_premium(session):
         try:
             usage_store.bump(session.get("user_id"), feature)
         except Exception as e:
             logger.error(f"quota bump {feature}: {e}")
+
+def _apply_premium(session: dict, tier: str, days: int) -> str:
+    """Active/prolonge un abonnement. Empile sur le temps restant si encore actif. Renvoie l'échéance ISO."""
+    now = datetime.now(timezone.utc)
+    base = now
+    exp = session.get("premium_until")
+    if exp and session.get("premium_tier") == tier:
+        try:
+            cur = datetime.fromisoformat(exp)
+            if cur > now:
+                base = cur          # prolongation
+        except Exception:
+            pass
+    new_exp = (base + timedelta(days=int(days))).isoformat()
+    session["premium_tier"] = tier
+    session["premium_until"] = new_exp
+    return new_exp
 
 def _quota_exceeded_msg(feature_label: str) -> str:
     return (f"🚦 Tu as atteint ta *limite gratuite du jour* pour {feature_label}.\n\n"
@@ -475,7 +514,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
-            "/profil · /moncode (sauvegarde) · /moi <code> (restaurer) · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
+            "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
+            "💎 /offres (abonnements) · /premium <code> (activer) · /monabo (mon statut)\n"
             "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
@@ -830,6 +870,13 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             msg = "📄 Fais d'abord /start et envoie ton CV — la simulation s'adapte à ton profil."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
+        ok, _ = _quota_check(session, "sim", FREE_SIM_DAILY)
+        if not ok:
+            msg = (_quota_exceeded_msg("les simulations d'entretien")
+                   + "\n\n💎 Les abonnés ont les simulations *illimitées* — tape /offres.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        _quota_bump(session, "sim")
         parts = t.split(maxsplit=1)
         arg = parts[1].strip() if len(parts) > 1 else ""
         _push(session, "user", t)
@@ -1341,6 +1388,79 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/premium") or low.startswith("/activer") or low.startswith("/code"):
+        parts = t.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else ""
+        if not code:
+            msg = ("💎 *Activer un abonnement*\nTape */premium TON-CODE* (le code reçu après ton achat).\n\n"
+                   "Pas encore d'abonnement ? Tape /offres pour voir les formules.")
+        else:
+            r = premium_store.redeem(code, session.get("user_id"))
+            if not r.get("ok"):
+                raison = {"introuvable": "ce code n'existe pas", "déjà utilisé": "ce code a déjà été utilisé"}.get(
+                    r.get("reason"), r.get("reason", "code invalide"))
+                msg = f"❌ Activation impossible : {raison}. Vérifie le code (format PRM-XXXXXXXX) ou contacte-nous via /contact."
+            else:
+                tier = r["tier"]; days = r["days"]
+                exp = _apply_premium(session, tier, days)
+                session_manager.set(session.get("user_id"), session)   # persiste l'abonnement
+                exp_j = exp[:10]
+                msg = (f"✅ *Abonnement {_TIER_LABEL.get(tier, tier)} activé !* 🎉\n"
+                       f"Valable jusqu'au *{exp_j}* ({days} jours).\n\n"
+                       "Tu as maintenant l'accès *illimité* (CV, /guide, /simulation) et les alertes étendues.\n"
+                       "Tape /monabo pour ton statut à tout moment.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/monabo") or low.startswith("/monabonnement") or low.startswith("/statut"):
+        tier = _user_tier(session)
+        if tier == "admin":
+            msg = "👑 *Statut : Admin* — accès illimité."
+        elif tier in _PREMIUM_TIERS:
+            exp = session.get("premium_until", "")[:10]
+            msg = (f"💎 *Abonnement {_TIER_LABEL.get(tier, tier)}* — actif jusqu'au *{exp}*.\n"
+                   "Accès illimité (CV, /guide, /simulation) + alertes étendues.\n"
+                   "_Pense à réactiver un code avant l'échéance pour ne pas perdre l'accès._")
+        else:
+            msg = ("🆓 *Statut : Gratuit.*\nTu profites des bases (1 CV/jour, veille à la demande, 1 alerte…).\n\n"
+                   "💎 Passe en Premium pour l'illimité : tape /offres, puis active ton code avec /premium.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/offres") or low.startswith("/tarifs") or low.startswith("/abonnement"):
+        msg = ("💎 *Passe au niveau supérieur*\n\n"
+               "*Premium* — CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
+               "*Pro* — tout Premium + sources premium, alertes illimitées, relecture.\n\n"
+               "👉 Récupère ton code d'activation, puis tape */premium TON-CODE*.\n"
+               "Besoin d'aide pour t'abonner ? Tape /contact.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/gencodes"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split()
+        tier = parts[1].lower() if len(parts) > 1 else ""
+        days = int(re.sub(r"[^0-9]", "", parts[2]) or 0) if len(parts) > 2 else 0
+        count = int(re.sub(r"[^0-9]", "", parts[3]) or 0) if len(parts) > 3 else 0
+        if tier not in _PREMIUM_TIERS or days <= 0 or not (1 <= count <= 500):
+            msg = ("🧰 *Génération de codes* (admin)\n`/gencodes <premium|pro|vip> <jours> <nombre>`\n"
+                   "Ex : `/gencodes premium 30 50` → 50 codes Premium de 30 jours.\n"
+                   f"État actuel : {premium_store.stats()}")
+        else:
+            codes = premium_store.create_codes(tier, days, count, batch=now[:10])
+            entete = f"{len(codes)} codes {tier} / {days} j :"
+            if len(codes) <= 25:
+                msg = f"✅ {entete}\n" + "\n".join(f"`{c}`" for c in codes)
+            else:
+                data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
+                await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
+                msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/moncode"):
         code = session.get("recovery_code") or profile_store.code_for(session.get("user_id"))
         if not code and session.get("onboarding_complete"):
@@ -1544,8 +1664,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 msg = "Donne un mot-clé d'au moins 2 lettres (ex : /alerte data)."
             elif kw.lower() in [a.lower() for a in alertes]:
                 msg = f"🔔 « {_md_clean(kw)} » est déjà dans tes alertes."
-            elif len(alertes) >= 10:
-                msg = "⚠️ Maximum 10 alertes. Retires-en une : /alerte off <mot>."
+            elif len(alertes) >= ALERTES_MAX.get(_user_tier(session), 1):
+                cap = ALERTES_MAX.get(_user_tier(session), 1)
+                extra = "" if _is_premium(session) else " 💎 Passe en Premium pour en ajouter plus (/offres)."
+                msg = f"⚠️ Limite atteinte ({cap} alerte·s). Retires-en une : /alerte off <mot>.{extra}"
             else:
                 alertes.append(kw); session["alertes"] = alertes
                 msg = f"🔔 Alerte ajoutée : « {_md_clean(kw)} ». Je te la signalerai en priorité dans /veille et le digest."
@@ -1601,7 +1723,12 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if low.startswith("/status"):
         prefs = (session.get("profil", {}) or {}).get("preferences", {}) or {}
         if session.get("onboarding_complete"):
+            _tier = _user_tier(session)
+            _tier_line = (f"Abonnement : 💎 {_TIER_LABEL.get(_tier, _tier)}"
+                          + (f" (jusqu'au {session.get('premium_until','')[:10]})" if _tier in _PREMIUM_TIERS else "")
+                          ) if _tier != "free" else "Abonnement : 🆓 Gratuit — /offres pour l'illimité"
             msg = ("📊 *Ton statut NexMove*\nProfil : ✅ actif\n"
+                   f"{_tier_line}\n"
                    f"Objectif : {prefs.get('objectif','—')} · Pays : {prefs.get('pays_cibles','—')}\n\n")
             cands = opp_store.list_candidatures(session.get("user_id"))
             if cands:

@@ -2,6 +2,18 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.40 — Abonnements premium & codes d'activation (monétisation)
+- **Système de codes premium** (`db.PremiumStore`) : codes `PRM-XXXXXXXX` générés en lots (à vendre sur
+  Chariow), **usage unique**, chacun = un **tier** (premium/pro/vip) + une durée en jours.
+- **`/premium <code>`** active/prolonge l'abonnement ; **`/monabo`** affiche le statut ; **`/offres`**
+  présente les formules. `/status` indique désormais le tier et l'échéance.
+- **`/gencodes <tier> <jours> <nombre>`** (admin) : génère un lot (≤25 → affiché, sinon fichier `.txt`).
+- **Tiers appliqués aux quotas** : les abonnés (et l'admin) ont **CV, /guide, /simulation illimités** ;
+  gratuit = 1 simulation/jour (`FREE_SIM_DAILY`) et **1 alerte** (Premium 10, Pro/VIP illimité).
+- Abonnement **persistant** (`premium_tier` + `premium_until`), **prolongation** empilée sur le temps restant.
+- **+12 tests** (création/redeem/usage unique/stats des codes, tiers & expiration, quotas premium,
+  commandes `/premium`, `/monabo`, `/gencodes`, plafonds d'alertes). **140/140 verts**.
+
 ## v2.39 — Accueil moins rigide + création de CV guidée (conversation)
 - **Début moins rigide** : à une question d'ouverture (« à quoi tu sers », « c'est quoi », salutation…),
   le bot **explique ce qu'il fait** (pitch) au lieu de répondre seulement « envoie ton CV ». Le message
