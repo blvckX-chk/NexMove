@@ -98,14 +98,16 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.40.0"
+VERSION         = "2.41.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
 MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
 MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
 # --- Contact / support : où renvoyer les messages /contact ---
-ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # ton chat_id Telegram (@userinfobot pour le trouver)
+ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # chat_id Telegram principal (forward /contact). Tape /id pour le connaître.
+# Admins multiples (Telegram chat_id ET/OU numéro WhatsApp) : ADMIN_CHAT_ID + ADMIN_IDS (séparés par virgules).
+_ADMIN_IDS = {x.strip() for x in (ADMIN_CHAT_ID + "," + os.getenv("ADMIN_IDS", "")).split(",") if x.strip()}
 # Quotas journaliers des utilisateurs GRATUITS pour les options coûteuses (l'admin est illimité).
 FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
 FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
@@ -268,10 +270,11 @@ def _alertes_match(opp: dict, alertes) -> str:
     return ""
 
 def _is_admin(session: dict) -> bool:
-    """Vrai si la session est celle de l'administrateur (quotas illimités)."""
-    if not ADMIN_CHAT_ID:
+    """Vrai si la session appartient à un administrateur (un des _ADMIN_IDS)."""
+    if not _ADMIN_IDS:
         return False
-    return str(ADMIN_CHAT_ID) in (str(session.get("chat_id") or ""), str(session.get("user_id") or ""))
+    return (str(session.get("chat_id") or "") in _ADMIN_IDS
+            or str(session.get("user_id") or "") in _ADMIN_IDS)
 
 def _user_tier(session: dict) -> str:
     """Niveau effectif : admin > (premium/pro/vip si abonnement en cours) > free."""
@@ -1247,6 +1250,16 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg = await conseil_grounded(profil, titre, query, consigne, cta=cta)
             except Exception as e:
                 logger.error(f"{_cmd_proc}: {e}"); msg = f"😕 Infos {_cmd_proc} indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low == "/id" or low.startswith("/id ") or low.startswith("/monid") or low.startswith("/whoami"):
+        uid = session.get("user_id"); cid = session.get("chat_id"); ch = session.get("channel", "?")
+        estadmin = "✅ admin" if _is_admin(session) else "non-admin"
+        msg = (f"🪪 *Tes identifiants* (canal : {ch})\n"
+               f"• chat_id : `{cid}`\n• user_id : `{uid}`\n• Statut : {estadmin}\n\n"
+               "Pour devenir *administrateur* : ajoute ce chat_id à `ADMIN_CHAT_ID` (ou `ADMIN_IDS`) "
+               "dans le `.env`, puis relance le conteneur. Sur WhatsApp, l'identifiant est ton numéro.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

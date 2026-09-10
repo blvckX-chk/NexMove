@@ -285,14 +285,14 @@ def test_cmd_moncode_sans_profil():
 
 # ------------------ Quotas : admin illimité + garde gratuite ------------------
 def test_quota_admin_illimite(monkeypatch):
-    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
     sess = {"user_id": "u1", "chat_id": "42"}
     assert main._is_admin(sess) is True
     ok, restant = main._quota_check(sess, "cv", 1)
     assert ok is True and restant == 999          # admin jamais bloqué
 
 def test_quota_non_admin_sous_limite(monkeypatch):
-    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
     sess = {"user_id": "quota-fresh-user-xyz", "chat_id": "7"}
     assert main._is_admin(sess) is False
     ok, restant = main._quota_check(sess, "feature-inexistante-xyz", 5)
@@ -651,7 +651,7 @@ def test_cmd_premium_code_invalide(monkeypatch):
     assert "impossible" in msg.lower() and not main._is_premium(s)
 
 def test_cmd_gencodes_reserve_admin(monkeypatch):
-    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
     s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
     msg, s = _run(main.process_text_message(s, "/gencodes premium 30 5"))
     assert "administrateur" in msg.lower()
@@ -660,3 +660,16 @@ def test_cmd_monabo_free():
     s = {"user_id": "prem7", "chat_id": "7", "historique": [], "onboarding_complete": True}
     msg, s = _run(main.process_text_message(s, "/monabo"))
     assert "gratuit" in msg.lower()
+
+
+# ------------------ Admin multiple + /id (setup admin) ------------------
+def test_is_admin_multi(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42", "22990000000"})
+    assert main._is_admin({"chat_id": "42", "user_id": "x"})
+    assert main._is_admin({"chat_id": "z", "user_id": "22990000000"})   # numéro WhatsApp
+    assert not main._is_admin({"chat_id": "7", "user_id": "8"})
+
+def test_cmd_id_donne_identifiants():
+    s = {"user_id": "u9", "chat_id": "12345", "channel": "telegram", "historique": []}
+    msg, s = _run(main.process_text_message(s, "/id"))
+    assert "12345" in msg and "chat_id" in msg

@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.41 — Admins multiples + commande /id (setup admin)
+- **Admins multiples** : `_is_admin` accepte plusieurs identifiants — `ADMIN_CHAT_ID` (principal, utilisé
+  pour le forward /contact) **+** `ADMIN_IDS` (liste séparée par virgules). Permet d'être admin sur
+  **Telegram (chat_id) ET WhatsApp (numéro)** en même temps.
+- **`/id`** (`/monid`, `/whoami`) : affiche ton `chat_id` / `user_id` et ton statut admin — pour récupérer
+  facilement l'identifiant à mettre dans le `.env`.
+- **+2 tests**. **142/142 verts**.
+
 ## v2.40 — Abonnements premium & codes d'activation (monétisation)
 - **Système de codes premium** (`db.PremiumStore`) : codes `PRM-XXXXXXXX` générés en lots (à vendre sur
   Chariow), **usage unique**, chacun = un **tier** (premium/pro/vip) + une durée en jours.
