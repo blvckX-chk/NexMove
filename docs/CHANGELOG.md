@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.42.1 — Fix : « chat not found » après envoi d'un CV
+- Le CV était bien analysé mais la réponse échouait (`sendMessage 400: chat not found`) : le nœud fichier
+  n8n postait `/api/chat-cv` avec un `chat_id` manquant/`"0"` qui **écrasait** le bon `chat_id` stocké.
+- **Fix défensif** dans `/api/chat-cv` **et** `/api/chat** : un `chat_id` invalide (`"0"`/vide) n'écrase plus
+  le `chat_id` connu ; repli sur `user_id` (en privé Telegram, `chat_id == user_id`). Idem pour `username`.
+- **+1 test**. **146/146 verts**.
+
 ## v2.42 — Sources d'emploi locales enrichies (Bénin/UEMOA)
 - **Portails locaux réels vérifiés** intégrés à la veille locale (`LOCAL_JOB_SOURCES`) : Bénin
   (emploibenin.com, jobbenin.com, offresdemplois.bj, talentsplusafrique.com, afriqueemplois.com, gouv.bj),

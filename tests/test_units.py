@@ -689,3 +689,19 @@ def test_local_sources_extra_env(monkeypatch):
     monkeypatch.setenv("LOCAL_SOURCES_EXTRA_BENIN", "monsupersite.bj,autre.bj")
     txt = main._local_sources_txt("Bénin")
     assert "monsupersite.bj" in txt and "autre.bj" in txt
+
+
+# ------------------ Robustesse chat_id (bug "chat not found" sur CV) ------------------
+def test_chatid_fallback_logic():
+    # Simule la logique défensive de /api/chat-cv : chat_id "0" ne doit pas écraser un bon chat_id.
+    def resolve(incoming, stored, uid):
+        session = {"chat_id": stored} if stored else {}
+        if incoming and str(incoming) not in ("0", "", "None"):
+            session["chat_id"] = str(incoming)
+        elif not session.get("chat_id") or str(session.get("chat_id")) in ("0", "", "None"):
+            session["chat_id"] = str(uid)
+        return session["chat_id"]
+    assert resolve("0", "514773914", "514773914") == "514773914"   # ne pas écraser le bon
+    assert resolve("", None, "514773914") == "514773914"           # repli sur user_id
+    assert resolve("999", "111", "111") == "999"                   # un chat_id valide gagne
+    assert resolve("0", None, "42") == "42"                        # "0" + rien -> user_id

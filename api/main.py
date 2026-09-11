@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.42.0"
+VERSION         = "2.42.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2949,8 +2949,13 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     uid = request.user_id
     session = session_manager.get(uid) or session_manager.create_default(uid, request.chat_id, request.username)
     session["channel"] = "telegram"
-    session["chat_id"] = request.chat_id
-    session["username"] = request.username
+    # Robustesse : ne pas écraser un chat_id valide par un chat_id manquant/"0" (repli : chat_id == user_id).
+    if request.chat_id and str(request.chat_id) not in ("0", "", "None"):
+        session["chat_id"] = str(request.chat_id)
+    elif not session.get("chat_id") or str(session.get("chat_id")) in ("0", "", "None"):
+        session["chat_id"] = str(uid)
+    if request.username and request.username != "utilisateur":
+        session["username"] = request.username
     if request.callback_data:
         session = await handle_action(session, request.callback_data, request.callback_id)
         session_manager.set(uid, session)
@@ -2973,8 +2978,14 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
 async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), chat_id: str = Form("0"), username: str = Form("utilisateur"), _auth: bool = Depends(verify_api_key)):
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
     session["channel"] = "telegram"
-    session["chat_id"] = chat_id
-    session["username"] = username
+    # Ne pas écraser un chat_id valide déjà connu avec un chat_id manquant/"0" (nœud fichier n8n).
+    # Repli : en privé Telegram, chat_id == user_id.
+    if chat_id and str(chat_id) not in ("0", "", "None"):
+        session["chat_id"] = str(chat_id)
+    elif not session.get("chat_id") or str(session.get("chat_id")) in ("0", "", "None"):
+        session["chat_id"] = str(user_id)
+    if username and username != "utilisateur":
+        session["username"] = username
     fn = (file.filename or "").lower()
     ct = (file.content_type or "").lower()
     is_pdf = ct == "application/pdf" or fn.endswith(".pdf")
