@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.41.0"
+VERSION         = "2.42.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3441,6 +3441,39 @@ def _pays_from_nat(nat: str) -> str:
             return v
     return ""
 
+# Portails d'emploi LOCAUX réels (vérifiés) par pays — pour ancrer la veille locale sans flux RSS.
+# Complétable via env LOCAL_SOURCES_EXTRA_<PAYS> (ex. LOCAL_SOURCES_EXTRA_BENIN=site1.com,site2.com).
+LOCAL_JOB_SOURCES = {
+    "Bénin": ["emploibenin.com", "jobbenin.com", "offresdemplois.bj", "talentsplusafrique.com",
+              "afriqueemplois.com/bj", "gouv.bj (offres publiques)"],
+    "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "novojob.com"],
+    "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com"],
+    "Togo": ["emploitogo.info", "togocarriere.com"],
+    "Burkina Faso": ["emploiburkina.com", "burkinajob.com"],
+    "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com"],
+    "Mali": ["malipages.com", "novojob.com"],
+    "Niger": ["nigeremploi.com"],
+}
+# Sources régionales / panafricaines (servent tous les pays d'Afrique de l'Ouest).
+_REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "AfricaWork",
+                         "ReliefWeb (ONG/humanitaire)", "Emploi.org"]
+
+_ACCENTS = str.maketrans("àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ", "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
+
+def _env_key(pays: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "_", str(pays or "").translate(_ACCENTS)).upper()
+
+def _local_sources_txt(pays: str) -> str:
+    """Snippet de prompt : liste des portails locaux réels à privilégier pour la veille locale."""
+    locales = list(LOCAL_JOB_SOURCES.get(pays, []))
+    extra = os.getenv("LOCAL_SOURCES_EXTRA_" + _env_key(pays), "")
+    locales += [s.strip() for s in extra.split(",") if s.strip()]
+    src = locales + _REGIONAL_JOB_SOURCES
+    if not src:
+        return ""
+    return ("PORTAILS LOCAUX RÉELS à privilégier (cite des offres concrètes issues de ces sources quand "
+            "c'est pertinent, avec le lien du portail) : " + ", ".join(src) + ".\n")
+
 _STOP_SIG = {"pour", "avec", "dans", "les", "des", "une", "chez", "sur", "the", "and",
              "for", "master", "bourse", "offre", "emploi", "stage", "junior", "senior"}
 
@@ -3509,6 +3542,11 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
             zone = local_pays if veut_local else ""
         domaine_q = " OR ".join(mots_list) if len(mots_list) > 1 else domaine
         query = f"{type_mot} {domaine_q} {type_emploi} {zone} 2026 candidature".strip()
+        # Recherche LOCALE : on oriente vers les portails d'emploi réels du pays.
+        if veut_local and local_pays and objectif in ("travailler", "tous", "tout", ""):
+            portails = LOCAL_JOB_SOURCES.get(local_pays, [])[:3]
+            if portails:
+                query += " " + " OR ".join(p.split()[0] for p in portails)
         grounded = await tavily_search(query, 10)
 
     if grounded:
@@ -3528,8 +3566,9 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
         diversite = (f"MOTS-CLÉS À COUVRIR (varie les résultats entre ces thèmes, pas tous sur le même) : {', '.join(mots_list)}.\n"
                      if len(mots_list) > 1 else "")
         type_emploi_txt = f"TYPE DE POSTE souhaité : {type_emploi}.\n" if type_emploi else ""
-        local_txt = (f"IMPORTANT : inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations comme "
-                     f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" if veut_local and local_pays else "")
+        local_txt = ((f"IMPORTANT : inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations comme "
+                      f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
+                     if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
 DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent')}
 {diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
@@ -3570,8 +3609,9 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                   "Ne cite QUE des organismes RÉELS — locaux (agences, universités, entreprises, programmes du pays) "
                   "ET internationaux (DAAD, Campus France, Erasmus Mundus, Chevening, AUF, Mastercard Foundation…). "
                   "N'invente jamais d'URL (portail officiel en clair). JSON uniquement.")
-        local_txt = (f"Inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations locales, bourses "
-                     f"nationales), pas seulement à l'étranger.\n" if veut_local and local_pays else "")
+        local_txt = ((f"Inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations locales, bourses "
+                      f"nationales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
+                     if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
 DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' + international' if local_pays else 'Non précisé')}
 {local_txt}DATE DU JOUR: {today}. Uniquement des opportunités ouvertes ou à venir.

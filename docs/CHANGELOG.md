@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.42 — Sources d'emploi locales enrichies (Bénin/UEMOA)
+- **Portails locaux réels vérifiés** intégrés à la veille locale (`LOCAL_JOB_SOURCES`) : Bénin
+  (emploibenin.com, jobbenin.com, offresdemplois.bj, talentsplusafrique.com, afriqueemplois.com, gouv.bj),
+  Côte d'Ivoire, Sénégal, Togo, Burkina, Cameroun, Mali, Niger + sources régionales (Jooble, Novojob,
+  Talent2Africa, AfricaWork, ReliefWeb).
+- Ces portails **orientent la recherche** (requête Tavily) **et** le prompt de veille → offres locales plus
+  concrètes, avec liens. **Pas de flux RSS deviné** = zéro lien mort.
+- **Extensible sans code** via env `LOCAL_SOURCES_EXTRA_<PAYS>` (ex. `LOCAL_SOURCES_EXTRA_BENIN=site.bj`).
+- **+3 tests**. **145/145 verts**.
+
 ## v2.41 — Admins multiples + commande /id (setup admin)
 - **Admins multiples** : `_is_admin` accepte plusieurs identifiants — `ADMIN_CHAT_ID` (principal, utilisé
   pour le forward /contact) **+** `ADMIN_IDS` (liste séparée par virgules). Permet d'être admin sur

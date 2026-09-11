@@ -673,3 +673,19 @@ def test_cmd_id_donne_identifiants():
     s = {"user_id": "u9", "chat_id": "12345", "channel": "telegram", "historique": []}
     msg, s = _run(main.process_text_message(s, "/id"))
     assert "12345" in msg and "chat_id" in msg
+
+
+# ------------------ Sources locales enrichies (Bénin/UEMOA) ------------------
+def test_local_sources_txt_benin():
+    txt = main._local_sources_txt("Bénin")
+    assert "emploibenin.com" in txt and "jobbenin.com" in txt and "offresdemplois.bj" in txt
+    assert "Jooble" in txt   # sources régionales incluses
+
+def test_local_sources_txt_pays_inconnu_garde_regional():
+    txt = main._local_sources_txt("Atlantide")
+    assert "Jooble" in txt or "Talent2Africa" in txt   # régional toujours présent
+
+def test_local_sources_extra_env(monkeypatch):
+    monkeypatch.setenv("LOCAL_SOURCES_EXTRA_BENIN", "monsupersite.bj,autre.bj")
+    txt = main._local_sources_txt("Bénin")
+    assert "monsupersite.bj" in txt and "autre.bj" in txt
