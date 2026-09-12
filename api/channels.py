@@ -52,7 +52,7 @@ async def _tg(method: str, payload: dict) -> bool:
     try:
         r = await http().post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}", json=payload, timeout=25.0)
         if r.status_code != 200:
-            logger.error(f"tg {method} {r.status_code}: {r.text[:150]}")
+            logger.error(f"tg {method} chat={payload.get('chat_id')} {r.status_code}: {r.text[:150]}")
         return r.status_code == 200
     except Exception as e:
         logger.error(f"tg {method}: {e}")

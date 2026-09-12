@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.42.1"
+VERSION         = "2.42.2"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2986,6 +2986,7 @@ async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), 
         session["chat_id"] = str(user_id)
     if username and username != "utilisateur":
         session["username"] = username
+    logger.info(f"[chat-cv] user={user_id} chat_in={chat_id!r} chat_resolved={session.get('chat_id')!r} file={file.filename!r}")
     fn = (file.filename or "").lower()
     ct = (file.content_type or "").lower()
     is_pdf = ct == "application/pdf" or fn.endswith(".pdf")
