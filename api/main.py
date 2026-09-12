@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.42.2"
+VERSION         = "2.42.3"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -268,6 +268,10 @@ def _alertes_match(opp: dict, alertes) -> str:
         if a and str(a).lower() in txt:
             return a
     return ""
+
+def _valid_id(x) -> bool:
+    """Un identifiant Telegram/chat est-il exploitable ? (rejette 0, vide, 'undefined', 'null'…)."""
+    return bool(x) and str(x).strip().lower() not in ("0", "", "none", "undefined", "null", "nan")
 
 def _is_admin(session: dict) -> bool:
     """Vrai si la session appartient à un administrateur (un des _ADMIN_IDS)."""
@@ -2949,11 +2953,11 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     uid = request.user_id
     session = session_manager.get(uid) or session_manager.create_default(uid, request.chat_id, request.username)
     session["channel"] = "telegram"
-    # Robustesse : ne pas écraser un chat_id valide par un chat_id manquant/"0" (repli : chat_id == user_id).
-    if request.chat_id and str(request.chat_id) not in ("0", "", "None"):
+    # Robustesse : ne pas écraser un chat_id valide par une valeur bidon (repli : chat_id == user_id).
+    if _valid_id(request.chat_id):
         session["chat_id"] = str(request.chat_id)
-    elif not session.get("chat_id") or str(session.get("chat_id")) in ("0", "", "None"):
-        session["chat_id"] = str(uid)
+    elif not _valid_id(session.get("chat_id")):
+        session["chat_id"] = str(uid) if _valid_id(uid) else session.get("chat_id")
     if request.username and request.username != "utilisateur":
         session["username"] = request.username
     if request.callback_data:
@@ -2978,15 +2982,19 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
 async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), chat_id: str = Form("0"), username: str = Form("utilisateur"), _auth: bool = Depends(verify_api_key)):
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
     session["channel"] = "telegram"
-    # Ne pas écraser un chat_id valide déjà connu avec un chat_id manquant/"0" (nœud fichier n8n).
-    # Repli : en privé Telegram, chat_id == user_id.
-    if chat_id and str(chat_id) not in ("0", "", "None"):
+    # Ne pas écraser un chat_id valide déjà connu par une valeur bidon du nœud fichier n8n
+    # (0, vide, "undefined", "null"…). Repli : en privé Telegram, chat_id == user_id.
+    if _valid_id(chat_id):
         session["chat_id"] = str(chat_id)
-    elif not session.get("chat_id") or str(session.get("chat_id")) in ("0", "", "None"):
-        session["chat_id"] = str(user_id)
+    elif not _valid_id(session.get("chat_id")):
+        session["chat_id"] = str(user_id) if _valid_id(user_id) else session.get("chat_id")
     if username and username != "utilisateur":
         session["username"] = username
     logger.info(f"[chat-cv] user={user_id} chat_in={chat_id!r} chat_resolved={session.get('chat_id')!r} file={file.filename!r}")
+    if not _valid_id(session.get("chat_id")):
+        # n8n n'a fourni AUCUN identifiant exploitable -> impossible de répondre. On l'indique clairement.
+        logger.error("[chat-cv] aucun chat_id/user_id valide reçu de n8n (nœud fichier à corriger) — réponse impossible.")
+        return {"ok": False, "error": "no_valid_chat_id"}
     fn = (file.filename or "").lower()
     ct = (file.content_type or "").lower()
     is_pdf = ct == "application/pdf" or fn.endswith(".pdf")

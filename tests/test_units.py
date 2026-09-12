@@ -705,3 +705,13 @@ def test_chatid_fallback_logic():
     assert resolve("", None, "514773914") == "514773914"           # repli sur user_id
     assert resolve("999", "111", "111") == "999"                   # un chat_id valide gagne
     assert resolve("0", None, "42") == "42"                        # "0" + rien -> user_id
+
+
+# ------------------ _valid_id : rejet des identifiants bidon (bug n8n "undefined") ------------------
+def test_valid_id():
+    assert main._valid_id("514773914")
+    assert not main._valid_id("undefined")
+    assert not main._valid_id("null")
+    assert not main._valid_id("0")
+    assert not main._valid_id("")
+    assert not main._valid_id(None)
