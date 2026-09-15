@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## Sécurité & robustesse (config) — sept. 2026
+- **API en écoute localhost uniquement** (`docker-compose` : `127.0.0.1:8000:8000`) — plus exposée
+  directement à Internet ; jointe seulement via le tunnel Cloudflare (même machine).
+- **Recommandation forte** : définir `TELEGRAM_WEBHOOK_SECRET` dans `.env` — sans lui, le webhook natif
+  `/webhook/telegram` est falsifiable (usurpation admin possible → génération de codes). Le script
+  auto-tunnel transmet ce secret.
+- **`scripts/nexmove-tunnel.sh`** rendu **auto-relançant** (boucle interne + attente de l'API) → durable
+  **sans systemd/sudo** (via `nohup`/`setsid` + cron `@reboot`).
+
 ## v2.45 — Activation premium par code collé + script auto-tunnel
 - **Activation ultra-simple pour les clients** : coller le code `PRM-XXXXXXXX` (même noyé dans une phrase)
   suffit à activer l'abonnement — plus besoin de taper `/premium`. La commande `/premium <code>` reste valable.
