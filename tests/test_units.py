@@ -756,3 +756,19 @@ def test_tg_extract_voice_poliment_rejete():
     upd = {"message": {"voice": {"file_id": "v"}, "chat": {"id": 42}}}
     t, cb, d = main._extract_incoming("telegram", upd)
     assert t == "__wa_unsupported__"
+
+
+# ------------------ Activation d'un code premium collé tel quel (UX client) ------------------
+def test_code_colle_active(monkeypatch):
+    monkeypatch.setattr(main.premium_store, "redeem", lambda code, uid: {"ok": True, "tier": "premium", "days": 30})
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    s = {"user_id": "cc1", "channel": "telegram", "etape": "ATTENTE_CV", "profil": {},
+         "historique": [], "onboarding_complete": False}
+    msg, s = _run(main.process_text_message(s, "Bonjour voici mon code PRM-AB12CD34 merci"))
+    assert "activé" in msg.lower() and main._is_premium(s)
+
+def test_texte_normal_pas_pris_pour_un_code():
+    s = {"user_id": "cc2", "channel": "telegram", "etape": "ATTENTE_CV", "profil": {},
+         "historique": [], "onboarding_complete": False}
+    msg, s = _run(main.process_text_message(s, "je cherche un stage"))
+    assert not main._is_premium(s)   # aucun code -> pas d'activation

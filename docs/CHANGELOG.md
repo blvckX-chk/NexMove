@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.45 — Activation premium par code collé + script auto-tunnel
+- **Activation ultra-simple pour les clients** : coller le code `PRM-XXXXXXXX` (même noyé dans une phrase)
+  suffit à activer l'abonnement — plus besoin de taper `/premium`. La commande `/premium <code>` reste valable.
+- **`scripts/nexmove-tunnel.sh` + `nexmove-tunnel.service`** : lance le tunnel Cloudflare rapide **et
+  réenregistre automatiquement le webhook Telegram** à chaque (re)démarrage (URL qui change → auto-réparé).
+  À installer en service systemd → plus de coupure « URL changée ».
+- **+2 tests**. **156/156 verts**.
+
 ## v2.44 — Webhook Telegram NATIF (suppression de la dépendance n8n)
 - **`POST /webhook/telegram`** : l'API reçoit désormais Telegram **directement**, sans n8n. Elle lit
   elle-même le `chat.id`/`from.id` (fin du bug « undefined »/« chat not found »), gère texte, **documents**,

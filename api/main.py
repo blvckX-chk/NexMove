@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.44.0"
+VERSION         = "2.45.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -119,6 +119,8 @@ SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par
 ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999}
 _PREMIUM_TIERS = ("premium", "pro", "vip")
 _TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin"}
+# Détection d'un code premium collé tel quel (ex. « PRM-AB12CD34 ») -> activation sans taper /premium.
+_PRM_CODE_RE = re.compile(r"\bPRM-[A-Z0-9]{6,12}\b", re.I)
 CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
 CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
 CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
@@ -830,6 +832,12 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if session.get("sim_mode") and not low.startswith("/"):
         _push(session, "user", t)
         return await _simulation_turn(session, t)
+
+    # Code premium collé tel quel (sans /premium) -> activation directe (UX client sur Chariow).
+    if not low.startswith("/") and not session.get("sim_mode"):
+        _mprem = _PRM_CODE_RE.search(t)
+        if _mprem:
+            return await process_text_message(session, "/premium " + _mprem.group(0).upper())
 
     if low.startswith("/start"):
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
