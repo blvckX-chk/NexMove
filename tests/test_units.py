@@ -715,3 +715,17 @@ def test_valid_id():
     assert not main._valid_id("0")
     assert not main._valid_id("")
     assert not main._valid_id(None)
+
+
+# ------------------ Surveillance / alertes (_check_health) ------------------
+def test_check_health_probleme_llm(monkeypatch):
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "")          # pas de check webhook
+    monkeypatch.setattr(main, "_LLM_PROVIDERS", [{"name": "x", "key": ""}])
+    res = _run(main._check_health())
+    assert res["ok"] is False and any("LLM" in p for p in res["problems"])
+
+def test_check_health_ok(monkeypatch):
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "")
+    monkeypatch.setattr(main, "_LLM_PROVIDERS", [{"name": "groq", "key": "k"}])
+    res = _run(main._check_health())
+    assert res["ok"] is True and res["problems"] == []

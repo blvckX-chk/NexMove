@@ -98,7 +98,7 @@ def _read_telegram_token():
 TELEGRAM_TOKEN  = _read_telegram_token()
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.42.3"
+VERSION         = "2.43.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3884,6 +3884,65 @@ async def fb_webhook(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+async def _check_health() -> dict:
+    """Vérifie les dépendances critiques (surtout le webhook Telegram, cause n°1 des coupures)."""
+    problems, webhook = [], {}
+    if TELEGRAM_TOKEN:
+        try:
+            r = await http().get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getWebhookInfo", timeout=10.0)
+            info = r.json().get("result", {}) if r.status_code == 200 else {}
+            webhook = {"url_set": bool(info.get("url")), "last_error": info.get("last_error_message"),
+                       "pending": info.get("pending_update_count", 0)}
+            if not info.get("url"):
+                problems.append("Webhook Telegram non configuré (url vide) → réactive le workflow n8n / réenregistre le webhook.")
+            elif info.get("last_error_message"):
+                problems.append(f"Webhook Telegram en erreur : {info.get('last_error_message')} (n8n/ngrok à vérifier).")
+            elif (info.get("pending_update_count") or 0) > 20:
+                problems.append(f"{info.get('pending_update_count')} messages en attente non livrés → le bot ne répond probablement plus.")
+        except Exception as e:
+            problems.append(f"Impossible d'interroger Telegram (getWebhookInfo) : {e}")
+    if not [p for p in _LLM_PROVIDERS if p["key"]]:
+        problems.append("Aucun fournisseur LLM configuré.")
+    return {"ok": not problems, "problems": problems, "webhook": webhook, "version": VERSION,
+            "checked_at": datetime.now(timezone.utc).isoformat()}
+
+
+async def _alert_admin(text: str) -> None:
+    for aid in (_ADMIN_IDS or ([ADMIN_CHAT_ID] if ADMIN_CHAT_ID else [])):
+        if _valid_id(aid) and TELEGRAM_TOKEN:
+            try:
+                await send_message(str(aid), text)
+            except Exception as e:
+                logger.warning(f"alert admin {aid}: {e}")
+
+
+@app.get("/api/selfcheck")
+async def selfcheck(alert: int = 1, _auth: bool = Depends(verify_api_key)):
+    """Surveillance : à appeler périodiquement (cron/uptime). Alerte l'admin sur CHANGEMENT d'état."""
+    res = await _check_health()
+    if alert:
+        prev = cache.get("_health_ok")
+        now_ok = res["ok"]
+        if prev is None or bool(prev) != now_ok:
+            if not now_ok:
+                await _alert_admin("🚨 *NexMove — panne détectée*\n- " + "\n- ".join(res["problems"]))
+            elif prev is not None:
+                await _alert_admin("✅ *NexMove — service rétabli.* Tout est revenu à la normale.")
+        cache.set("_health_ok", 1 if now_ok else 0, ttl=6 * 3600)
+    return res
+
+
+@app.on_event("startup")
+async def _startup_alert():
+    """Prévient l'admin quand l'API (re)démarre — utile pour repérer les redémarrages/coupures."""
+    try:
+        if (_ADMIN_IDS or ADMIN_CHAT_ID) and TELEGRAM_TOKEN and not cache.get("_startup_ping"):
+            cache.set("_startup_ping", 1, ttl=90)   # évite le doublon entre les 2 workers uvicorn
+            await _alert_admin(f"✅ *NexMove en ligne* — v{VERSION} vient de démarrer.")
+    except Exception as e:
+        logger.warning(f"startup alert: {e}")
 
 @app.get("/")
 async def root():

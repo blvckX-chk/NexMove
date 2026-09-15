@@ -2,6 +2,19 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.43 — Surveillance & alertes de disponibilité
+- **Alerte de (re)démarrage** : à chaque démarrage, l'API prévient l'admin sur Telegram
+  (« ✅ NexMove en ligne — vX »). Dédoublonnée entre les 2 workers.
+- **`/api/selfcheck`** : vérifie les dépendances critiques — surtout le **webhook Telegram**
+  (getWebhookInfo : url vide ? dernière erreur ? messages en attente ?) et la présence d'un fournisseur LLM.
+  **Alerte l'admin sur changement d'état** (panne → « 🚨 panne détectée » ; retour → « ✅ service rétabli »),
+  sans spam. À appeler par un cron toutes les 5 min.
+- L'alerte sortante passe par un appel direct à l'API Telegram → **fonctionne même quand le webhook entrant
+  est cassé** (le cas le plus fréquent de coupure).
+- **+2 tests**. **149/149 verts**.
+
+## v2.42.3 — Fix CV : « undefined » du nœud fichier n8n traité comme chat_id invalide
+
 ## v2.42.1 — Fix : « chat not found » après envoi d'un CV
 - Le CV était bien analysé mais la réponse échouait (`sendMessage 400: chat not found`) : le nœud fichier
   n8n postait `/api/chat-cv` avec un `chat_id` manquant/`"0"` qui **écrasait** le bon `chat_id` stocké.
