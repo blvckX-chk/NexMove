@@ -71,6 +71,28 @@ async def send_message(chat_id, text, keyboard=None) -> bool:
     return ok
 
 
+async def tg_get_file(file_id: str):
+    """Télécharge un fichier Telegram (getFile puis download). Renvoie les octets ou None.
+    Sert au webhook Telegram natif (réception des CV en document/photo)."""
+    if not (TELEGRAM_TOKEN and file_id):
+        return None
+    try:
+        r = await http().get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getFile",
+                             params={"file_id": file_id}, timeout=20.0)
+        if r.status_code != 200:
+            logger.error(f"tg getFile {r.status_code}: {r.text[:150]}")
+            return None
+        path = (r.json().get("result") or {}).get("file_path")
+        if not path:
+            return None
+        fr = await http().get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{path}",
+                              timeout=45.0, follow_redirects=True)
+        return fr.content if fr.status_code == 200 else None
+    except Exception as e:
+        logger.error(f"tg getFile: {e}")
+        return None
+
+
 async def edit_message(chat_id, message_id, text, keyboard=None) -> bool:
     try:
         mid = int(message_id)

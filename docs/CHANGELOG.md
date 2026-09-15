@@ -2,6 +2,19 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.44 — Webhook Telegram NATIF (suppression de la dépendance n8n)
+- **`POST /webhook/telegram`** : l'API reçoit désormais Telegram **directement**, sans n8n. Elle lit
+  elle-même le `chat.id`/`from.id` (fin du bug « undefined »/« chat not found »), gère texte, **documents**,
+  **photos**, **boutons** (callback_query), et rejette poliment audio/vidéo/sticker.
+- **Réponse immédiate** (200) + traitement en **tâche de fond** → plus de timeout/retry Telegram sur les
+  appels LLM/CV.
+- **Secret** de webhook facultatif (`TELEGRAM_WEBHOOK_SECRET`) vérifié via l'en-tête Telegram.
+- **Commandes admin** `/setwebhook <url>` (bascule Telegram sur l'API) et `/webhookinfo` (état du webhook).
+- Helper `tg_get_file` (channels) pour télécharger les fichiers Telegram.
+- **Guide** `docs/WEBHOOK-TELEGRAM-DIRECT.md` (URL stable Cloudflare Tunnel + migration pas à pas).
+- **+5 tests** (parsing texte/document/photo/bouton/vocal). **154/154 verts**.
+- → Élimine la classe de pannes qu'on subissait (workflow n8n désactivé, webhook effacé, nœud fichier cassé).
+
 ## v2.43 — Surveillance & alertes de disponibilité
 - **Alerte de (re)démarrage** : à chaque démarrage, l'API prévient l'admin sur Telegram
   (« ✅ NexMove en ligne — vX »). Dédoublonnée entre les 2 workers.

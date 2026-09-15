@@ -96,9 +96,11 @@ def _read_telegram_token():
     return ""
 
 TELEGRAM_TOKEN  = _read_telegram_token()
+# Webhook Telegram NATIF (sans n8n) : secret partagé (facultatif mais recommandé) vérifié à la réception.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.43.0"
+VERSION         = "2.44.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1257,6 +1259,44 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/setwebhook") or low.startswith("/webhookinfo") or low.startswith("/webhook"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if low.startswith("/webhookinfo") or low.strip() in ("/webhook",):
+            try:
+                r = await http().get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getWebhookInfo", timeout=10.0)
+                info = r.json().get("result", {}) if r.status_code == 200 else {}
+                msg = (f"🔗 *Webhook Telegram*\nurl : `{info.get('url') or '(vide)'}`\n"
+                       f"en attente : {info.get('pending_update_count', 0)}\n"
+                       f"dernière erreur : {info.get('last_error_message') or 'aucune'}")
+            except Exception as e:
+                msg = f"😕 getWebhookInfo a échoué : {e}"
+        else:
+            parts = t.split(maxsplit=1)
+            url = parts[1].strip() if len(parts) > 1 else ""
+            if not url.startswith("http"):
+                msg = ("🧰 *Basculer sur le webhook natif* (sans n8n) :\n`/setwebhook https://TON-DOMAINE`\n"
+                       "→ je pointe Telegram sur `…/webhook/telegram`. Ton domaine doit servir l'API (port 8000).")
+            else:
+                if not url.rstrip("/").endswith("/webhook/telegram"):
+                    url = url.rstrip("/") + "/webhook/telegram"
+                payload = {"url": url, "allowed_updates": ["message", "edited_message", "callback_query"],
+                           "drop_pending_updates": True}
+                if TELEGRAM_WEBHOOK_SECRET:
+                    payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+                try:
+                    r = await http().post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json=payload, timeout=15.0)
+                    ok = r.status_code == 200 and r.json().get("ok")
+                    msg = (f"✅ *Webhook mis à jour* → `{url}`\nTelegram parle maintenant DIRECTEMENT à l'API (n8n retiré). "
+                           "Teste : envoie un message, puis un CV." if ok
+                           else f"❌ Échec setWebhook : {r.text[:180]}")
+                except Exception as e:
+                    msg = f"😕 setWebhook a échoué : {e}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low == "/id" or low.startswith("/id ") or low.startswith("/monid") or low.startswith("/whoami"):
         uid = session.get("user_id"); cid = session.get("chat_id"); ch = session.get("channel", "?")
         estadmin = "✅ admin" if _is_admin(session) else "non-admin"
@@ -2338,7 +2378,7 @@ from channels import (
     TELEGRAM_TOKEN, WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, MESSENGER_TOKEN,
     _mime_for, send_message, edit_message, answer_callback, _send_telegram_document,
     _tg_keyboard, wa_text, wa_menu, wa_document, wa_get_media,
-    fb_text, fb_menu, fb_document,
+    fb_text, fb_menu, fb_document, tg_get_file,
 )  # noqa: F401
 
 def get_menu(session, key):
@@ -2779,7 +2819,24 @@ Document: {cv_text[:6000]}"""
 
 def _extract_incoming(channel, raw):
     text, callback, doc = None, None, None
-    if channel == "whatsapp":
+    if channel == "telegram":
+        cq = raw.get("callback_query")
+        if cq:
+            callback = cq.get("data")
+        else:
+            m = raw.get("message") or raw.get("edited_message") or {}
+            if m.get("document"):
+                d = m["document"]
+                doc = {"id": d.get("file_id"), "filename": d.get("file_name") or "cv.pdf"}
+            elif m.get("photo"):
+                sizes = m.get("photo") or []
+                ph = sizes[-1] if sizes else {}     # la plus grande résolution
+                doc = {"id": ph.get("file_id"), "filename": "cv.jpg"}
+            elif "text" in m:
+                text = m.get("text", "")
+            elif m.get("voice") or m.get("audio") or m.get("video") or m.get("video_note") or m.get("sticker"):
+                text = "__wa_unsupported__"
+    elif channel == "whatsapp":
         t = raw.get("type")
         if t == "text":
             text = raw.get("text", {}).get("body", "")
@@ -2818,6 +2875,8 @@ def _extract_incoming(channel, raw):
     return text, callback, doc
 
 async def _download_doc(channel, doc):
+    if channel == "telegram":
+        return await tg_get_file(doc.get("id"))
     if channel == "whatsapp":
         return await wa_get_media(doc.get("id"))
     if channel == "messenger":
@@ -2843,7 +2902,8 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
         await process_cv(session, pdf, doc.get("filename", "cv.pdf"))
         return
     if callback:
-        session = await handle_action(session, callback)
+        cb_id = (raw.get("callback_query") or {}).get("id") if channel == "telegram" else None
+        session = await handle_action(session, callback, cb_id)
         session_manager.set(user_id, session)
         return
     if text is not None:
@@ -3837,6 +3897,38 @@ async def get_session(user_id: str, _auth: bool = Depends(verify_api_key)):
 async def set_session(user_id: str, session_data: dict, _auth: bool = Depends(verify_api_key)):
     session_manager.set(user_id, session_data)
     return {"ok": True}
+
+async def _bg_route(channel, user_id, chat_id, username, update):
+    """Traite un message en arrière-plan (le webhook a déjà répondu 200 à Telegram → pas de timeout/retry)."""
+    try:
+        await route_incoming(channel, user_id, chat_id, username, update)
+    except Exception as e:
+        logger.error(f"[webhook {channel}] traitement: {e}")
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Webhook Telegram NATIF — supprime la dépendance à n8n pour le bot Telegram.
+    Pointer Telegram ici : setWebhook url=https://TON-DOMAINE/webhook/telegram (voir /setwebhook admin)."""
+    # Sécurité : si un secret est configuré, Telegram doit le renvoyer dans l'en-tête.
+    if TELEGRAM_WEBHOOK_SECRET and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != TELEGRAM_WEBHOOK_SECRET:
+        return {"ok": False}
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+    cq = update.get("callback_query")
+    src = (cq or {}).get("from", {}) if cq else ((update.get("message") or update.get("edited_message") or {}).get("from", {}) or {})
+    chat = ((cq or {}).get("message", {}) or {}).get("chat", {}) if cq else ((update.get("message") or update.get("edited_message") or {}).get("chat", {}) or {})
+    user_id = str(src.get("id") or chat.get("id") or "")
+    chat_id = str(chat.get("id") or src.get("id") or "")
+    username = src.get("username") or src.get("first_name") or "utilisateur"
+    if not _valid_id(chat_id):
+        return {"ok": True}
+    # Réponse immédiate à Telegram, traitement en tâche de fond (évite les timeouts sur les appels LLM/CV).
+    asyncio.create_task(_bg_route("telegram", user_id, chat_id, username, update))
+    return {"ok": True}
+
 
 @app.get("/webhook/whatsapp")
 async def wa_verify(request: Request):

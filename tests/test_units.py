@@ -729,3 +729,30 @@ def test_check_health_ok(monkeypatch):
     monkeypatch.setattr(main, "_LLM_PROVIDERS", [{"name": "groq", "key": "k"}])
     res = _run(main._check_health())
     assert res["ok"] is True and res["problems"] == []
+
+
+# ------------------ Webhook Telegram natif (sans n8n) : parsing ------------------
+def test_tg_extract_text():
+    upd = {"message": {"text": "salut", "chat": {"id": 42}, "from": {"id": 42}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert t == "salut" and cb is None and d is None
+
+def test_tg_extract_document():
+    upd = {"message": {"document": {"file_id": "F1", "file_name": "CV.pdf"}, "chat": {"id": 42}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert d and d["id"] == "F1" and d["filename"] == "CV.pdf"
+
+def test_tg_extract_photo_prend_la_plus_grande():
+    upd = {"message": {"photo": [{"file_id": "small"}, {"file_id": "big"}], "chat": {"id": 42}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert d and d["id"] == "big" and d["filename"] == "cv.jpg"
+
+def test_tg_extract_callback():
+    upd = {"callback_query": {"id": "cq1", "data": "onb:oui", "from": {"id": 42}, "message": {"chat": {"id": 42}}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert cb == "onb:oui"
+
+def test_tg_extract_voice_poliment_rejete():
+    upd = {"message": {"voice": {"file_id": "v"}, "chat": {"id": 42}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert t == "__wa_unsupported__"
