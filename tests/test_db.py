@@ -224,3 +224,23 @@ def test_premium_stats(tmp_path, monkeypatch):
     ps.redeem(codes[0], "u1")
     st = ps.stats()
     assert st.get("used") == 1 and st.get("unused") == 1
+
+
+# ------------------ ReferralStore : parrainage ------------------
+def test_referral_code_stable(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    rs = db.ReferralStore()
+    c1 = rs.code_for("u1"); c2 = rs.code_for("u1")
+    assert c1 == c2 and c1.startswith("P")
+    assert rs.user_by_code(c1) == "u1"
+
+def test_referral_attribute_et_complete(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    rs = db.ReferralStore()
+    assert rs.attribute("filleul1", "parrain") is True
+    assert rs.attribute("filleul1", "parrain") is False   # une seule fois
+    assert rs.attribute("parrain", "parrain") is False     # pas soi-même
+    assert rs.count_completed("parrain") == 0
+    assert rs.mark_completed("filleul1") == "parrain"      # transition -> renvoie le parrain
+    assert rs.mark_completed("filleul1") is None           # déjà complété
+    assert rs.count_completed("parrain") == 1

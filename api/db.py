@@ -470,6 +470,76 @@ class PremiumStore:
         return {s: int(n) for s, n in rows}
 
 
+class ReferralStore:
+    """Parrainage : un code stable par utilisateur ; chaque filleul n'est parrainé qu'une fois."""
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("CREATE TABLE IF NOT EXISTS referral_codes (user_id TEXT PRIMARY KEY, code TEXT UNIQUE)")
+        con.execute("""CREATE TABLE IF NOT EXISTS referrals (
+            referred_user TEXT PRIMARY KEY, referrer_user TEXT, status TEXT DEFAULT 'pending', created_at TEXT)""")
+        con.commit(); con.close()
+
+    def code_for(self, user_id: str) -> str:
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT code FROM referral_codes WHERE user_id=?", (str(user_id),)).fetchone()
+            if row:
+                return row[0]
+            for _ in range(10):
+                code = "P" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(6))
+                if not con.execute("SELECT 1 FROM referral_codes WHERE code=?", (code,)).fetchone():
+                    con.execute("INSERT INTO referral_codes(user_id,code) VALUES(?,?)", (str(user_id), code))
+                    con.commit(); return code
+            code = "P" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+            con.execute("INSERT INTO referral_codes(user_id,code) VALUES(?,?)", (str(user_id), code))
+            con.commit(); return code
+        finally:
+            con.close()
+
+    def user_by_code(self, code: str) -> Optional[str]:
+        con = sqlite3.connect(self._path, timeout=10)
+        row = con.execute("SELECT user_id FROM referral_codes WHERE code=?", ((code or "").strip(),)).fetchone()
+        con.close()
+        return row[0] if row else None
+
+    def attribute(self, referred_user: str, referrer_user: str) -> bool:
+        """Enregistre un filleul (une seule fois, jamais soi-même). True si nouvellement enregistré."""
+        if not referrer_user or str(referred_user) == str(referrer_user):
+            return False
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            if con.execute("SELECT 1 FROM referrals WHERE referred_user=?", (str(referred_user),)).fetchone():
+                return False
+            con.execute("INSERT INTO referrals(referred_user,referrer_user,status,created_at) VALUES(?,?, 'pending', ?)",
+                        (str(referred_user), str(referrer_user), datetime.now(timezone.utc).isoformat()))
+            con.commit(); return True
+        finally:
+            con.close()
+
+    def mark_completed(self, referred_user: str) -> Optional[str]:
+        """Marque le filleul comme complété (onboarding fini). Renvoie le parrain SI transition réussie."""
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT referrer_user, status FROM referrals WHERE referred_user=?",
+                             (str(referred_user),)).fetchone()
+            if not row or row[1] == "completed":
+                return None
+            con.execute("UPDATE referrals SET status='completed' WHERE referred_user=? AND status!='completed'",
+                        (str(referred_user),))
+            con.commit()
+            return row[0] if con.total_changes else None
+        finally:
+            con.close()
+
+    def count_completed(self, referrer_user: str) -> int:
+        con = sqlite3.connect(self._path, timeout=10)
+        n = con.execute("SELECT COUNT(*) FROM referrals WHERE referrer_user=? AND status='completed'",
+                       (str(referrer_user),)).fetchone()[0]
+        con.close()
+        return int(n)
+
+
 class Cache:
     """Cache TTL sur SQLite (utilisé pour Tavily 6 h et embeddings 7 j)."""
     def __init__(self, path: str = DB_PATH):
@@ -504,4 +574,5 @@ opp_store._ensure_contacts()
 profile_store = ProfileStore()
 usage_store = UsageStore()
 premium_store = PremiumStore()
+referral_store = ReferralStore()
 cache = Cache()

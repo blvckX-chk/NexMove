@@ -790,3 +790,19 @@ def test_wa_extract_voice():
     raw = {"type": "audio", "audio": {"id": "A1", "mime_type": "audio/ogg"}}
     t, cb, d = main._extract_incoming("whatsapp", raw)
     assert d and d.get("voice") and d["id"] == "A1"
+
+
+# ------------------ Parrainage : commande + attribution via /start ------------------
+def test_cmd_parrainage_affiche_code():
+    s = {"user_id": "par1", "chat_id": "1", "etape": "ACTIF", "profil": {}, "historique": [],
+         "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/parrainage"))
+    assert "premium" in msg.lower() and ("http" in msg.lower() or "code" in msg.lower())
+
+def test_start_avec_code_attribue(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(main.referral_store, "user_by_code", lambda c: "parrainX" if c == "PABCDEF" else None)
+    monkeypatch.setattr(main.referral_store, "attribute", lambda ref, par: seen.setdefault("v", (ref, par)) or True)
+    s = {"user_id": "filleulY", "chat_id": "9", "profil": {}, "historique": []}
+    msg, s = _run(main.process_text_message(s, "/start PABCDEF"))
+    assert seen.get("v") == ("filleulY", "parrainX") and "bienvenue" in msg.lower()

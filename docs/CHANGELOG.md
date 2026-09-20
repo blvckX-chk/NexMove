@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.47 — Parrainage : invite tes amis, gagne du Premium
+- **`/parrainage`** : chaque utilisateur a un **code/lien** de parrainage. Quand **REFERRAL_GOAL** amis
+  (défaut 2) créent leur profil via son lien (`t.me/<bot>?start=<code>`), le parrain reçoit
+  **REFERRAL_REWARD_DAYS** (défaut 30) jours de Premium — à chaque palier — et est notifié.
+- `/start <code>` (deep-link Telegram) attribue automatiquement le filleul. Boucle virale d'acquisition.
+- `ReferralStore` (codes stables, filleul unique, comptage des validés). Config : `BOT_USERNAME`,
+  `REFERRAL_GOAL`, `REFERRAL_REWARD_DAYS`.
+- **+5 tests**. **163/163 verts**.
+
 ## v2.46 — Notes vocales : le bot comprend les messages audio
 - **Vocaux transcrits puis traités comme du texte** (Telegram & WhatsApp) : l'utilisateur peut **parler**
   au lieu d'écrire — transcription via Gemini (`transcribe_audio`), puis passage dans tout le pipeline normal

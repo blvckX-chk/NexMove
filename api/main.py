@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.46.0"
+VERSION         = "2.47.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -116,6 +116,10 @@ FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guid
 FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
 FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
+# Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
+BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
+REFERRAL_GOAL       = int(os.getenv("REFERRAL_GOAL", "2"))
+REFERRAL_REWARD_DAYS = int(os.getenv("REFERRAL_REWARD_DAYS", "30"))
 # Tiers payants : plafond d'alertes mots-clés par niveau (l'illimité = grand nombre).
 ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999}
 _PREMIUM_TIERS = ("premium", "pro", "vip")
@@ -205,7 +209,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
-                profile_store, profile_quality, usage_store, premium_store)
+                profile_store, profile_quality, usage_store, premium_store, referral_store)
 
 
 # (Embeddings/vision : voir llm.py — PR-B)
@@ -528,6 +532,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "📊 *Mon espace*\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
             "💎 /offres (abonnements) · /premium <code> (activer) · /monabo (mon statut)\n"
+            "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
             "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
@@ -844,6 +849,16 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
         session["onboarding_complete"] = False; session["pref_current"] = None
+        # Parrainage : /start <code> (lien t.me/bot?start=Pxxxxx) attribue le filleul au parrain.
+        parts = t.split(maxsplit=1)
+        arg = (parts[1].strip() if len(parts) > 1 else "").replace("ref_", "").replace("ref-", "")
+        if arg:
+            try:
+                ref = referral_store.user_by_code(arg)
+                if ref:
+                    referral_store.attribute(str(session.get("user_id")), str(ref))
+            except Exception as e:
+                logger.warning(f"referral attribute: {e}")
         msg = ("👋 *Bienvenue sur NexMove !*\n"
                "_Ton agent IA pour préparer ton prochain départ : études, emploi, bourses et mobilité internationale._\n\n"
                "Voici comment ça marche :\n"
@@ -1502,6 +1517,18 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/parrainage") or low.startswith("/parrain") or low.startswith("/invite"):
+        code = referral_store.code_for(session.get("user_id"))
+        n = referral_store.count_completed(session.get("user_id"))
+        reste = REFERRAL_GOAL - (n % REFERRAL_GOAL) if (n % REFERRAL_GOAL) else REFERRAL_GOAL
+        lien = f"https://t.me/{BOT_USERNAME}?start={code}" if BOT_USERNAME else ""
+        msg = ("🎁 *Parraine, gagne du Premium !*\n"
+               f"Invite *{REFERRAL_GOAL}* amis qui créent leur profil → *{REFERRAL_REWARD_DAYS} jours Premium* offerts (à chaque palier).\n\n"
+               + (f"🔗 Ton lien à partager : {lien}\n" if lien else f"Ton code : *{code}* — ton ami tape */start {code}* au 1er message.\n")
+               + f"\n✅ Filleuls validés : *{n}* · plus que *{reste}* pour la prochaine récompense.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/gencodes"):
         if not _is_admin(session):
             msg = "🔒 Commande réservée à l'administrateur."
@@ -1945,6 +1972,21 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 session["recovery_code"] = profile_store.save(session.get("user_id"), session)
             except Exception as e:
                 logger.error(f"profile save: {e}")
+            # Parrainage : ce filleul vient de finir son profil -> récompense le parrain si palier atteint.
+            try:
+                parrain = referral_store.mark_completed(str(session.get("user_id")))
+                if parrain:
+                    cnt = referral_store.count_completed(parrain)
+                    if cnt and cnt % REFERRAL_GOAL == 0:
+                        ps = session_manager.get(parrain)
+                        if ps:
+                            _apply_premium(ps, "premium", REFERRAL_REWARD_DAYS)
+                            session_manager.set(parrain, ps)
+                            if _valid_id(ps.get("chat_id")):
+                                await send_message(str(ps.get("chat_id")),
+                                    f"🎉 *Parrainage réussi !* Tu as {cnt} filleuls → *{REFERRAL_REWARD_DAYS} jours Premium* offerts. Tape /monabo.")
+            except Exception as e:
+                logger.error(f"referral reward: {e}")
             msg = "🎉 *Profil validé !* Voici déjà des pistes pour toi :\n"
             # Première veille AUTOMATIQUE : de la valeur immédiate (levier de rétention).
             try:
