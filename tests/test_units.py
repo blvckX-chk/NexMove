@@ -259,8 +259,8 @@ def test_flux_intention_dormante_captee_avant_cv():
     session = {"user_id": "t-intent", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
                "onboarding_complete": False}
     msg, session = _run(main.process_text_message(session, "je cherche une bourse de master au Canada"))
-    assert session.get("pending_intent", "").startswith("/")
-    assert "prêt" in msg.lower() or "noté" in msg.lower()
+    assert session.get("pending_intent", "").startswith("/")   # intention mémorisée pour la fin de l'onboarding
+    assert isinstance(msg, str) and len(msg) > 0                # une réponse est renvoyée (IA ou pitch de repli)
 
 
 # ------------------ Commandes /moi et /moncode (chemins sans écriture DB) ------------------
@@ -806,3 +806,34 @@ def test_start_avec_code_attribue(monkeypatch):
     s = {"user_id": "filleulY", "chat_id": "9", "profil": {}, "historique": []}
     msg, s = _run(main.process_text_message(s, "/start PABCDEF"))
     assert seen.get("v") == ("filleulY", "parrainX") and "bienvenue" in msg.lower()
+
+
+# ------------------ Pré-onboarding : répond à tout via IA (pas de mots-clés) ------------------
+def test_preonboarding_repond_via_ia(monkeypatch):
+    async def _fake_groq(system, prompt, temperature=0.2, max_tokens=1000, json_mode=True, **kw):
+        assert json_mode is False   # réponse texte libre
+        return "Oui, tes données sont protégées (RGPD) et tu peux tout effacer avec /supprimer. Envoie ton CV quand tu veux."
+    monkeypatch.setattr(main, "call_groq", _fake_groq)
+    s = {"user_id": "po1", "chat_id": "1", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
+         "onboarding_complete": False}
+    msg, s = _run(main.process_text_message(s, "Mes données sont couvertes par le RGPD ?"))
+    assert "rgpd" in msg.lower() or "supprimer" in msg.lower()
+
+# ------------------ /chances : score d'admissibilité (gate premium) ------------------
+def test_chances_demande_cible(monkeypatch):
+    s = {"user_id": "ch1", "chat_id": "1", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}},
+         "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/chances"))
+    assert "cible" in msg.lower()
+
+def test_chances_calcule_score(monkeypatch):
+    async def _fake_groq(system, prompt, temperature=0.2, max_tokens=1000, json_mode=True, **kw):
+        return {"score": 72, "verdict": "Bon profil", "forces": ["python"], "manques": ["anglais"],
+                "actions": ["passer le TOEFL"], "conseil": "vas-y"}
+    monkeypatch.setattr(main, "call_groq", _fake_groq)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    s = {"user_id": "ch2", "chat_id": "1", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}},
+         "historique": [], "onboarding_complete": True}
+    main._apply_premium(s, "premium", 30)   # premium -> pas de quota
+    msg, s = _run(main.process_text_message(s, "/chances master info France"))
+    assert "72/100" in msg and "augmenter" in msg.lower()

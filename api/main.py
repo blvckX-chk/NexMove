@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.47.0"
+VERSION         = "2.48.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -115,6 +115,7 @@ FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de C
 FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
 FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
 FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
+FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (score d'admissibilité) / jour (gratuit)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -526,7 +527,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n"
-            "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n\n"
+            "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n"
+            "🎯 /chances <cible> (tes chances d'admission/visa/bourse + comment les augmenter)\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
@@ -619,8 +621,34 @@ _WELCOME_PITCH = (
     "• 📄 je prépare tes *dossiers* : CV, lettre de motivation, projet d'études ;\n"
     "• 🧭 je te *guide* sur les plateformes (/guide + capture d'écran) et t'entraîne aux *entretiens* (/simulation).\n\n"
     "👉 Pour des conseils *personnalisés*, envoie-moi ton *CV* (PDF, Word ou image).\n"
-    "📝 *Pas encore de CV ?* Écris « je n'ai pas de CV » (ou /creercv) — je t'en crée un en 5 questions."
+    "📝 *Pas encore de CV ?* Tape /creercv — je t'en crée un en 5 questions."
 )
+
+async def _preonboarding_reply(session: dict, t: str) -> str:
+    """Répond à N'IMPORTE QUELLE question d'un visiteur pas encore onboardé (RGPD, prix, fiabilité,
+    « c'est quoi », etc.) via l'IA, puis invite doucement à envoyer le CV. Pas de mots-clés imposés."""
+    system = (
+        "Tu es NexMove, l'assistant IA de mobilité, d'orientation et d'emploi pour les francophones "
+        "d'Afrique de l'Ouest (Bénin…). L'utilisateur n'a PAS encore créé son profil. Réponds DIRECTEMENT "
+        "et honnêtement à sa question, quelle qu'elle soit, en français, en TUTOYANT, ton chaleureux et concret.\n"
+        "Faits à connaître :\n"
+        "- Ce que tu fais : trouver de VRAIES opportunités (emplois, stages, bourses, fellowships — locales ET "
+        "à l'étranger), préparer CV/lettre/projet d'études, guider pas à pas (Campus France, Canada, visa), "
+        "coacher les entretiens.\n"
+        "- Gratuit pour commencer ; des options avancées sont en abonnement Premium.\n"
+        "- Confidentialité/RGPD : ses données restent confidentielles, servent uniquement à l'accompagner, "
+        "ne sont pas revendues ; il peut TOUT effacer quand il veut avec /supprimer (droit à l'effacement).\n"
+        "- Pour démarrer : envoyer son CV (PDF, Word ou image), ou /creercv s'il n'en a pas.\n"
+        "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
+        "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON)."
+    )
+    try:
+        r = await call_groq(system, t, temperature=0.4, max_tokens=350, json_mode=False, tier="fast")
+        r = (r or "").strip()
+        return r or _WELCOME_PITCH
+    except Exception as e:
+        logger.warning(f"[preonboarding] {e}")
+        return _WELCOME_PITCH
 
 def _is_pitch_question(low: str) -> bool:
     """Question d'ouverture / salutation à laquelle on répond AVANT de demander le CV."""
@@ -1046,9 +1074,59 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/chances") or low.startswith("/monscore"):
+        if not session.get("onboarding_complete"):
+            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) — j'évalue ensuite tes chances."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        if not cible:
+            msg = ("🎯 *Score d'admissibilité* — j'estime tes chances pour une cible précise.\n"
+                   "Ex : `/chances master informatique en France` · `/chances visa étudiant Canada` · "
+                   "`/chances bourse Eiffel` · `/chances emploi data analyst Cotonou`.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        if not ok:
+            msg = (_quota_exceeded_msg("le score d'admissibilité")
+                   + "\n\n💎 Les abonnés ont le score *illimité* + le détail complet — tape /offres.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        try:
+            profil = session.get("profil", {}) or {}
+            system = ("Tu es évaluateur d'admissibilité HONNÊTE (études/visa/bourse/emploi) pour un candidat "
+                      "d'Afrique de l'Ouest. À partir de son PROFIL et de la CIBLE, estime ses chances de façon "
+                      "réaliste (ni faussement rassurant, ni décourageant). Donne un score sur 100, un verdict "
+                      "court, 3 forces, 3 manques/risques, et 3 ACTIONS concrètes pour AUGMENTER ses chances. "
+                      "Réponds en JSON.")
+            prompt = (f"PROFIL: {_profil_txt_court(profil)}\nCIBLE: {cible}\n"
+                      'JSON: {"score":0,"verdict":"","forces":["",""],"manques":["",""],"actions":["",""],"conseil":""}')
+            r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
+            _quota_bump(session, "score")
+            sc = int(r.get("score", 0) or 0)
+            emoji = "🟢" if sc >= 66 else ("🟡" if sc >= 40 else "🔴")
+            barre = "▓" * round(sc / 10) + "░" * (10 - round(sc / 10))
+            msg = f"🎯 *Chances pour :* {_md_clean(cible)[:60]}\n{emoji} *{sc}/100*  {barre}\n"
+            if r.get("verdict"):
+                msg += f"\n{_md_clean(r['verdict'])}\n"
+            if r.get("forces"):
+                msg += "\n💪 *Tes atouts :*\n" + "\n".join(f"• {_md_clean(x)}" for x in r["forces"][:3]) + "\n"
+            if r.get("manques"):
+                msg += "\n⚠️ *À combler :*\n" + "\n".join(f"• {_md_clean(x)}" for x in r["manques"][:3]) + "\n"
+            if r.get("actions"):
+                msg += "\n🚀 *Pour augmenter tes chances :*\n" + "\n".join(f"{i}. {_md_clean(x)}" for i, x in enumerate(r["actions"][:3], 1)) + "\n"
+            if r.get("conseil"):
+                msg += f"\n💡 {_md_clean(r['conseil'])}\n"
+            msg += "\n▶️ Prépare : /dossier <cible> · /postuler <cible> · /formations <domaine>."
+            if not _is_premium(session):
+                msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui — illimité en Premium : /offres.)_"
+        except Exception as e:
+            logger.error(f"chances: {e}"); msg = "😕 Estimation indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/canada"):
-        profil = session.get("profil", {}) or {}
-        prefs = profil.get("preferences", {}) or {}
         if not profil.get("identite"):
             msg = "📄 Fais d'abord /start puis envoie ton CV — je détermine ensuite la meilleure voie Canada pour toi."
         else:
@@ -2030,30 +2108,19 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    # Pas encore onboardé : on reste utile SANS être rigide (on répond avant de réclamer le CV)
+    # Pas encore onboardé : on COMPREND n'importe quelle phrase (IA), on ne réclame pas bêtement le CV.
     if not session.get("onboarding_complete"):
-        # 1) « Je n'ai pas de CV » -> on lance la création guidée
+        # 1) « Je n'ai pas de CV » -> création guidée directe.
         if _wants_no_cv(low):
             _push(session, "user", t)
             return await _cvbuild_start(session)
-        # 2) Question d'ouverture / salutation -> on explique ce qu'on fait AVANT de demander le CV
-        if _is_pitch_question(low):
-            _push(session, "user", t)
-            _push(session, "assistant", _WELCOME_PITCH); session["derniere_activite"] = now
-            return _WELCOME_PITCH, session
         _push(session, "user", t)
-        # 3) Intention forte exprimée AVANT la fin de l'onboarding : mémorisée pour plus tard.
+        # 2) Intention forte captée au passage (déclenchée à la fin de l'onboarding) — sans bloquer la réponse.
         intent_cmd = _free_text_to_command(low, t)
         if intent_cmd and len(t) > 3:
             session["pending_intent"] = intent_cmd
-            msg = ("📌 Noté — *je m'en occupe dès que ton profil est prêt*.\n\n"
-                   "Envoie-moi d'abord ton *CV (PDF, Word ou image)* pour que je personnalise mes réponses.\n"
-                   "📝 Pas encore de CV ? Tape /creercv — je t'en crée un.")
-        else:
-            msg = ("📄 Pour des conseils *personnalisés*, envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton "
-                   "profil et je te fais un bilan d'orientation.\n"
-                   "📝 *Pas encore de CV ?* Tape /creercv — je t'en crée un en 5 questions.\n"
-                   "❓ Tu veux d'abord savoir ce que je fais ? Écris « à quoi tu sers ».")
+        # 3) On répond VRAIMENT à sa question (RGPD, prix, fiabilité, « c'est quoi »… n'importe quoi) via l'IA.
+        msg = await _preonboarding_reply(session, t)
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.48 — Conversation vraiment intelligente + score d'admissibilité /chances
+- **Comprend N'IMPORTE QUELLE phrase avant l'onboarding** : plus de mots-clés imposés. À toute question
+  (RGPD/vie privée, prix, fiabilité, « c'est quoi », etc.) le bot répond par l'IA (`_preonboarding_reply`,
+  faits RGPD/gratuité inclus) puis invite doucement à envoyer le CV. Fini le « écris à quoi tu sers » et le
+  « envoie ton CV » hors sujet.
+- **`/chances <cible>`** — score d'admissibilité honnête (/100) + atouts, manques et **actions concrètes pour
+  augmenter ses chances** (visa, admission, bourse, emploi). Différenciation forte.
+- **Incitation à l'abonnement** : `/chances` limité à `FREE_SCORE_DAILY` (2/j) pour les gratuits, illimité en
+  Premium ; message de quota et compteur « restant » qui renvoient vers /offres.
+- **+4 tests**. **166/166 verts**.
+
 ## v2.47 — Parrainage : invite tes amis, gagne du Premium
 - **`/parrainage`** : chaque utilisateur a un **code/lien** de parrainage. Quand **REFERRAL_GOAL** amis
   (défaut 2) créent leur profil via son lien (`t.me/<bot>?start=<code>`), le parrain reçoit
