@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.45.0"
+VERSION         = "2.46.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -114,6 +114,7 @@ _ADMIN_IDS = {x.strip() for x in (ADMIN_CHAT_ID + "," + os.getenv("ADMIN_IDS", "
 FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
 FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
 FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
+FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Tiers payants : plafond d'alertes mots-clés par niveau (l'illimité = grand nombre).
 ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999}
@@ -198,7 +199,7 @@ class MobilityRequest(BaseModel):
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
 from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
-                 analyze_screenshot_vision,
+                 analyze_screenshot_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY)  # noqa: F401
 
@@ -2842,7 +2843,10 @@ def _extract_incoming(channel, raw):
                 doc = {"id": ph.get("file_id"), "filename": "cv.jpg"}
             elif "text" in m:
                 text = m.get("text", "")
-            elif m.get("voice") or m.get("audio") or m.get("video") or m.get("video_note") or m.get("sticker"):
+            elif m.get("voice") or m.get("audio"):
+                a = m.get("voice") or m.get("audio")
+                doc = {"id": a.get("file_id"), "voice": True, "mime": a.get("mime_type") or "audio/ogg"}
+            elif m.get("video") or m.get("video_note") or m.get("sticker"):
                 text = "__wa_unsupported__"
     elif channel == "whatsapp":
         t = raw.get("type")
@@ -2862,7 +2866,10 @@ def _extract_incoming(channel, raw):
             doc = {"id": im.get("id"), "filename": f"cv{ext}"}
         elif t == "button":
             callback = raw.get("button", {}).get("payload")
-        elif t in ("audio", "voice", "video", "sticker"):
+        elif t in ("audio", "voice"):
+            a = raw.get(t, {}) or {}
+            doc = {"id": a.get("id"), "voice": True, "mime": a.get("mime_type") or "audio/ogg"}
+        elif t in ("video", "sticker"):
             text = "__wa_unsupported__"   # message poli renvoyé plus bas
     elif channel == "messenger":
         pb = raw.get("postback"); msg = raw.get("message")
@@ -2905,6 +2912,21 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
     if username and username != "utilisateur":
         session["username"] = username
     text, callback, doc = _extract_incoming(channel, raw)
+    # Message vocal : on télécharge, on transcrit (Gemini), et on traite comme du texte.
+    if doc and doc.get("voice"):
+        ok, _ = _quota_check(session, "voice", FREE_VOICE_DAILY)
+        if not ok:
+            await deliver_text(session, _quota_exceeded_msg("les messages vocaux")
+                               + "\n\n💎 Les abonnés ont les vocaux *illimités* — tape /offres.")
+            return
+        audio = await _download_doc(channel, doc)
+        transcript = await transcribe_audio(audio, doc.get("mime", "audio/ogg")) if audio else ""
+        if not transcript or len(transcript.strip()) < 2:
+            await deliver_text(session, "🎙️ Je n'ai pas bien compris ton vocal. Réessaie près du micro, ou écris-le.")
+            return
+        _quota_bump(session, "voice")
+        logger.info(f"[voice] {channel} transcrit: {transcript[:60]!r}")
+        text, doc = transcript, None      # on continue dans le flux TEXTE ci-dessous
     if doc:
         pdf = await _download_doc(channel, doc)
         await process_cv(session, pdf, doc.get("filename", "cv.pdf"))

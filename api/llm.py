@@ -284,3 +284,31 @@ async def analyze_screenshot_vision(img_bytes: bytes, mime: str = "image/jpeg", 
     except Exception as e:
         logger.warning(f"[guide-vision] {e}")
         return ""
+
+
+async def transcribe_audio(audio_bytes: bytes, mime: str = "audio/ogg") -> str:
+    """Transcrit un message vocal (Telegram/WhatsApp) en texte via Gemini. Renvoie '' si échec.
+    Permet aux utilisateurs qui préfèrent parler d'utiliser le bot naturellement."""
+    if not (GEMINI_API_KEY and audio_bytes):
+        return ""
+    payload = {
+        "contents": [{"parts": [
+            {"text": ("Transcris fidèlement ce message vocal en TEXTE. Rends UNIQUEMENT la transcription, "
+                      "sans commentaire ni guillemets. Si c'est du français, garde le français.")},
+            {"inline_data": {"mime_type": mime or "audio/ogg", "data": base64.b64encode(audio_bytes).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 500},
+    }
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL_FAST}:generateContent?key={GEMINI_API_KEY}"
+        r = await http().post(url, json=payload, timeout=45.0)
+        if r.status_code != 200:
+            logger.warning(f"[transcribe] {r.status_code}: {r.text[:150]}")
+            return ""
+        cands = r.json().get("candidates") or []
+        if not cands:
+            return ""
+        return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", [])).strip()
+    except Exception as e:
+        logger.warning(f"[transcribe] {e}")
+        return ""

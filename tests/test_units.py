@@ -752,10 +752,11 @@ def test_tg_extract_callback():
     t, cb, d = main._extract_incoming("telegram", upd)
     assert cb == "onb:oui"
 
-def test_tg_extract_voice_poliment_rejete():
+def test_tg_extract_voice_transcrit():
+    # Les vocaux sont désormais transcrits (doc voice), plus rejetés.
     upd = {"message": {"voice": {"file_id": "v"}, "chat": {"id": 42}}}
     t, cb, d = main._extract_incoming("telegram", upd)
-    assert t == "__wa_unsupported__"
+    assert d and d.get("voice") and d["id"] == "v"
 
 
 # ------------------ Activation d'un code premium collé tel quel (UX client) ------------------
@@ -772,3 +773,20 @@ def test_texte_normal_pas_pris_pour_un_code():
          "historique": [], "onboarding_complete": False}
     msg, s = _run(main.process_text_message(s, "je cherche un stage"))
     assert not main._is_premium(s)   # aucun code -> pas d'activation
+
+
+# ------------------ Notes vocales : parsing (Telegram + WhatsApp) ------------------
+def test_tg_extract_voice():
+    upd = {"message": {"voice": {"file_id": "V1", "mime_type": "audio/ogg"}, "chat": {"id": 42}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert d and d.get("voice") and d["id"] == "V1"
+
+def test_tg_video_toujours_rejete():
+    upd = {"message": {"video": {"file_id": "vid"}, "chat": {"id": 42}}}
+    t, cb, d = main._extract_incoming("telegram", upd)
+    assert t == "__wa_unsupported__" and d is None
+
+def test_wa_extract_voice():
+    raw = {"type": "audio", "audio": {"id": "A1", "mime_type": "audio/ogg"}}
+    t, cb, d = main._extract_incoming("whatsapp", raw)
+    assert d and d.get("voice") and d["id"] == "A1"

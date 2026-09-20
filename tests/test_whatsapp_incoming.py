@@ -47,9 +47,10 @@ def test_wa_incoming_button_template():
     assert cb == "act:aide"
 
 
-def test_wa_incoming_audio_poliment_rejete():
-    t, cb, d = main._extract_incoming("whatsapp", {"type": "audio"})
-    assert t == "__wa_unsupported__"
+def test_wa_incoming_audio_transcrit():
+    # Les audios/vocaux sont désormais transcrits (doc voice), plus rejetés.
+    t, cb, d = main._extract_incoming("whatsapp", {"type": "audio", "audio": {"id": "A1"}})
+    assert d and d.get("voice") and d["id"] == "A1"
 
 
 def test_wa_incoming_video_poliment_rejete():

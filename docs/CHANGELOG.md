@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.46 — Notes vocales : le bot comprend les messages audio
+- **Vocaux transcrits puis traités comme du texte** (Telegram & WhatsApp) : l'utilisateur peut **parler**
+  au lieu d'écrire — transcription via Gemini (`transcribe_audio`), puis passage dans tout le pipeline normal
+  (onboarding, commandes, intentions…). Accessibilité majeure pour la cible.
+- Quota `FREE_VOICE_DAILY` (défaut 20/jour, admin & abonnés illimités) ; vidéos/stickers restent refusés
+  poliment ; vocal incompris → message clair.
+- **+3 tests** (parsing vocal Telegram/WhatsApp, vidéo toujours refusée). **159/159 verts**.
+
 ## Sécurité & robustesse (config) — sept. 2026
 - **API en écoute localhost uniquement** (`docker-compose` : `127.0.0.1:8000:8000`) — plus exposée
   directement à Internet ; jointe seulement via le tunnel Cloudflare (même machine).
