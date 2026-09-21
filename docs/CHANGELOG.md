@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.49 — Dépasser KaizenJob : score par compétence + pipeline de candidatures
+- **`/compatibilite <poste>`** (alias `/match`) : score de compatibilité **décomposé compétence par
+  compétence** (ex. Python 90 % ▓▓▓▓▓▓▓▓▓░, SQL 70 %…) + compétences manquantes + verdict — la fonction
+  phare du concurrent, en conversationnel. Limité (FREE_SCORE_DAILY) gratuit, illimité Premium.
+- **Pipeline de candidatures (mini-CRM)** : `/mescandidatures` liste tes dossiers avec leur statut
+  (📝 préparation · 📤 envoyée · 🔁 relancée · 🎤 entretien · 📨 réponse · ✅ acceptée · ❌ refusée · 🔒 clôturée) ;
+  `/candidature <statut> <cible>` met à jour (reconnaît les formulations naturelles).
+- **+5 tests**. **170/170 verts**.
+
 ## v2.48 — Conversation vraiment intelligente + score d'admissibilité /chances
 - **Comprend N'IMPORTE QUELLE phrase avant l'onboarding** : plus de mots-clés imposés. À toute question
   (RGPD/vie privée, prix, fiabilité, « c'est quoi », etc.) le bot répond par l'IA (`_preonboarding_reply`,

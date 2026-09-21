@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.48.0"
+VERSION         = "2.49.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -127,6 +127,30 @@ _PREMIUM_TIERS = ("premium", "pro", "vip")
 _TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin"}
 # Détection d'un code premium collé tel quel (ex. « PRM-AB12CD34 ») -> activation sans taper /premium.
 _PRM_CODE_RE = re.compile(r"\bPRM-[A-Z0-9]{6,12}\b", re.I)
+
+# Pipeline de candidatures (mini-CRM) : statut canonique -> (libellé + emoji) ; mots reconnus -> canonique.
+_CAND_STATUTS = {
+    "en_preparation": ("En préparation", "📝"), "envoyee": ("Envoyée", "📤"),
+    "relance": ("Relancée", "🔁"), "entretien": ("Entretien", "🎤"),
+    "reponse": ("Réponse reçue", "📨"), "acceptee": ("Acceptée 🎉", "✅"),
+    "refusee": ("Refusée", "❌"), "cloturee": ("Clôturée", "🔒"),
+}
+_STATUT_ALIASES = {
+    "prepa": "en_preparation", "préparation": "en_preparation", "preparation": "en_preparation",
+    "envoye": "envoyee", "envoyé": "envoyee", "envoyée": "envoyee", "envoi": "envoyee", "postule": "envoyee",
+    "relance": "relance", "relancé": "relance", "relancee": "relance",
+    "entretien": "entretien", "interview": "entretien", "rdv": "entretien",
+    "reponse": "reponse", "réponse": "reponse", "repondu": "reponse",
+    "accepte": "acceptee", "accepté": "acceptee", "acceptée": "acceptee", "admis": "acceptee", "pris": "acceptee",
+    "refus": "refusee", "refuse": "refusee", "refusé": "refusee", "refusée": "refusee", "rejete": "refusee",
+    "cloture": "cloturee", "clôturé": "cloturee", "cloturee": "cloturee", "fini": "cloturee", "abandon": "cloturee",
+}
+
+def _norm_statut(word: str) -> str:
+    w = (word or "").strip().lower()
+    if w in _CAND_STATUTS:
+        return w
+    return _STATUT_ALIASES.get(w, "")
 CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
 CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
 CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
@@ -528,7 +552,8 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n"
             "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n"
-            "🎯 /chances <cible> (tes chances d'admission/visa/bourse + comment les augmenter)\n\n"
+            "🎯 /chances <cible> (tes chances d'admission/visa/bourse + comment les augmenter)\n"
+            "🧩 /compatibilite <poste> (score par compétence) · 🗂️ /mescandidatures (suivi)\n\n"
             "🛠️ *Outils PDF & docs*\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
@@ -1071,6 +1096,57 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 cta="Cible si besoin : /entretien visa Capago · /entretien Campus France.")
         except Exception as e:
             logger.error(f"entretien: {e}"); msg = "😕 Prépa entretien indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/compatibilite") or low.startswith("/compatibilité") or low.startswith("/match"):
+        if not session.get("onboarding_complete"):
+            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) — j'évalue ensuite ta compatibilité."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        if not cible:
+            msg = ("🧩 *Compatibilité poste* — je note ta correspondance *compétence par compétence*.\n"
+                   "Ex : `/compatibilite Développeur Python junior` · `/match Data analyst Cotonou`.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        if not ok:
+            msg = _quota_exceeded_msg("les analyses de compatibilité") + "\n\n💎 Illimité en Premium — tape /offres."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        try:
+            profil = session.get("profil", {}) or {}
+            comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", [])
+                     + profil.get("competences", {}).get("outils", []))[:20]
+            exp = "; ".join(f"{e.get('poste','')} @ {e.get('organisation','')}" for e in (profil.get("experience") or [])[:4])
+            system = ("Tu évalues la COMPATIBILITÉ entre un candidat et un POSTE. Décompose PAR COMPÉTENCE clé du "
+                      "poste : nom + pourcentage 0-100 de correspondance avec le profil. Donne un score global 0-100, "
+                      "les compétences MANQUANTES à acquérir, et un verdict honnête. Réponds en JSON.")
+            prompt = (f"COMPÉTENCES DU CANDIDAT: {', '.join(comps) or '—'}\nEXPÉRIENCES: {exp or '—'}\n"
+                      f"RÉSUMÉ: {profil.get('resume_profil','')[:200]}\nPOSTE VISÉ: {cible}\n"
+                      'JSON: {"global":0,"competences":[{"nom":"","pct":0}],"manquantes":[""],"verdict":"","conseil":""}')
+            r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
+            _quota_bump(session, "score")
+            g = int(r.get("global", 0) or 0)
+            lab = "Excellent" if g >= 80 else ("Bon" if g >= 60 else ("Moyen" if g >= 40 else "Faible"))
+            msg = f"🧩 *Compatibilité :* {_md_clean(cible)[:55]}\n🎯 *{g}/100* — _{lab}_\n"
+            for c in (r.get("competences") or [])[:8]:
+                nom = _md_clean(str(c.get("nom", "")))[:26]; pct = int(c.get("pct", 0) or 0)
+                if nom:
+                    msg += f"• {nom:<26} {pct:3d}%  {'▓' * round(pct/10)}{'░' * (10 - round(pct/10))}\n"
+            if r.get("manquantes"):
+                msg += "\n➕ *À acquérir :* " + _md_clean(", ".join(str(x) for x in r["manquantes"][:5])) + "\n"
+            if r.get("verdict"):
+                msg += f"\n{_md_clean(r['verdict'])}\n"
+            if r.get("conseil"):
+                msg += f"💡 {_md_clean(r['conseil'])}\n"
+            msg += "\n▶️ /postuler <cible> (CV + lettre adaptés) · /formations <domaine> (combler les manques)."
+            if not _is_premium(session):
+                msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui — illimité en Premium : /offres.)_"
+        except Exception as e:
+            logger.error(f"compatibilite: {e}"); msg = "😕 Analyse indisponible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1888,6 +1964,39 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         except Exception as e:
             logger.error(f"[timeline] {e}")
             msg = "😕 Génération de la feuille de route impossible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/mescandidatures") or low.startswith("/candidatures") or low.startswith("/suivi") or low.startswith("/pipeline"):
+        cands = opp_store.list_candidatures(session.get("user_id"))
+        if not cands:
+            msg = ("🗂️ *Tes candidatures* — vide pour l'instant.\n"
+                   "Prépare un dossier avec /dossier <cible> ou /postuler <cible> : il apparaîtra ici, et tu suivras son avancement.")
+        else:
+            lignes = []
+            for (cible, deadline, statut) in cands[:20]:
+                lib, emo = _CAND_STATUTS.get(statut or "en_preparation", ("En préparation", "📝"))
+                d = f" · 📅 {_md_clean(deadline)}" if deadline else ""
+                lignes.append(f"{emo} *{_md_clean(cible)[:48]}* — _{lib}_{d}")
+            msg = ("🗂️ *Suivi de tes candidatures*\n" + "\n".join(lignes)
+                   + "\n\n✏️ Mettre à jour : `/candidature <statut> <cible>`\n"
+                     "_statuts : envoyée · relancée · entretien · réponse · acceptée · refusée · clôturée_")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/candidature") and not low.startswith("/candidatures"):
+        parts = t.split(maxsplit=2)   # /candidature <statut> <cible...>
+        statut = _norm_statut(parts[1]) if len(parts) > 1 else ""
+        cible = parts[2].strip() if len(parts) > 2 else ""
+        if not statut or not cible:
+            msg = ("✏️ *Mettre à jour une candidature*\n`/candidature <statut> <cible>`\n"
+                   "Ex : `/candidature entretien Master informatique`\n"
+                   "_statuts : envoyée · relancée · entretien · réponse · acceptée · refusée · clôturée_")
+        else:
+            n = opp_store.update_statut(session.get("user_id"), cible, statut)
+            lib, emo = _CAND_STATUTS[statut]
+            msg = (f"{emo} Mis à jour : *{_md_clean(cible)[:48]}* → _{lib}_." if n else
+                   f"🤔 Aucune candidature ne correspond à « {_md_clean(cible)} ». Vérifie avec /mescandidatures.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

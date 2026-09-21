@@ -837,3 +837,30 @@ def test_chances_calcule_score(monkeypatch):
     main._apply_premium(s, "premium", 30)   # premium -> pas de quota
     msg, s = _run(main.process_text_message(s, "/chances master info France"))
     assert "72/100" in msg and "augmenter" in msg.lower()
+
+
+# ------------------ Statuts candidatures + commandes ------------------
+def test_norm_statut():
+    assert main._norm_statut("entretien") == "entretien"
+    assert main._norm_statut("envoyé") == "envoyee"
+    assert main._norm_statut("admis") == "acceptee"
+    assert main._norm_statut("nimportequoi") == ""
+
+def test_cmd_mescandidatures_vide():
+    s = {"user_id": "mc1", "chat_id": "1", "etape": "ACTIF", "profil": {}, "historique": [],
+         "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/mescandidatures"))
+    assert "candidature" in msg.lower()
+
+def test_cmd_compatibilite_calcule(monkeypatch):
+    async def _fake_groq(system, prompt, temperature=0.2, max_tokens=1000, json_mode=True, **kw):
+        return {"global": 84, "competences": [{"nom": "Python", "pct": 90}, {"nom": "SQL", "pct": 70}],
+                "manquantes": ["Docker"], "verdict": "Bon match", "conseil": "postule"}
+    monkeypatch.setattr(main, "call_groq", _fake_groq)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    s = {"user_id": "cp1", "chat_id": "1", "etape": "ACTIF",
+         "profil": {"identite": {"nom": "X"}, "competences": {"techniques": ["python"]}},
+         "historique": [], "onboarding_complete": True}
+    main._apply_premium(s, "premium", 30)
+    msg, s = _run(main.process_text_message(s, "/compatibilite Dev Python"))
+    assert "84/100" in msg and "python" in msg.lower()

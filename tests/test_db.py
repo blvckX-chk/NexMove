@@ -244,3 +244,14 @@ def test_referral_attribute_et_complete(tmp_path, monkeypatch):
     assert rs.mark_completed("filleul1") == "parrain"      # transition -> renvoie le parrain
     assert rs.mark_completed("filleul1") is None           # déjà complété
     assert rs.count_completed("parrain") == 1
+
+
+# ------------------ Pipeline candidatures : update_statut ------------------
+def test_candidature_update_statut(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    st = db.OppStore()
+    st.add_candidature("u1", "Master Informatique France")
+    assert st.update_statut("u1", "informatique", "entretien") == 1
+    rows = st.list_candidatures("u1")
+    assert rows and rows[0][2] == "entretien"
+    assert st.update_statut("u1", "inexistant", "envoyee") == 0

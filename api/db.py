@@ -165,6 +165,16 @@ class OppStore:
         con.close()
         return rows
 
+    def update_statut(self, user_id, cible_query, statut) -> int:
+        """Met à jour le statut de la/les candidature(s) dont la cible contient `cible_query`.
+        Renvoie le nombre de lignes modifiées."""
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("UPDATE candidatures SET statut=? WHERE user_id=? AND lower(cible) LIKE ?",
+                    (str(statut), str(user_id), f"%{str(cible_query).lower()}%"))
+        n = con.total_changes
+        con.commit(); con.close()
+        return int(n)
+
     def all_candidatures(self):
         con = sqlite3.connect(self._path, timeout=10)
         rows = con.execute("""SELECT id,user_id,cible,deadline_iso,reminders_sent FROM candidatures
