@@ -656,6 +656,43 @@ def test_cmd_gencodes_reserve_admin(monkeypatch):
     msg, s = _run(main.process_text_message(s, "/gencodes premium 30 5"))
     assert "administrateur" in msg.lower()
 
+# ------------------ Attribution des sources (liens ?start=src_...) ------------------
+def test_start_enregistre_source_marketing():
+    s = {"user_id": "src1", "chat_id": "7", "historique": []}
+    _, s = _run(main.process_text_message(s, "/start src_etu_tt"))
+    assert s.get("source") == "src_etu_tt"
+
+def test_start_source_garde_la_premiere(monkeypatch):
+    s = {"user_id": "src2", "chat_id": "7", "historique": [], "source": "src_etu_tt"}
+    _, s = _run(main.process_text_message(s, "/start src_dip_wa"))
+    assert s.get("source") == "src_etu_tt"  # on ne remplace pas la première source
+
+def test_start_code_parrainage_nest_pas_une_source(monkeypatch):
+    monkeypatch.setattr(main.referral_store, "user_by_code", lambda c: None)
+    s = {"user_id": "src3", "chat_id": "7", "historique": []}
+    _, s = _run(main.process_text_message(s, "/start PABC123"))
+    assert not s.get("source")  # un code parrainage ne pollue pas l'attribution source
+
+def test_srcstats_reserve_admin(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/srcstats"))
+    assert "administrateur" in msg.lower()
+
+# ------------------ Signature des webhooks Meta ------------------
+def test_meta_signature_ouvert_sans_secret(monkeypatch):
+    monkeypatch.setattr(main, "META_APP_SECRET", "")
+    assert main._meta_signature_ok(b"{}", "") is True
+
+def test_meta_signature_valide_et_invalide(monkeypatch):
+    import hmac as _hmac, hashlib as _hashlib
+    monkeypatch.setattr(main, "META_APP_SECRET", "s3cr3t")
+    raw = b'{"hello":"world"}'
+    good = "sha256=" + _hmac.new(b"s3cr3t", raw, _hashlib.sha256).hexdigest()
+    assert main._meta_signature_ok(raw, good) is True
+    assert main._meta_signature_ok(raw, "sha256=deadbeef") is False
+    assert main._meta_signature_ok(raw, "") is False
+
 def test_cmd_monabo_free():
     s = {"user_id": "prem7", "chat_id": "7", "historique": [], "onboarding_complete": True}
     msg, s = _run(main.process_text_message(s, "/monabo"))

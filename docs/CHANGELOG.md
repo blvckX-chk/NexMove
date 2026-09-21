@@ -2,6 +2,19 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.50 — Identité validée + WhatsApp fiabilisé + attribution des sources
+- **Identité de marque appliquée** : baseline validée « *Études, emploi, ici ou ailleurs : l'assistant
+  pour ton prochain move.* » intégrée à l'accueil (`/start`) et au pitch d'ouverture. Doc de référence :
+  `docs/IDENTITE-NEXMOVE.md` (palette, logo, kit pub, personas).
+- **WhatsApp/Messenger fiabilisés pour la prod** : les webhooks Meta répondent **immédiatement** puis
+  traitent en **tâche de fond** (fini les timeouts/retries qui doublaient les réponses) ; **vérification de
+  signature** `X-Hub-Signature-256` activée dès que `META_APP_SECRET` est défini (bloque les faux messages
+  sur l'endpoint public). Guide à jour : `docs/GUIDE-WHATSAPP.md` (App NexMove déjà créée, ID 1590553112520815).
+- **Attribution des sources marketing** : les liens `t.me/<bot>?start=src_<persona>_<canal>` enregistrent
+  la **première** source de chaque utilisateur (sans collision avec le parrainage) ; **`/srcstats`** (admin)
+  affiche par source le nombre d'utilisateurs, le taux d'onboarding et les payants.
+- **+tests**. Suite verte.
+
 ## v2.49 — Dépasser KaizenJob : score par compétence + pipeline de candidatures
 - **`/compatibilite <poste>`** (alias `/match`) : score de compatibilité **décomposé compétence par
   compétence** (ex. Python 90 % ▓▓▓▓▓▓▓▓▓░, SQL 70 %…) + compétences manquantes + verdict — la fonction

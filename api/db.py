@@ -79,6 +79,31 @@ class SessionManager:
                 pass
         return out
 
+    def sources_stats(self) -> list:
+        """Attribution marketing : par source (src_...), total d'utilisateurs, onboarding complété, payants."""
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT data FROM sessions").fetchall()
+        con.close()
+        agg = {}
+        for (d,) in rows:
+            try:
+                s = json.loads(d)
+            except Exception:
+                continue
+            src = s.get("source") or "(direct)"
+            a = agg.setdefault(src, {"total": 0, "onboarded": 0, "paid": 0})
+            a["total"] += 1
+            if s.get("onboarding_complete"):
+                a["onboarded"] += 1
+            exp = s.get("premium_until")
+            if exp and (s.get("premium_tier") or "free") in ("premium", "pro", "vip"):
+                try:
+                    if datetime.fromisoformat(exp) > datetime.now(timezone.utc):
+                        a["paid"] += 1
+                except Exception:
+                    pass
+        return sorted(({"source": k, **v} for k, v in agg.items()), key=lambda x: -x["total"])
+
     def create_default(self, user_id: str, chat_id: str, username: str) -> dict:
         return {"user_id": str(user_id), "chat_id": str(chat_id), "username": username, "etape": "WELCOME",
                 "profil": {}, "historique": [], "cv_parsed": False, "cv_file_id": None,

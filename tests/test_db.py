@@ -246,6 +246,27 @@ def test_referral_attribute_et_complete(tmp_path, monkeypatch):
     assert rs.count_completed("parrain") == 1
 
 
+# ------------------ Attribution des sources marketing ------------------
+def test_sources_stats_agrege_par_source(tmp_path, monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    db = _fresh_db(tmp_path, monkeypatch)
+    sm = db.SessionManager()
+    futur = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+    passe = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    sm.set("a", {"user_id": "a", "source": "src_etu_tt", "onboarding_complete": True,
+                 "premium_tier": "premium", "premium_until": futur})
+    sm.set("b", {"user_id": "b", "source": "src_etu_tt", "onboarding_complete": False})
+    sm.set("c", {"user_id": "c", "source": "src_dip_wa", "onboarding_complete": True,
+                 "premium_tier": "premium", "premium_until": passe})  # expiré -> pas payant
+    sm.set("d", {"user_id": "d", "onboarding_complete": True})         # (direct)
+    stats = {r["source"]: r for r in sm.sources_stats()}
+    assert stats["src_etu_tt"]["total"] == 2
+    assert stats["src_etu_tt"]["onboarded"] == 1
+    assert stats["src_etu_tt"]["paid"] == 1
+    assert stats["src_dip_wa"]["paid"] == 0
+    assert stats["(direct)"]["total"] == 1
+
+
 # ------------------ Pipeline candidatures : update_statut ------------------
 def test_candidature_update_statut(tmp_path, monkeypatch):
     db = _fresh_db(tmp_path, monkeypatch)

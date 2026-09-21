@@ -1,7 +1,11 @@
 # NexMove — Guide de mise en service WhatsApp Cloud API
 
-Le **code est prêt** (channels.py + endpoints webhook + parseur photos/documents/boutons). Il ne reste
-qu'à faire la **config côté Meta** — ~30 min. Suis les étapes dans l'ordre.
+Le **code est prêt** (channels.py + endpoints webhook + parseur photos/documents/boutons/vocaux). Il ne
+reste qu'à faire la **config côté Meta** — ~30 min. Suis les étapes dans l'ordre.
+
+> ✅ **App déjà créée** : « NexMove » — ID `1590553112520815`, portefeuille **BlvckUnlimited**, mode
+> *Développement*. Tu peux donc **sauter les étapes 1 et 2** et aller directement à l'étape 3 (récupérer
+> les clés). Les étapes 1–2 restent documentées au cas où.
 
 ---
 
@@ -9,7 +13,9 @@ qu'à faire la **config côté Meta** — ~30 min. Suis les étapes dans l'ordre
 
 - ✅ Envoi de messages texte, boutons, PDF/DOCX/images (`wa_text`, `wa_menu`, `wa_document`)
 - ✅ Réception : texte, boutons (button_reply / list_reply), documents PDF/Word, **photos** (analyse
-  vision Gemini), rejet poli audio/vidéo/sticker
+  vision Gemini), **notes vocales** (transcription Gemini), rejet poli vidéo/sticker
+- ✅ Traitement **en tâche de fond** (réponse immédiate à Meta → pas de timeout/retry) + vérification
+  **signature X-Hub-Signature-256** si `META_APP_SECRET` est défini
 - ✅ Endpoints webhook : `GET /webhook/whatsapp` (verify) et `POST /webhook/whatsapp` (messages)
 - ✅ Menus, /commands, procédures, outils, tout fonctionne — c'est le même code métier que Telegram
 
@@ -64,7 +70,13 @@ Ajoute (ou remplace) :
 WHATSAPP_TOKEN=EAAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx     # le jeton copié à l'étape 3
 WHATSAPP_PHONE_ID=123456789012345                        # le Phone number ID
 WHATSAPP_VERIFY_TOKEN=nexmove_verify                     # secret partagé avec Meta (au choix)
+META_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx         # recommandé — voir ci-dessous
 ```
+
+> 🔒 **`META_APP_SECRET`** (recommandé en prod) : Meta **signe** chaque appel de webhook. Si tu renseignes
+> ce secret, NexMove vérifie la signature et **rejette tout faux message** envoyé à ton endpoint public.
+> Où le trouver : **Meta > Paramètres de l'app > De base > Clé secrète** (App Secret). Laisse vide en test
+> si tu veux, mais mets-le avant d'ouvrir au public.
 
 Puis :
 
@@ -124,7 +136,7 @@ docker logs forge-nex-api --tail 20
 **Teste ensuite** :
 - Envoie un PDF (📎 → Document) → analyse OK
 - **Envoie une photo de CV** (directement 📸) → analyse via vision Gemini ✅
-- Envoie un vocal → réponse polie « je ne traite pas encore les audios »
+- **Envoie une note vocale** → le bot la transcrit et répond au contenu ✅
 - Tape `/version` → doit afficher la version
 
 ---

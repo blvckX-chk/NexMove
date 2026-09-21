@@ -1,4 +1,4 @@
-import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re, math, shutil
+import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, hmac, re, math, shutil
 import html as _htmlmod
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
@@ -100,10 +100,13 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.49.0"
+VERSION         = "2.50.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
+# App secret Meta (WhatsApp/Messenger) : si présent, on vérifie la signature X-Hub-Signature-256
+# des webhooks entrants (empêche l'injection de faux messages sur nos endpoints publics).
+META_APP_SECRET     = os.getenv("META_APP_SECRET", "")
 MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
 MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
 # --- Contact / support : où renvoyer les messages /contact ---
@@ -640,6 +643,7 @@ def _resume_prefs(prefs):
 # ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
 _WELCOME_PITCH = (
     "🧭 *NexMove, c'est quoi ?*\n"
+    "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n"
     "Je suis ton assistant IA de *mobilité et d'orientation* (Afrique de l'Ouest & international). Concrètement :\n"
     "• 🔎 je trouve de *vraies* opportunités — emplois, stages, bourses, fellowships — *locales et à l'étranger* ;\n"
     "• 🎓 je t'accompagne *pas à pas* (études en France/Campus France, Canada, visa…) ;\n"
@@ -902,10 +906,15 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
         session["onboarding_complete"] = False; session["pref_current"] = None
-        # Parrainage : /start <code> (lien t.me/bot?start=Pxxxxx) attribue le filleul au parrain.
+        # /start <code> : soit une source de campagne (src_...), soit un code de parrainage (Pxxxxx).
         parts = t.split(maxsplit=1)
-        arg = (parts[1].strip() if len(parts) > 1 else "").replace("ref_", "").replace("ref-", "")
-        if arg:
+        arg = (parts[1].strip() if len(parts) > 1 else "")
+        if arg.lower().startswith("src_"):
+            # Attribution marketing : on garde la PREMIÈRE source vue (ne pas écraser).
+            if not session.get("source"):
+                session["source"] = arg[:64]
+        elif arg:
+            arg = arg.replace("ref_", "").replace("ref-", "")
             try:
                 ref = referral_store.user_by_code(arg)
                 if ref:
@@ -913,7 +922,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             except Exception as e:
                 logger.warning(f"referral attribute: {e}")
         msg = ("👋 *Bienvenue sur NexMove !*\n"
-               "_Ton agent IA pour préparer ton prochain départ : études, emploi, bourses et mobilité internationale._\n\n"
+               "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n\n"
                "Voici comment ça marche :\n"
                "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil.\n"
                "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
@@ -1705,6 +1714,24 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/srcstats") or low.startswith("/sources-stats"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        stats = session_manager.sources_stats()
+        if not stats:
+            msg = "📊 Aucune donnée de source pour l'instant."
+        else:
+            lignes = []
+            for r in stats[:25]:
+                tx = f"{round(100*r['onboarded']/r['total'])}%" if r["total"] else "0%"
+                lignes.append(f"• `{r['source']}` — {r['total']} users · {r['onboarded']} onbo. ({tx}) · {r['paid']} payants")
+            msg = ("📊 *Attribution par source* (liens `?start=src_...`)\n" + "\n".join(lignes) +
+                   "\n\n_Convention : `src_<persona>_<canal>` (ex. src_etu_tt, src_dip_wa)._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4185,10 +4212,23 @@ async def wa_verify(request: Request):
         return Response(content=p.get("hub.challenge", ""), media_type="text/plain")
     raise HTTPException(403, "verify failed")
 
+def _meta_signature_ok(raw: bytes, header: str) -> bool:
+    """Vérifie X-Hub-Signature-256 des webhooks Meta. Ouvert si META_APP_SECRET absent (dev)."""
+    if not META_APP_SECRET:
+        return True
+    if not header or not header.startswith("sha256="):
+        return False
+    expected = hmac.new(META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header.split("=", 1)[1])
+
 @app.post("/webhook/whatsapp")
 async def wa_webhook(request: Request):
+    raw = await request.body()
+    if not _meta_signature_ok(raw, request.headers.get("X-Hub-Signature-256", "")):
+        logger.warning("wa webhook: signature invalide")
+        return {"ok": True}
     try:
-        body = await request.json()
+        body = json.loads(raw or b"{}")
         for entry in body.get("entry", []):
             for ch in entry.get("changes", []):
                 val = ch.get("value", {})
@@ -4196,7 +4236,8 @@ async def wa_webhook(request: Request):
                 for m in val.get("messages", []):
                     frm = m.get("from")
                     if frm:
-                        await route_incoming("whatsapp", frm, frm, names.get(frm, "utilisateur"), m)
+                        # Réponse immédiate à Meta, traitement en tâche de fond (évite timeouts/retries).
+                        asyncio.create_task(_bg_route("whatsapp", frm, frm, names.get(frm, "utilisateur"), m))
     except Exception as e:
         logger.error(f"wa webhook: {e}")
     return {"ok": True}
@@ -4210,13 +4251,17 @@ async def fb_verify(request: Request):
 
 @app.post("/webhook/messenger")
 async def fb_webhook(request: Request):
+    raw = await request.body()
+    if not _meta_signature_ok(raw, request.headers.get("X-Hub-Signature-256", "")):
+        logger.warning("fb webhook: signature invalide")
+        return {"ok": True}
     try:
-        body = await request.json()
+        body = json.loads(raw or b"{}")
         for entry in body.get("entry", []):
             for ev in entry.get("messaging", []):
                 psid = (ev.get("sender", {}) or {}).get("id")
                 if psid:
-                    await route_incoming("messenger", psid, psid, "utilisateur", ev)
+                    asyncio.create_task(_bg_route("messenger", psid, psid, "utilisateur", ev))
     except Exception as e:
         logger.error(f"fb webhook: {e}")
     return {"ok": True}
