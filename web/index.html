@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexMove — Études, emploi, ici ou ailleurs</title>
+<meta name="description" content="NexMove est ton assistant IA de mobilité et d'emploi sur Telegram et WhatsApp : analyse de CV, vraies opportunités (locales et à l'étranger), dossiers, entretiens. En français, à prix juste.">
+<meta property="og:title" content="NexMove — l'assistant pour ton prochain move">
+<meta property="og:description" content="Assistant IA sur Telegram & WhatsApp : CV, opportunités, dossiers, entretiens. Études, emploi, ici ou ailleurs.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ── À CONFIGURER : remplace TON_BOT par le username de ton bot (sans @) ──
+     Une seule valeur à changer ci-dessous (data-bot) puis c'est propagé partout. */
+  :root{
+    --bleu:#2F5BFF; --nuit:#0B1B4D; --ambre:#FFB020;
+    --fond:#F7F9FC; --carte:#FFFFFF; --texte:#0F172A; --gris:#5b6478;
+    --bord:#e6ebf3; --ombre:0 10px 30px rgba(11,27,77,.08);
+    --rayon:18px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --fond:#0A1024; --carte:#111a35; --texte:#eef2fb; --gris:#a4adc4;
+      --bord:#1e2a4d; --ombre:0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --fond:#0A1024; --carte:#111a35; --texte:#eef2fb; --gris:#a4adc4;
+    --bord:#1e2a4d; --ombre:0 10px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--fond);color:var(--texte);
+    font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 16px}
+  .btn{display:inline-flex;align-items:center;gap:.5rem;border:0;cursor:pointer;
+    font-weight:700;font-size:1rem;padding:.85rem 1.4rem;border-radius:999px;transition:transform .12s ease, box-shadow .12s ease}
+  .btn:active{transform:translateY(1px)}
+  .btn-amb{background:var(--ambre);color:#0F172A;box-shadow:0 8px 22px rgba(255,176,32,.35)}
+  .btn-amb:hover{transform:translateY(-2px)}
+  .btn-ghost{background:transparent;color:var(--texte);border:1.5px solid var(--bord);font-weight:600}
+  .btn-blue{background:var(--bleu);color:#fff;box-shadow:0 8px 22px rgba(47,91,255,.35)}
+  .btn-blue:hover{transform:translateY(-2px)}
+
+  /* Header */
+  header{position:sticky;top:0;z-index:20;backdrop-filter:saturate(1.2) blur(8px);
+    background:color-mix(in srgb, var(--fond) 82%, transparent);border-bottom:1px solid var(--bord)}
+  .nav{display:flex;align-items:center;justify-content:space-between;height:64px}
+  .brand{display:flex;align-items:center;gap:.6rem;font-weight:800;font-size:1.15rem}
+  .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--bleu),var(--nuit));
+    display:grid;place-items:center;color:#fff;font-weight:800;position:relative;overflow:hidden}
+  .logo svg{width:20px;height:20px}
+  .nav-links{display:flex;gap:1.4rem;align-items:center}
+  .nav-links a{color:var(--gris);font-weight:600;font-size:.95rem}
+  .nav-links a:hover{color:var(--texte)}
+  @media(max-width:720px){.nav-links a:not(.btn){display:none}}
+
+  /* Hero */
+  .hero{padding:72px 0 40px;position:relative;overflow:hidden}
+  .hero::before{content:"";position:absolute;inset:-40% -10% auto -10%;height:520px;z-index:0;
+    background:radial-gradient(60% 60% at 20% 10%, rgba(47,91,255,.16), transparent 60%),
+               radial-gradient(50% 50% at 90% 0%, rgba(255,176,32,.14), transparent 60%)}
+  .hero .wrap{position:relative;z-index:1}
+  .eyebrow{display:inline-flex;align-items:center;gap:.5rem;font-weight:700;font-size:.82rem;
+    color:var(--bleu);background:color-mix(in srgb,var(--bleu) 12%, transparent);
+    padding:.35rem .8rem;border-radius:999px;letter-spacing:.02em}
+  h1{font-size:clamp(2.1rem,5.4vw,3.4rem);line-height:1.08;margin:1rem 0 .6rem;font-weight:800;letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--bleu),#7b5bff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  .lead{font-size:clamp(1.05rem,2.3vw,1.25rem);color:var(--gris);max-width:620px}
+  .cta-row{display:flex;flex-wrap:wrap;gap:.8rem;margin:1.6rem 0 1rem}
+  .trust{display:flex;flex-wrap:wrap;gap:1.2rem;color:var(--gris);font-size:.9rem;font-weight:600;margin-top:.6rem}
+  .trust span{display:inline-flex;align-items:center;gap:.4rem}
+
+  /* Sections */
+  section{padding:56px 0}
+  .kicker{color:var(--bleu);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:.8rem}
+  h2{font-size:clamp(1.6rem,3.6vw,2.2rem);margin:.4rem 0 .4rem;font-weight:800;letter-spacing:-.01em}
+  .sub{color:var(--gris);max-width:640px}
+  .grid{display:grid;gap:16px;margin-top:28px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:860px){.g3{grid-template-columns:1fr}.g2{grid-template-columns:1fr}}
+  .card{background:var(--carte);border:1px solid var(--bord);border-radius:var(--rayon);padding:22px;box-shadow:var(--ombre)}
+  .card h3{margin:.2rem 0 .3rem;font-size:1.15rem}
+  .card p{margin:0;color:var(--gris);font-size:.97rem}
+  .ico{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;font-size:1.4rem;
+    background:color-mix(in srgb,var(--bleu) 12%, transparent);margin-bottom:.7rem}
+
+  /* Steps */
+  .steps{counter-reset:s}
+  .step{display:flex;gap:1rem;align-items:flex-start;padding:14px 0}
+  .step .n{counter-increment:s;flex:0 0 auto;width:38px;height:38px;border-radius:50%;
+    background:var(--nuit);color:#fff;display:grid;place-items:center;font-weight:800}
+  .step .n::before{content:counter(s)}
+
+  /* Pricing */
+  .price{display:grid;gap:16px;grid-template-columns:repeat(3,1fr);margin-top:28px}
+  @media(max-width:860px){.price{grid-template-columns:1fr}}
+  .plan{background:var(--carte);border:1px solid var(--bord);border-radius:var(--rayon);padding:24px;position:relative}
+  .plan.pop{border-color:var(--bleu);box-shadow:0 12px 34px rgba(47,91,255,.18)}
+  .plan .tag{position:absolute;top:-12px;right:18px;background:var(--ambre);color:#0F172A;
+    font-weight:800;font-size:.75rem;padding:.25rem .7rem;border-radius:999px}
+  .plan .p{font-size:2rem;font-weight:800;margin:.2rem 0}
+  .plan .p small{font-size:.9rem;color:var(--gris);font-weight:600}
+  .plan ul{list-style:none;padding:0;margin:1rem 0 1.4rem}
+  .plan li{padding:.32rem 0;color:var(--gris);display:flex;gap:.5rem}
+  .plan li::before{content:"✓";color:var(--bleu);font-weight:800}
+
+  /* FAQ */
+  details{background:var(--carte);border:1px solid var(--bord);border-radius:14px;padding:2px 18px;margin-bottom:10px}
+  details summary{cursor:pointer;font-weight:700;padding:14px 0;list-style:none;display:flex;justify-content:space-between;gap:1rem}
+  details summary::after{content:"+";color:var(--bleu);font-weight:800;font-size:1.3rem}
+  details[open] summary::after{content:"–"}
+  details p{margin:0 0 14px;color:var(--gris)}
+
+  /* CTA band */
+  .band{background:linear-gradient(135deg,var(--nuit),#152a66);color:#fff;border-radius:24px;
+    padding:44px 28px;text-align:center;box-shadow:var(--ombre)}
+  .band h2{color:#fff}
+  .band p{color:#c9d4f0;max-width:560px;margin:.4rem auto 1.4rem}
+
+  footer{border-top:1px solid var(--bord);padding:34px 0;color:var(--gris);font-size:.92rem}
+  .foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:16px}
+  .foot a{color:var(--gris);font-weight:600}
+  .foot a:hover{color:var(--texte)}
+  .disc{font-size:.82rem;color:var(--gris);margin-top:14px;line-height:1.5}
+</style>
+</head>
+<body data-bot="TON_BOT">
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#top">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      NexMove
+    </a>
+    <nav class="nav-links">
+      <a href="#fonctions">Fonctions</a>
+      <a href="#comment">Comment ça marche</a>
+      <a href="#prix">Prix</a>
+      <a href="#faq">FAQ</a>
+      <a class="btn btn-blue js-start" href="#">Démarrer</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <!-- HERO -->
+  <section class="hero" style="padding-top:56px">
+    <div class="wrap">
+      <span class="eyebrow">🤖 Assistant IA · Telegram &amp; WhatsApp</span>
+      <h1>Études, emploi, <span class="grad">ici ou ailleurs</span>&nbsp;:<br>l'assistant pour ton prochain move.</h1>
+      <p class="lead">NexMove analyse ton profil, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), prépare tes dossiers et t'accompagne jusqu'au départ — en français, à prix juste, directement dans ta messagerie.</p>
+      <div class="cta-row">
+        <a class="btn btn-amb js-start" href="#">🚀 Démarrer gratuitement</a>
+        <a class="btn btn-ghost" href="#comment">Voir comment ça marche</a>
+      </div>
+      <div class="trust">
+        <span>✅ Sans app à installer</span>
+        <span>🎙️ Marche même à la voix</span>
+        <span>📄 Même sans CV</span>
+        <span>💳 Mobile Money</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- VALUE PROPS -->
+  <section id="fonctions">
+    <div class="wrap">
+      <div class="kicker">Ce que NexMove fait pour toi</div>
+      <h2>Tout au même endroit, du CV au départ</h2>
+      <p class="sub">Un seul assistant pour t'orienter, candidater et préparer ta mobilité — sans te noyer dans dix outils.</p>
+      <div class="grid g3">
+        <div class="card"><div class="ico">📄</div><h3>Analyse de ton CV</h3><p>Envoie ton CV en PDF, Word ou même en photo. NexMove le lit, repère tes forces et ce qui bloque. Pas de CV ? Il t'en crée un en quelques questions.</p></div>
+        <div class="card"><div class="ico">🔎</div><h3>Vraies opportunités</h3><p>Emplois, stages, bourses et fellowships — <strong>locaux et internationaux</strong>. Un matching par compétence, pas des offres génériques.</p></div>
+        <div class="card"><div class="ico">🎯</div><h3>Score & compatibilité</h3><p>Évalue tes chances (admission, bourse, visa, emploi) et ta compatibilité poste par poste, avec les actions concrètes pour t'améliorer.</p></div>
+        <div class="card"><div class="ico">🧭</div><h3>Accompagnement guidé</h3><p>Campus France, Canada, procédures visa… étape par étape, avec des captures d'écran expliquées quand tu es bloqué·e.</p></div>
+        <div class="card"><div class="ico">🎤</div><h3>Entretien blanc</h3><p>Entraîne-toi à l'entretien avec une simulation qui s'adapte à ton profil, et reçois un retour utile.</p></div>
+        <div class="card"><div class="ico">🗂️</div><h3>Dossiers prêts</h3><p>CV, lettre de motivation, projet d'études générés (PDF & Word), plus un suivi de tes candidatures.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW -->
+  <section id="comment" style="background:color-mix(in srgb,var(--bleu) 5%, var(--fond))">
+    <div class="wrap">
+      <div class="kicker">Simple comme un message</div>
+      <h2>Comment ça marche</h2>
+      <div class="grid g2" style="align-items:center">
+        <div class="steps">
+          <div class="step"><span class="n"></span><div><h3 style="margin:.1rem 0">Ouvre le bot</h3><p class="sub">Sur Telegram (ou WhatsApp bientôt). Aucune inscription compliquée, aucune app à télécharger.</p></div></div>
+          <div class="step"><span class="n"></span><div><h3 style="margin:.1rem 0">Envoie ton CV (ou pas)</h3><p class="sub">NexMove analyse ton profil. Pas de CV ? Il t'aide à en créer un en quelques questions.</p></div></div>
+          <div class="step"><span class="n"></span><div><h3 style="margin:.1rem 0">Reçois un plan concret</h3><p class="sub">Opportunités ciblées, dossiers à préparer, prochaines étapes — clair et personnalisé.</p></div></div>
+          <div class="step"><span class="n"></span><div><h3 style="margin:.1rem 0">Avance, accompagné·e</h3><p class="sub">Candidatures, guides pas à pas, entretiens blancs et suivi jusqu'au départ.</p></div></div>
+        </div>
+        <div class="card" style="padding:28px">
+          <div style="font-weight:800;font-size:1.05rem;margin-bottom:.6rem">💬 Un exemple</div>
+          <p style="color:var(--gris);margin:.2rem 0"><strong style="color:var(--texte)">Toi&nbsp;:</strong> « Je veux étudier en France mais je sais pas par où commencer. »</p>
+          <p style="color:var(--gris);margin:.6rem 0"><strong style="color:var(--bleu)">NexMove&nbsp;:</strong> « On y va étape par étape. Envoie-moi ton CV (ou dis-moi ton parcours), je regarde ton dossier Campus France, j'évalue tes chances et je te donne la première action à faire aujourd'hui. »</p>
+          <a class="btn btn-amb js-start" href="#" style="margin-top:.6rem">Essayer maintenant</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRICING -->
+  <section id="prix">
+    <div class="wrap">
+      <div class="kicker">Des prix pensés pour ici</div>
+      <h2>Commence gratuitement</h2>
+      <p class="sub">Passe au Premium quand tu veux aller plus loin. Paiement par Mobile Money.</p>
+      <div class="price">
+        <div class="plan">
+          <h3>Gratuit</h3>
+          <div class="p">0 <small>FCFA</small></div>
+          <ul>
+            <li>Analyse de CV</li>
+            <li>Découverte des opportunités</li>
+            <li>Guides &amp; conseils de base</li>
+            <li>Un aperçu de chaque fonction</li>
+          </ul>
+          <a class="btn btn-ghost js-start" href="#" style="width:100%;justify-content:center">Démarrer</a>
+        </div>
+        <div class="plan pop">
+          <span class="tag">Le plus choisi</span>
+          <h3>Premium</h3>
+          <div class="p">3 500 <small>FCFA / mois</small></div>
+          <ul>
+            <li>Opportunités &amp; matching illimités</li>
+            <li>Score, compatibilité &amp; simulations</li>
+            <li>Dossiers complets (CV + lettre + projet)</li>
+            <li>Alertes personnalisées &amp; suivi</li>
+          </ul>
+          <a class="btn btn-blue js-start" href="#" style="width:100%;justify-content:center">Passer au Premium</a>
+        </div>
+        <div class="plan">
+          <h3>Pro</h3>
+          <div class="p">8 900 <small>FCFA / mois</small></div>
+          <ul>
+            <li>Tout le Premium</li>
+            <li>Priorité &amp; volumes plus élevés</li>
+            <li>Accompagnement mobilité renforcé</li>
+            <li>Idéal candidatures intensives</li>
+          </ul>
+          <a class="btn btn-ghost js-start" href="#" style="width:100%;justify-content:center">Choisir Pro</a>
+        </div>
+      </div>
+      <p class="disc">Des packs ponctuels (dossier Campus France, chasse aux bourses…) sont aussi disponibles. NexMove <strong>accompagne</strong> ta démarche : il augmente tes chances, mais l'admission, la bourse, le visa ou l'emploi restent la décision des organismes et employeurs concernés.</p>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" style="background:color-mix(in srgb,var(--bleu) 5%, var(--fond))">
+    <div class="wrap" style="max-width:820px">
+      <div class="kicker">On répond</div>
+      <h2>Questions fréquentes</h2>
+      <div style="margin-top:22px">
+        <details open><summary>NexMove, c'est quoi exactement&nbsp;?</summary><p>Un assistant IA de mobilité et d'emploi que tu utilises directement dans ta messagerie (Telegram, bientôt WhatsApp). Il analyse ton profil, trouve des opportunités, prépare tes dossiers et t'accompagne pas à pas.</p></details>
+        <details><summary>Est-ce que c'est vraiment gratuit&nbsp;?</summary><p>Oui, tu commences gratuitement et tu découvres chaque fonction. Les usages avancés (opportunités illimitées, dossiers complets, simulations) passent par un abonnement Premium abordable.</p></details>
+        <details><summary>Faut-il installer une application&nbsp;?</summary><p>Non. Tout se passe dans Telegram (ou WhatsApp bientôt). Tu peux même interagir à la voix, et démarrer sans CV.</p></details>
+        <details><summary>Est-ce que vous garantissez un visa, une bourse ou un emploi&nbsp;?</summary><p>Non, et personne ne peut le garantir honnêtement. NexMove <strong>maximise tes chances</strong> et t'évite les erreurs : la décision finale revient toujours aux écoles, organismes et employeurs.</p></details>
+        <details><summary>Que deviennent mes données&nbsp;?</summary><p>Tes données servent uniquement à t'accompagner, ne sont pas revendues, et tu peux tout effacer à tout moment depuis le bot (commande <code>/supprimer</code>). Voir notre <a href="confidentialite.html" style="color:var(--bleu)">politique de confidentialité</a>.</p></details>
+        <details><summary>Comment payer&nbsp;?</summary><p>Par Mobile Money, via nos codes d'activation. Tu reçois un code, tu l'actives dans le bot, et ton Premium démarre aussitôt.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section>
+    <div class="wrap">
+      <div class="band">
+        <h2>Ton prochain move commence maintenant</h2>
+        <p>Gratuit pour démarrer. Envoie ton premier message et vois ce que NexMove peut faire pour toi.</p>
+        <a class="btn btn-amb js-start" href="#">🚀 Démarrer sur Telegram</a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div>
+        <div class="brand" style="font-size:1rem"><span class="logo" style="width:26px;height:26px" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove</div>
+        <div style="margin-top:.4rem">Un produit <strong>blvckUnlimited</strong>.</div>
+      </div>
+      <div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:center">
+        <a href="cgu.html">Conditions d'utilisation</a>
+        <a href="confidentialite.html">Confidentialité</a>
+        <a href="mentions.html">Mentions légales</a>
+        <a class="js-start" href="#">Ouvrir le bot</a>
+      </div>
+    </div>
+    <p class="disc">NexMove est un assistant conversationnel basé sur l'intelligence artificielle. NexMove n'est pas affilié à Campus France, à IRCC, aux ambassades ni à aucun organisme officiel&nbsp;; il aide à préparer les démarches, sans s'y substituer. © <span id="y"></span> blvckUnlimited. Tous droits réservés.</p>
+  </div>
+</footer>
+
+<script>
+  // Propage le lien du bot partout (data-bot sur <body>). Telegram par défaut.
+  (function(){
+    var bot = document.body.getAttribute('data-bot') || 'TON_BOT';
+    var url = 'https://t.me/' + bot;
+    document.querySelectorAll('.js-start').forEach(function(a){ a.setAttribute('href', url); });
+    var y = document.getElementById('y'); if(y) y.textContent = new Date().getFullYear();
+  })();
+</script>
+</body>
+</html>
