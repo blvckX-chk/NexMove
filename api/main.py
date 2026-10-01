@@ -1,10 +1,17 @@
-import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, re
+import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, hmac, re, math, shutil
+import html as _htmlmod
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from urllib.parse import quote
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
 import fitz
 import httpx
+try:
+    from PIL import Image as _PILImg, ImageDraw as _PILDraw, ImageFont as _PILFont
+    _PIL_OK = True
+except Exception:
+    _PIL_OK = False
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Security, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
@@ -15,6 +22,28 @@ from reportlab.lib.units import cm
 from reportlab.lib.colors import HexColor
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
 from reportlab.lib.enums import TA_JUSTIFY
+
+# OCR optionnel (CV scannés / images). Nécessite le binaire tesseract-ocr + pytesseract.
+# Import tolérant : si tesseract n'est pas installé, l'app démarre quand même (OCR désactivé).
+# Pillow (utile pour l'OCR ET la compression PDF) importé indépendamment de tesseract.
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+try:
+    import pytesseract
+except Exception:
+    pytesseract = None
+_OCR_IMPORTED = bool(pytesseract and Image)
+
+# Export Word (.docx) optionnel — python-docx est pur Python (aucune dépendance système).
+try:
+    from docx import Document as _DocxDocument
+    from docx.shared import Pt as _DocxPt, RGBColor as _DocxRGB
+    _DOCX_OK = True
+except Exception:
+    _DocxDocument = None
+    _DOCX_OK = False
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -27,8 +56,30 @@ logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 
 GROQ_API_KEY    = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL      = "llama-3.3-70b-versatile"
 GROQ_URL        = "https://api.groq.com/openai/v1/chat/completions"
+CEREBRAS_API_KEY = os.getenv("CEREBRAS_API_KEY", "")
+GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
+# Modèles LLM configurables par env : les fournisseurs déprécient régulièrement leurs modèles,
+# on peut donc les corriger sans toucher au code (juste .env + redémarrage).
+GROQ_MODEL       = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+GROQ_MODEL_FAST  = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
+CEREBRAS_MODEL   = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
+CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "gemma-4-31b")
+GEMINI_MODEL     = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")   # gemini-2.0-flash déprécié
+GEMINI_MODEL_FAST = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite")
+OCR_LANG        = os.getenv("OCR_LANG", "fra+eng")   # packs tesseract requis: tesseract-ocr-fra tesseract-ocr-eng
+OCR_MAX_PAGES   = int(os.getenv("OCR_MAX_PAGES", "8"))
+OCR_ZOOM        = float(os.getenv("OCR_ZOOM", "2.5")) # facteur de rendu (≈216 dpi) pour une meilleure reconnaissance
+
+def _ocr_available() -> bool:
+    """Vrai si pytesseract est importé ET le binaire tesseract est présent."""
+    if not _OCR_IMPORTED:
+        return False
+    try:
+        pytesseract.get_tesseract_version()
+        return True
+    except Exception:
+        return False
 FORGE_NEX_API_KEY = os.getenv("FORGE_NEX_API_KEY", "")
 def _read_telegram_token():
     tok = os.getenv("TELEGRAM_TOKEN", "") or os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -45,14 +96,78 @@ def _read_telegram_token():
     return ""
 
 TELEGRAM_TOKEN  = _read_telegram_token()
+# Webhook Telegram NATIF (sans n8n) : secret partagé (facultatif mais recommandé) vérifié à la réception.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.7.0"
+VERSION         = "2.50.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
+# App secret Meta (WhatsApp/Messenger) : si présent, on vérifie la signature X-Hub-Signature-256
+# des webhooks entrants (empêche l'injection de faux messages sur nos endpoints publics).
+META_APP_SECRET     = os.getenv("META_APP_SECRET", "")
 MESSENGER_TOKEN     = os.getenv("MESSENGER_TOKEN", "")
 MESSENGER_VERIFY_TOKEN = os.getenv("MESSENGER_VERIFY_TOKEN", "nexmove_verify")
+# --- Contact / support : où renvoyer les messages /contact ---
+ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # chat_id Telegram principal (forward /contact). Tape /id pour le connaître.
+# Admins multiples (Telegram chat_id ET/OU numéro WhatsApp) : ADMIN_CHAT_ID + ADMIN_IDS (séparés par virgules).
+_ADMIN_IDS = {x.strip() for x in (ADMIN_CHAT_ID + "," + os.getenv("ADMIN_IDS", "")).split(",") if x.strip()}
+# Quotas journaliers des utilisateurs GRATUITS pour les options coûteuses (l'admin est illimité).
+FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
+FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
+FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
+FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
+FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (score d'admissibilité) / jour (gratuit)
+SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
+# Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
+BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
+REFERRAL_GOAL       = int(os.getenv("REFERRAL_GOAL", "2"))
+REFERRAL_REWARD_DAYS = int(os.getenv("REFERRAL_REWARD_DAYS", "30"))
+# Tiers payants : plafond d'alertes mots-clés par niveau (l'illimité = grand nombre).
+ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999}
+_PREMIUM_TIERS = ("premium", "pro", "vip")
+_TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin"}
+# Détection d'un code premium collé tel quel (ex. « PRM-AB12CD34 ») -> activation sans taper /premium.
+_PRM_CODE_RE = re.compile(r"\bPRM-[A-Z0-9]{6,12}\b", re.I)
+
+# Pipeline de candidatures (mini-CRM) : statut canonique -> (libellé + emoji) ; mots reconnus -> canonique.
+_CAND_STATUTS = {
+    "en_preparation": ("En préparation", "📝"), "envoyee": ("Envoyée", "📤"),
+    "relance": ("Relancée", "🔁"), "entretien": ("Entretien", "🎤"),
+    "reponse": ("Réponse reçue", "📨"), "acceptee": ("Acceptée 🎉", "✅"),
+    "refusee": ("Refusée", "❌"), "cloturee": ("Clôturée", "🔒"),
+}
+_STATUT_ALIASES = {
+    "prepa": "en_preparation", "préparation": "en_preparation", "preparation": "en_preparation",
+    "envoye": "envoyee", "envoyé": "envoyee", "envoyée": "envoyee", "envoi": "envoyee", "postule": "envoyee",
+    "relance": "relance", "relancé": "relance", "relancee": "relance",
+    "entretien": "entretien", "interview": "entretien", "rdv": "entretien",
+    "reponse": "reponse", "réponse": "reponse", "repondu": "reponse",
+    "accepte": "acceptee", "accepté": "acceptee", "acceptée": "acceptee", "admis": "acceptee", "pris": "acceptee",
+    "refus": "refusee", "refuse": "refusee", "refusé": "refusee", "refusée": "refusee", "rejete": "refusee",
+    "cloture": "cloturee", "clôturé": "cloturee", "cloturee": "cloturee", "fini": "cloturee", "abandon": "cloturee",
+}
+
+def _norm_statut(word: str) -> str:
+    w = (word or "").strip().lower()
+    if w in _CAND_STATUTS:
+        return w
+    return _STATUT_ALIASES.get(w, "")
+CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
+CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
+CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
+# Sources d'emplois structurées (open data). arbeitnow = sans clé ; Adzuna = clés gratuites optionnelles.
+ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
+# Plusieurs pays possibles (séparés par des virgules) : ex "fr,ca,be". Doivent être supportés par Adzuna.
+ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr").split(",") if c.strip()][:4]
+# Requêtes de secours si aucun mot-clé utilisateur n'est disponible.
+ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
+# Veille : par défaut, la collecte NE lance PAS un appel LLM (osint Tavily) par utilisateur — sinon les
+# quotas gratuits explosent (429) avec beaucoup de testeurs. Le digest s'appuie sur le pool de sources
+# (RSS + Adzuna + EURAXESS + arbeitnow) matché par profil. L'osint complet reste dispo à la demande (/mobilite).
+COLLECT_OSINT_PER_USER = os.getenv("COLLECT_OSINT_PER_USER", "0").lower() in ("1", "true", "yes", "on")
 
 _rate_store: dict[str, list[float]] = {}
 
@@ -77,6 +192,15 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
 
 app = FastAPI(title="NexMove API", version=VERSION)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# Client HTTP unique et partagé (pool de connexions keep-alive) : évite un handshake TCP/TLS
+# à chaque appel sortant (LLM, Tavily, Telegram, WhatsApp, Messenger). Le timeout est passé par requête.
+# ── Client HTTP partagé extrait dans http_client.py (PR-B) ──
+from http_client import http, shutdown_http  # noqa: F401
+
+@app.on_event("shutdown")
+async def _shutdown_http():
+    await shutdown_http()
 
 class ChatRequest(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=50)
@@ -105,224 +229,26 @@ class MobilityRequest(BaseModel):
     cible: str = Field(default="opportunites internationales informatique")
     contraintes: dict = Field(default={})
 
-async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0.2, max_tokens: int = 1000, json_mode: bool = True, retries: int = 3) -> Any:
-    if not GROQ_API_KEY:
-        raise HTTPException(500, "GROQ_API_KEY manquante")
-    payload = {
-        "model": GROQ_MODEL,
-        "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        "temperature": temperature,
-        "max_tokens": max_tokens
-    }
-    if json_mode:
-        payload["response_format"] = {"type": "json_object"}
-    last_error = None
-    for attempt in range(retries):
-        try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                r = await client.post(GROQ_URL, headers={"Authorization": f"Bearer {GROQ_API_KEY}"}, json=payload)
-            if r.status_code == 429:
-                await asyncio.sleep(2 ** attempt)
-                continue
-            if r.status_code != 200:
-                raise HTTPException(502, f"Groq erreur {r.status_code}")
-            raw = r.json()["choices"][0]["message"]["content"]
-            if json_mode:
-                try:
-                    return json.loads(raw)
-                except:
-                    return json.loads(raw.strip().lstrip("```json").lstrip("```").rstrip("```").strip())
-            return raw
-        except HTTPException:
-            raise
-        except Exception as e:
-            last_error = e
-            if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)
-    raise HTTPException(502, f"Groq indisponible: {last_error}")
+# ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
+from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
+                 analyze_screenshot_vision, transcribe_audio,
+                 _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
+                 GROQ_API_KEY, CEREBRAS_API_KEY)  # noqa: F401
 
-class SessionManager:
-    def __init__(self, path: str = "data/sessions.db"):
-        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-        self._path = path
-        con = sqlite3.connect(self._path)
-        con.execute("PRAGMA journal_mode=WAL")
-        con.execute("CREATE TABLE IF NOT EXISTS sessions (user_id TEXT PRIMARY KEY, data TEXT)")
-        con.commit(); con.close()
-    def get(self, user_id: str) -> Optional[dict]:
-        con = sqlite3.connect(self._path, timeout=10)
-        row = con.execute("SELECT data FROM sessions WHERE user_id=?", (str(user_id),)).fetchone()
-        con.close()
-        return json.loads(row[0]) if row else None
-    def set(self, user_id: str, session: dict):
-        con = sqlite3.connect(self._path, timeout=10)
-        con.execute("INSERT INTO sessions(user_id, data) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET data=excluded.data",
-                    (str(user_id), json.dumps(session, ensure_ascii=False)))
-        con.commit(); con.close()
-    def count(self) -> int:
-        con = sqlite3.connect(self._path, timeout=10)
-        n = con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-        con.close()
-        return int(n)
-    def list_active(self) -> list:
-        con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("SELECT data FROM sessions").fetchall()
-        con.close()
-        out = []
-        for (d,) in rows:
-            try:
-                s = json.loads(d)
-                if s.get("onboarding_complete"):
-                    out.append(s)
-            except Exception:
-                pass
-        return out
-    def create_default(self, user_id: str, chat_id: str, username: str) -> dict:
-        return {"user_id": str(user_id), "chat_id": str(chat_id), "username": username, "etape": "WELCOME", "profil": {}, "historique": [], "cv_parsed": False, "cv_file_id": None, "onboarding_complete": False, "created_at": datetime.now(timezone.utc).isoformat()}
+# ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
+from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
+                profile_store, profile_quality, usage_store, premium_store, referral_store)
 
-session_manager = SessionManager()
 
-class OppStore:
-    def __init__(self, path: str = "data/sessions.db"):
-        self._path = path
-        con = sqlite3.connect(self._path)
-        con.execute("""CREATE TABLE IF NOT EXISTS offres (
-            id TEXT PRIMARY KEY, user_id TEXT, titre TEXT, organisation TEXT, type TEXT,
-            url TEXT, pays TEXT, financement TEXT, deadline TEXT, score INTEGER, raison TEXT,
-            statut TEXT DEFAULT 'nouvelle', notified INTEGER DEFAULT 0, created_at TEXT)""")
-        con.execute("""CREATE TABLE IF NOT EXISTS candidatures (
-            id TEXT PRIMARY KEY, user_id TEXT, cible TEXT, deadline TEXT,
-            statut TEXT DEFAULT 'en_preparation', created_at TEXT)""")
-        for ddl in ("ALTER TABLE candidatures ADD COLUMN deadline_iso TEXT DEFAULT ''",
-                    "ALTER TABLE candidatures ADD COLUMN reminders_sent TEXT DEFAULT ''"):
-            try:
-                con.execute(ddl)
-            except Exception:
-                pass
-        con.execute("""CREATE TABLE IF NOT EXISTS sources_offres (
-            id TEXT PRIMARY KEY, titre TEXT, url TEXT, resume TEXT, date TEXT, created_at TEXT)""")
-        con.commit(); con.close()
-    def add_source(self, it) -> bool:
-        oid = hashlib.sha1(str(it.get("url", "")).encode("utf-8", "ignore")).hexdigest()
-        con = sqlite3.connect(self._path, timeout=10)
-        try:
-            if con.execute("SELECT 1 FROM sources_offres WHERE id=?", (oid,)).fetchone():
-                return False
-            con.execute("INSERT INTO sources_offres(id,titre,url,resume,date,created_at) VALUES(?,?,?,?,?,?)",
-                        (oid, it.get("titre", ""), it.get("url", ""), it.get("resume", ""), it.get("date", ""),
-                         datetime.now(timezone.utc).isoformat()))
-            con.commit(); return True
-        finally:
-            con.close()
-    def search_sources(self, keywords, limit=60):
-        con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("SELECT titre,url,resume FROM sources_offres ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
-        con.close()
-        kws = [str(k).lower() for k in keywords if k and len(str(k)) > 2]
-        scored = []
-        for (titre, url, resume) in rows:
-            txt = (str(titre) + " " + str(resume)).lower()
-            sc = sum(1 for k in kws if k in txt)
-            if sc > 0:
-                scored.append((sc, {"titre": titre, "url": url, "resume": resume}))
-        scored.sort(key=lambda x: -x[0])
-        return [d for _, d in scored[:8]]
-    def add_candidature(self, user_id, cible, deadline="", deadline_iso=""):
-        oid = hashlib.sha1(f"cand|{user_id}|{cible}".encode("utf-8", "ignore")).hexdigest()
-        con = sqlite3.connect(self._path, timeout=10)
-        con.execute("""INSERT INTO candidatures(id,user_id,cible,deadline,deadline_iso,statut,created_at)
-                       VALUES(?,?,?,?,?,?,?)
-                       ON CONFLICT(id) DO UPDATE SET deadline=excluded.deadline, deadline_iso=excluded.deadline_iso""",
-                    (oid, str(user_id), cible, deadline, deadline_iso, "en_preparation", datetime.now(timezone.utc).isoformat()))
-        con.commit(); con.close()
-    def list_candidatures(self, user_id):
-        con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("SELECT cible,deadline,statut FROM candidatures WHERE user_id=? ORDER BY created_at DESC",
-                           (str(user_id),)).fetchall()
-        con.close()
-        return rows
-    def all_candidatures(self):
-        con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("""SELECT id,user_id,cible,deadline_iso,reminders_sent FROM candidatures
-                              WHERE deadline_iso IS NOT NULL AND deadline_iso!=''""").fetchall()
-        con.close()
-        return rows
-    def mark_reminder(self, cand_id, milestone):
-        con = sqlite3.connect(self._path, timeout=10)
-        row = con.execute("SELECT reminders_sent FROM candidatures WHERE id=?", (cand_id,)).fetchone()
-        parts = [p for p in ((row[0] or "").split(",") if row else []) if p]
-        if str(milestone) not in parts:
-            parts.append(str(milestone))
-        con.execute("UPDATE candidatures SET reminders_sent=? WHERE id=?", (",".join(parts), cand_id))
-        con.commit(); con.close()
-    def add(self, user_id, opp) -> bool:
-        url = opp.get("url") or opp.get("portail_officiel") or (str(opp.get("titre", "")) + str(opp.get("organisation", "")))
-        oid = hashlib.sha1(f"{user_id}|{url}".encode("utf-8", "ignore")).hexdigest()
-        con = sqlite3.connect(self._path, timeout=10)
-        try:
-            if con.execute("SELECT 1 FROM offres WHERE id=?", (oid,)).fetchone():
-                return False
-            con.execute("""INSERT INTO offres(id,user_id,titre,organisation,type,url,pays,financement,deadline,score,raison,statut,notified,created_at)
-                           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                        (oid, str(user_id), opp.get("titre", ""), opp.get("organisation", ""), opp.get("type", ""),
-                         url, opp.get("pays", ""), opp.get("financement", ""), opp.get("deadline", ""),
-                         int(opp.get("score_composite", 0) or 0), opp.get("raison", ""), "nouvelle", 0,
-                         datetime.now(timezone.utc).isoformat()))
-            con.commit(); return True
-        finally:
-            con.close()
-    def pending(self, user_id, min_score: int = 60) -> list:
-        con = sqlite3.connect(self._path, timeout=10)
-        rows = con.execute("""SELECT id,titre,organisation,type,url,financement,deadline,score,raison
-                              FROM offres WHERE user_id=? AND notified=0 AND score>=? ORDER BY score DESC""",
-                           (str(user_id), min_score)).fetchall()
-        con.close()
-        return rows
-    def mark_notified(self, ids: list):
-        if not ids:
-            return
-        con = sqlite3.connect(self._path, timeout=10)
-        con.executemany("UPDATE offres SET notified=1 WHERE id=?", [(i,) for i in ids])
-        con.commit(); con.close()
-    def count_pending(self, min_score: int = 60) -> int:
-        con = sqlite3.connect(self._path, timeout=10)
-        n = con.execute("SELECT COUNT(*) FROM offres WHERE notified=0 AND score>=?", (min_score,)).fetchone()[0]
-        con.close()
-        return int(n)
-
-opp_store = OppStore()
-
-class Cache:
-    def __init__(self, path: str = "data/sessions.db"):
-        self._path = path
-        con = sqlite3.connect(self._path)
-        con.execute("CREATE TABLE IF NOT EXISTS cache (k TEXT PRIMARY KEY, v TEXT, expires REAL)")
-        con.commit(); con.close()
-    def get(self, key):
-        con = sqlite3.connect(self._path, timeout=10)
-        row = con.execute("SELECT v,expires FROM cache WHERE k=?", (key,)).fetchone()
-        con.close()
-        if row and row[1] > time.time():
-            try:
-                return json.loads(row[0])
-            except Exception:
-                return None
-        return None
-    def set(self, key, value, ttl: int = 21600):
-        con = sqlite3.connect(self._path, timeout=10)
-        con.execute("INSERT INTO cache(k,v,expires) VALUES(?,?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v, expires=excluded.expires",
-                    (key, json.dumps(value, ensure_ascii=False), time.time() + ttl))
-        con.commit(); con.close()
-
-cache = Cache()
+# (Embeddings/vision : voir llm.py — PR-B)
 
 ETAPE_INSTRUCTIONS = {
-    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV en PDF.",
-    "ATTENTE_CV": "L'utilisateur doit envoyer son CV en PDF. Rappelle-lui brièvement.",
+    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
+    "ATTENTE_CV": "L'utilisateur doit envoyer son CV (PDF, Word ou image). Rappelle-lui brièvement.",
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
     "CONFIRMATION": "Résume le profil complet et demande confirmation finale (Oui pour démarrer).",
-    "ACTIF": "L'onboarding est terminé. Réponds DIRECTEMENT et utilement à la demande (tutoie, ne re-salue PAS l'utilisateur). Selon son besoin, oriente vers : /veille (chercher des opportunités), /campusfrance (études en France), /dossier <cible> (documents + CV + projet d'études), /postuler <cible> (CV + lettre), /status (suivi)."
+    "ACTIF": "L'onboarding est terminé. Réponds DIRECTEMENT et utilement (tutoie, ne re-salue PAS). Oriente vers la bonne commande : /veille & /mobilite (opportunités), /campusfrance & /parcours (études en France, étape par étape), /ecoles (choisir une école), /logement, /entretien (prépa entretien Campus France/visa), /canada (immigration Canada selon le profil), /dossier <cible> (documents + CV + projet), /postuler <cible> (CV + lettre), /formations, /status."
 }
 
 REPONSES_POSITIVES = {"oui", "yes", "ok", "correct", "exacte", "c'est bon", "parfait", "valide", "confirme"}
@@ -330,31 +256,318 @@ REPONSES_POSITIVES = {"oui", "yes", "ok", "correct", "exacte", "c'est bon", "par
 def detecter_reponse_positive(text: str) -> bool:
     return any(r in text.lower().strip() for r in REPONSES_POSITIVES)
 
-PREF_QUESTIONS = [
-    ("objectif", "🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)"),
-    ("nationalite", "🛂 Quelle est ta nationalité (pays du passeport) ?"),
-    ("pays_cibles", "🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada, Europe francophone, ou « tous »)"),
-    ("financement", "💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?"),
-    ("certifs_langue", "🗣️ Certifications de langue ?\n(IELTS/TOEFL/TCF/DELF + score, ou « aucune »)"),
-    ("langues_opportunite", "🌐 Langue des opportunités ? (français / anglais / les deux)"),
-    ("niveau", "🎓 Ton niveau ? (étudiant / professionnel)"),
-    ("mots_cles", "🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)"),
+JOURS = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4, "samedi": 5, "dimanche": 6}
+
+def _get_notif(session: dict) -> dict:
+    """Préférences de notification de l'utilisateur (défaut : activées, quotidien)."""
+    n = session.get("notif") or {}
+    return {"enabled": n.get("enabled", True), "freq": n.get("freq", "quotidien"), "jour": n.get("jour", "lundi")}
+
+# Persona partagée : conseiller d'orientation & mobilité internationale senior.
+CONSEILLER_PERSONA = (
+    "Tu es un conseiller d'orientation et en mobilité internationale SENIOR (15 ans d'expérience), "
+    "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
+    "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
+    "et tu donnes toujours des étapes actionnables.")
+
+_NIVEAU_RANK = [
+    (("doctorat", "phd", "ph.d", "doctorate"), 5),
+    (("master", "ingénieur", "ingenieur", "msc", "mba", "m2", "m1", "dea", "dess", "magist"), 4),
+    (("licence", "bachelor", "bsc", "l3", "maîtrise", "maitrise"), 3),
+    (("bts", "dut", "deug", "dts", "l2", "l1"), 2),
+    (("baccalauréat", "baccalaureat", "bac", "high school"), 1),
 ]
+
+def _diplome_rank(f: dict):
+    txt = f"{f.get('diplome','')} {f.get('domaine','')}".lower()
+    lvl = 0
+    for kws, r in _NIVEAU_RANK:
+        if any(k in txt for k in kws):
+            lvl = max(lvl, r)
+    m = re.search(r"(19|20)\d{2}", str(f.get("annee", "")))
+    return (lvl, int(m.group(0)) if m else 0)
+
+def _sort_formations(formation):
+    """Trie les formations du diplôme le PLUS ÉLEVÉ/récent au plus ancien (retour testeur :
+    le bot retenait la licence au lieu du master)."""
+    return sorted([f for f in (formation or []) if isinstance(f, dict)], key=_diplome_rank, reverse=True)
+
+def _is_travail(objectif) -> bool:
+    return any(k in str(objectif or "").lower() for k in ("travail", "emploi", "job", "poste", "stage"))
+
+def _alertes_match(opp: dict, alertes) -> str:
+    """Renvoie le 1er mot-clé d'alerte présent dans l'offre, sinon ''."""
+    if not alertes:
+        return ""
+    txt = (str(opp.get("titre", "")) + " " + str(opp.get("raison", "")) + " "
+           + str(opp.get("organisation", "")) + " " + str(opp.get("type", ""))).lower()
+    for a in alertes:
+        if a and str(a).lower() in txt:
+            return a
+    return ""
+
+def _valid_id(x) -> bool:
+    """Un identifiant Telegram/chat est-il exploitable ? (rejette 0, vide, 'undefined', 'null'…)."""
+    return bool(x) and str(x).strip().lower() not in ("0", "", "none", "undefined", "null", "nan")
+
+def _is_admin(session: dict) -> bool:
+    """Vrai si la session appartient à un administrateur (un des _ADMIN_IDS)."""
+    if not _ADMIN_IDS:
+        return False
+    return (str(session.get("chat_id") or "") in _ADMIN_IDS
+            or str(session.get("user_id") or "") in _ADMIN_IDS)
+
+def _user_tier(session: dict) -> str:
+    """Niveau effectif : admin > (premium/pro/vip si abonnement en cours) > free."""
+    if _is_admin(session):
+        return "admin"
+    exp = session.get("premium_until")
+    if exp:
+        try:
+            if datetime.fromisoformat(exp) > datetime.now(timezone.utc):
+                tier = session.get("premium_tier", "premium")
+                return tier if tier in _PREMIUM_TIERS else "premium"
+        except Exception:
+            pass
+    return "free"
+
+def _is_premium(session: dict) -> bool:
+    return _user_tier(session) in ("admin",) + _PREMIUM_TIERS
+
+def _quota_check(session: dict, feature: str, limit: int) -> tuple[bool, int]:
+    """(autorisé, restant). Admin & abonnés premium : toujours autorisés, non décomptés."""
+    if _is_premium(session) or limit <= 0:
+        return True, 999
+    used = usage_store.count(session.get("user_id"), feature)
+    return used < limit, max(0, limit - used)
+
+def _quota_bump(session: dict, feature: str) -> None:
+    if not _is_premium(session):
+        try:
+            usage_store.bump(session.get("user_id"), feature)
+        except Exception as e:
+            logger.error(f"quota bump {feature}: {e}")
+
+def _apply_premium(session: dict, tier: str, days: int) -> str:
+    """Active/prolonge un abonnement. Empile sur le temps restant si encore actif. Renvoie l'échéance ISO."""
+    now = datetime.now(timezone.utc)
+    base = now
+    exp = session.get("premium_until")
+    if exp and session.get("premium_tier") == tier:
+        try:
+            cur = datetime.fromisoformat(exp)
+            if cur > now:
+                base = cur          # prolongation
+        except Exception:
+            pass
+    new_exp = (base + timedelta(days=int(days))).isoformat()
+    session["premium_tier"] = tier
+    session["premium_until"] = new_exp
+    return new_exp
+
+def _quota_exceeded_msg(feature_label: str) -> str:
+    return (f"🚦 Tu as atteint ta *limite gratuite du jour* pour {feature_label}.\n\n"
+            "Réessaie demain, ou tape /contact pour un accès étendu. "
+            "_Cette limite protège le service et reste généreuse pour un usage normal._")
+
+# Mots parasites d'un nom de fichier de CV (à ignorer pour deviner le nom du candidat).
+_CV_FILENAME_NOISE = {"cv", "resume", "résumé", "resumé", "curriculum", "vitae", "final", "finale",
+                      "copie", "copy", "doc", "document", "def", "version", "new", "nouveau",
+                      "mon", "my", "the", "pdf", "docx", "word", "scan", "scanned", "photo",
+                      "img", "image", "portfolio", "profil", "profile", "candidature", "maj"}
+
+def _name_from_filename(filename: str) -> str:
+    """Devine un nom à partir du nom de fichier du CV — repli quand l'OCR/LLM ne trouve pas le nom
+    (ex. « CV_Judicael.pdf » -> « Judicael », « cv-jean-dupont.pdf » -> « Jean Dupont »)."""
+    base = (filename or "").rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    base = re.sub(r"[_\-.+]+", " ", base)
+    base = re.sub(r"\d+", " ", base)
+    mots = [m for m in base.split()
+            if len(m) > 1 and m.lower() not in _CV_FILENAME_NOISE and re.search(r"[A-Za-zÀ-ÿ]", m)]
+    if not mots:
+        return ""
+    return " ".join(m.capitalize() for m in mots[:3]).strip()
+
+def _free_text_to_command(low: str, t: str) -> str:
+    """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
+    if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
+        return "/formations " + t
+    if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")):
+        return "/logement " + t
+    if "budget" in low or "coût de la vie" in low or "cout de la vie" in low:
+        return "/budget " + t
+    if any(k in low for k in ("école", "ecole", "universit", "quelle formation", "quel master", "programme d'étude")):
+        return "/ecoles " + t
+    if "parcoursup" in low or "parcours-sup" in low or "parcours sup" in low:
+        return "/parcoursup"
+    if "monmaster" in low or "mon master" in low or "mon-master" in low:
+        return "/monmaster"
+    if "ecandidat" in low or "e-candidat" in low or "candidature directe universit" in low:
+        return "/ecandidat"
+    if "dap" in low.split() or "demande d'admission" in low:
+        return "/dap"
+    if "visa" in low or "capago" in low or "vfs" in low or "consulat" in low or "consulaire" in low:
+        return "/visa"
+    if "recours" in low or "refus" in low or "contestation" in low or "appel" in low:
+        return "/recours"
+    if low in ("version", "quelle version", "c'est quelle version", "numero de version") or "version du bot" in low:
+        return "/version"
+    if any(k in low for k in ("contact", "contacter", "joindre", "rencontrer", "rendez-vous", "rendez vous", "rdv", "parler à quelqu'un", "parler a quelqu'un", "un humain", "un conseiller")):
+        return "/contact" + ((" " + t) if len(t) > 15 else "")
+    if "campus france" in low or "études en france" in low or "etudes en france" in low:
+        return "/campusfrance"
+    if "canada" in low or "québec" in low or "quebec" in low:
+        return "/canada"
+    if any(k in low for k in ("bourse", "opportunit", "offre d'emploi", "emploi", "poste", "stage", "recrut", "fellowship")):
+        return "/mobilite " + t
+    return ""
+
+# Commandes que le routeur d'intention LLM peut déclencher à partir d'une phrase libre.
+_VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "entretien", "campusfrance",
+                  "canada", "procedure", "budget", "eligibilite", "dossier", "postuler", "compresser",
+                  "traduire", "status", "profil", "parcours", "aide", "fusionner", "enpdf", "decouper",
+                  "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
+                  "contact", "version", "rencontrer"}
+
+def _progress_bar(done: int, total: int, taille: int = 8) -> str:
+    total = max(total, 1)
+    plein = round(taille * min(done, total) / total)
+    return "▓" * plein + "░" * (taille - plein) + f" {min(done,total)}/{total}"
+
+# Source unique de vérité de l'onboarding : champ -> (question, choix cliquables).
+# L'ORDRE et l'INCLUSION des questions sont calculés dynamiquement (_build_pref_plan) selon
+# les réponses déjà données — onboarding ADAPTATIF (ex. pas de nationalité/passeport ni de
+# financement d'études pour un simple stage/job LOCAL).
+PREF_FIELDS: dict[str, tuple[str, Optional[list]]] = {
+    "objectif":            ("🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)",
+                            ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"]),
+    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… — ou ton *propre pays* pour des offres locales, ou « tous »)",
+                            None),
+    "nationalite":         ("🛂 Quelle est ta nationalité (pays du passeport) ?", None),
+    "financement":         ("💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?",
+                            ["Bourse indispensable", "Auto-financement", "Peu importe"]),
+    "certifs_langue":      ("🗣️ Certifications de langue ?\n(IELTS/TOEFL/TCF/DELF + score, ou « aucune »)", None),
+    "langues_opportunite": ("🌐 Langue des opportunités ? (français / anglais / les deux)",
+                            ["Français", "Anglais", "Les deux"]),
+    "niveau":              ("🎓 Ton niveau ? (étudiant / professionnel)",
+                            ["Étudiant", "Professionnel"]),
+    "mots_cles":           ("🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)", None),
+}
+# Compat : quelques helpers/tests attendent encore ces noms (dérivés de la source ci-dessus).
+PREF_QUESTIONS = [(f, q) for f, (q, _c) in PREF_FIELDS.items()]
+PREF_CHOICES = {f: c for f, (_q, c) in PREF_FIELDS.items() if c}
+
+_CONFIRM_KB = [("✅ Oui, c'est bon", "onb:oui"), ("🔄 Recommencer", "onb:non")]
+
+# Indices d'une cible de mobilité internationale (=> nationalité/passeport + certifs pertinents).
+_INTL_HINTS = ("france", "canada", "belg", "allemag", "suisse", "luxembourg", "pays-bas",
+               "europe", "usa", "état-unis", "etats-unis", "états unis", "etats unis",
+               "royaume", " uk", "angleterre", "étrang", "etrang", "international", "monde",
+               "ailleurs", "expat", "dubai", "émirat", "emirat", "qatar", "maroc", "tunisie",
+               "algér", "alger", "afrique du sud", "sénégal", "senegal", "côte d'ivoire",
+               "cote d'ivoire", "abidjan", "portugal", "espagne", "italie", "chine", "japon",
+               "australie", "turquie", "russie", "inde")
+
+def _vise_international(prefs: dict) -> bool:
+    """L'utilisateur vise-t-il (aussi) l'étranger ? Si les pays ne sont pas encore connus,
+    on renvoie True (on ne prive pas l'utilisateur d'une question tant qu'on ne sait pas)."""
+    pays = str(prefs.get("pays_cibles", "")).lower().strip()
+    if not pays:
+        return True
+    if any(k in pays for k in ("tous", "peu importe", "partout", "n'importe", "monde")):
+        return True
+    return any(h in pays for h in _INTL_HINTS)
+
+def _build_pref_plan(prefs: dict) -> list[str]:
+    """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
+    Recalculée à chaque étape : la nationalité (passeport) et le financement d'études ne sont
+    demandés QUE s'ils ont du sens (mobilité internationale / parcours d'études-bourse)."""
+    objectif = str(prefs.get("objectif", "")).lower()
+    etudes  = any(k in objectif for k in ("étud", "etud", "bourse", "fellowship", "master",
+                                          "doctorat", "licence", "tous", "tout"))
+    travail = _is_travail(objectif)
+    plan = ["objectif", "pays_cibles"]
+    # Nationalité : mobilité internationale, études/immigration, ou objectif indéterminé.
+    if etudes or (travail and _vise_international(prefs)) or not (travail or etudes):
+        plan.append("nationalite")
+    # Financement d'études : pas pertinent pour un simple job.
+    if etudes or not travail:
+        plan.append("financement")
+    # Certifs de langue : surtout pour l'international (admission, visa).
+    if etudes or _vise_international(prefs):
+        plan.append("certifs_langue")
+    plan += ["langues_opportunite", "niveau", "mots_cles"]
+    return plan
+
+def _ask_pref(session: dict, field: str) -> str:
+    """Renvoie l'intitulé de la question `field` et arme les boutons de choix (si fermée)."""
+    q, choix = PREF_FIELDS[field]
+    session["pref_current"] = field
+    session["_kb_options"] = [(c, "pref:" + c) for c in choix] if choix else None
+    return q
+
+def _pref_question(session: dict, idx: int) -> str:
+    """Compat : première question du plan (utilisé au (re)démarrage de l'onboarding)."""
+    return _ask_pref(session, "objectif")
+
+def valider_pref(field: str, value: str) -> tuple[bool, str]:
+    """Vérifie la cohérence d'une réponse d'onboarding.
+    Retourne (valide, indice). L'indice est affiché quand la réponse est incohérente."""
+    v = (value or "").strip()
+    low = v.lower()
+    if not v or low.startswith("/"):
+        return False, "Réponds directement à la question (pas une commande)."
+    if len(v) < 2:
+        return False, "Réponse trop courte, précise un peu."
+    if field == "objectif":
+        if any(k in low for k in ("travail", "étud", "etud", "bourse", "fellowship", "tous", "tout", "stage", "emploi", "job", "master", "doctorat")):
+            return True, ""
+        return False, "Choisis parmi : travailler / étudier / bourse / fellowship / tous."
+    if field == "financement":
+        if any(k in low for k in ("bourse", "auto", "finance", "peu importe", "propre", "moyen", "fonds", "économie", "economie", "parent", "épargne", "epargne")):
+            return True, ""
+        return False, "Réponds : bourse indispensable / auto-financement / peu importe."
+    if field == "certifs_langue":
+        if any(k in low for k in ("ielts", "toefl", "tcf", "tef", "delf", "dalf", "cambridge", "goethe", "duolingo", "linguaskill", "aucun", "non", "rien", "sans", "pas de", "pas encore")) or any(c.isdigit() for c in low):
+            return True, ""
+        return False, "Indique un test réel (IELTS, TOEFL, TCF, DELF… avec le score) ou « aucune »."
+    if field == "langues_opportunite":
+        if any(k in low for k in ("franç", "franc", "anglais", "english", "deux", "both", "tous", "toutes", "peu importe")) or low in ("fr", "en"):
+            return True, ""
+        return False, "Réponds : français / anglais / les deux."
+    if field == "niveau":
+        if any(k in low for k in ("étud", "etud", "pro", "licence", "master", "bac", "doctorat", "phd", "travaill", "junior", "senior", "débutant", "debutant", "confirmé", "confirme", "diplôm", "diplom")):
+            return True, ""
+        return False, "Réponds : étudiant ou professionnel (ou ton dernier diplôme : licence, master…)."
+    # Champs libres (nationalite, pays_cibles, mots_cles) : on accepte tout texte non-commande.
+    return True, ""
 
 AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🔎 *Trouver des opportunités*\n"
-            "/veille · /mobilite <pays ou domaine>\n\n"
-            "🇫🇷 *Étudier en France*\n"
-            "/campusfrance (procédure) · /parcours (ton suivi étape par étape)\n\n"
+            "/veille · /mobilite <pays ou domaine> · 🔔 /alerte <mot-clé>\n\n"
+            "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
+            "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n"
+            "🧭 Bloqué sur une plateforme ? /guide — envoie une *capture d'écran*, je te guide.\n\n"
+            "🌍 *Autres destinations*\n"
+            "/canada · /procedure <pays> (Belgique, Allemagne, Suisse, Luxembourg, Pays-Bas…)\n"
+            "/eligibilite <cible> · /budget <ville>\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
-            "/formations <domaine> (te distinguer)\n\n"
+            "/formations <domaine> (te distinguer)\n"
+            "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n"
+            "🎯 /chances <cible> (tes chances d'admission/visa/bourse + comment les augmenter)\n"
+            "🧩 /compatibilite <poste> (score par compétence) · 🗂️ /mescandidatures (suivi)\n\n"
+            "🛠️ *Outils PDF & docs*\n"
+            "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
-            "/profil · /status · /supprimer\n\n"
+            "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
+            "💎 /offres (abonnements) · /premium <code> (activer) · /monabo (mon statut)\n"
+            "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
+            "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
-            "*1. Ton profil* — envoie ton *CV en PDF*. Je l'analyse, puis je te pose quelques questions "
+            "*1. Ton profil* — envoie ton *CV (PDF, Word ou image)*. Je l'analyse, puis je te pose quelques questions "
             "(objectif, pays, financement, langue…).\n\n"
             "*2. Trouver des opportunités*\n"
             "• /veille — je cherche des offres RÉELLES adaptées à ton profil.\n"
@@ -367,7 +580,7 @@ TUTO_TXT = ("📖 *Guide NexMove*\n\n"
             "• /dossier <cible> — la *liste des documents requis* + je génère ton *CV* et ton *projet d'études*.\n"
             "• /postuler <cible> — juste le *CV adapté* + la *lettre de motivation*.\n\n"
             "*5. Suivi* — /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
-            "Prêt ? Envoie ton *CV en PDF* pour démarrer. 🚀")
+            "Prêt ? Envoie ton *CV (PDF, Word ou image)* pour démarrer. 🚀")
 
 CF_STAGES = [
     "Créer ton compte « Études en France » (EEF)",
@@ -378,6 +591,17 @@ CF_STAGES = [
     "Accepter une offre et confirmer ton inscription",
     "Demander ton visa étudiant",
     "Préparer ton départ (logement, billet, assurance)",
+]
+# Action concrète + commande d'aide pour l'étape en cours (accompagnement actif)
+CF_STAGE_HELP = [
+    "Crée ton compte sur etudesenfrance.diplomatie.gouv.fr. Pas sûr de tes choix ? Tape /ecoles <domaine>.",
+    "Remplis tes vœux et ton projet d'études. /ecoles pour cibler, /dossier <programme> pour rédiger le projet.",
+    "Règle les frais Campus France (montant selon ton pays).",
+    "Prépare l'entretien Campus France / Institut Français : tape /entretien.",
+    "Relance et suis les réponses des établissements. /status pour le suivi.",
+    "Accepte la meilleure offre et confirme ton inscription.",
+    "Dépose ta demande de visa (entretien Capago/VFS) : tape /entretien visa.",
+    "Organise ton arrivée : /logement <ville>, puis billet et assurance.",
 ]
 
 def _push(session, role, content):
@@ -412,35 +636,348 @@ def _resume_prefs(prefs):
             f"• Certifs langue : {prefs.get('certifs_langue','—')}\n"
             f"• Langue des offres : {prefs.get('langues_opportunite','—')}\n"
             f"• Niveau : {prefs.get('niveau','—')}\n"
-            f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
+            + (f"• Type de poste : {prefs.get('type_emploi')}\n" if prefs.get('type_emploi') else "")
+            + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
+
+# ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
+_WELCOME_PITCH = (
+    "🧭 *NexMove, c'est quoi ?*\n"
+    "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n"
+    "Je suis ton assistant IA de *mobilité et d'orientation* (Afrique de l'Ouest & international). Concrètement :\n"
+    "• 🔎 je trouve de *vraies* opportunités — emplois, stages, bourses, fellowships — *locales et à l'étranger* ;\n"
+    "• 🎓 je t'accompagne *pas à pas* (études en France/Campus France, Canada, visa…) ;\n"
+    "• 📄 je prépare tes *dossiers* : CV, lettre de motivation, projet d'études ;\n"
+    "• 🧭 je te *guide* sur les plateformes (/guide + capture d'écran) et t'entraîne aux *entretiens* (/simulation).\n\n"
+    "👉 Pour des conseils *personnalisés*, envoie-moi ton *CV* (PDF, Word ou image).\n"
+    "📝 *Pas encore de CV ?* Tape /creercv — je t'en crée un en 5 questions."
+)
+
+async def _preonboarding_reply(session: dict, t: str) -> str:
+    """Répond à N'IMPORTE QUELLE question d'un visiteur pas encore onboardé (RGPD, prix, fiabilité,
+    « c'est quoi », etc.) via l'IA, puis invite doucement à envoyer le CV. Pas de mots-clés imposés."""
+    system = (
+        "Tu es NexMove, l'assistant IA de mobilité, d'orientation et d'emploi pour les francophones "
+        "d'Afrique de l'Ouest (Bénin…). L'utilisateur n'a PAS encore créé son profil. Réponds DIRECTEMENT "
+        "et honnêtement à sa question, quelle qu'elle soit, en français, en TUTOYANT, ton chaleureux et concret.\n"
+        "Faits à connaître :\n"
+        "- Ce que tu fais : trouver de VRAIES opportunités (emplois, stages, bourses, fellowships — locales ET "
+        "à l'étranger), préparer CV/lettre/projet d'études, guider pas à pas (Campus France, Canada, visa), "
+        "coacher les entretiens.\n"
+        "- Gratuit pour commencer ; des options avancées sont en abonnement Premium.\n"
+        "- Confidentialité/RGPD : ses données restent confidentielles, servent uniquement à l'accompagner, "
+        "ne sont pas revendues ; il peut TOUT effacer quand il veut avec /supprimer (droit à l'effacement).\n"
+        "- Pour démarrer : envoyer son CV (PDF, Word ou image), ou /creercv s'il n'en a pas.\n"
+        "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
+        "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON)."
+    )
+    try:
+        r = await call_groq(system, t, temperature=0.4, max_tokens=350, json_mode=False, tier="fast")
+        r = (r or "").strip()
+        return r or _WELCOME_PITCH
+    except Exception as e:
+        logger.warning(f"[preonboarding] {e}")
+        return _WELCOME_PITCH
+
+def _is_pitch_question(low: str) -> bool:
+    """Question d'ouverture / salutation à laquelle on répond AVANT de demander le CV."""
+    low = (low or "").strip()
+    if low in ("bonjour", "bonsoir", "salut", "hello", "hi", "hey", "coucou", "cc", "yo", "slt"):
+        return True
+    return any(k in low for k in (
+        "à quoi tu sers", "a quoi tu sers", "quoi tu sers", "à quoi ça sert", "a quoi ca sert",
+        "que fais-tu", "que fais tu", "tu fais quoi", "qu'est-ce que tu fais", "quest ce que tu fais",
+        "c'est quoi", "cest quoi", "qui es-tu", "qui es tu", "qui est tu", "t'es qui", "tes qui",
+        "comment ça marche", "comment ca marche", "comment tu marches", "explique", "présente",
+        "presente", "tu peux faire quoi", "tu sais faire quoi", "ton rôle", "ton role"))
+
+def _wants_no_cv(low: str) -> bool:
+    """L'utilisateur signale qu'il n'a pas de CV / veut en créer un."""
+    low = (low or "").strip()
+    return any(k in low for k in (
+        "pas de cv", "pas encore de cv", "aucun cv", "sans cv", "j'ai pas de cv", "jai pas de cv",
+        "n'ai pas de cv", "nai pas de cv", "pas de curriculum", "créer un cv", "creer un cv",
+        "faire un cv", "fabriquer un cv", "construire un cv", "génère un cv", "genere un cv",
+        "je n'ai pas de cv", "je nai pas de cv"))
+
+# ── Création de CV guidée (pour ceux qui n'ont pas de CV) ──
+CVBUILD_STEPS = [
+    ("nom",         "👤 Comment t'appelles-tu ? (*prénom et nom*)"),
+    ("formation",   "🎓 Ton *dernier diplôme* (ou celui en cours) ? Précise le domaine, l'établissement et l'année.\n_ex : Licence informatique, UAC Cotonou, 2024_"),
+    ("experience",  "💼 As-tu des *expériences, stages ou projets* ? Décris-les brièvement.\n_(tape « aucune » si tu débutes)_"),
+    ("competences", "🛠️ Tes *compétences principales* ? _(ex : Python, réseaux, gestion de projet — séparées par des virgules)_"),
+    ("langues",     "🌐 Quelles *langues* parles-tu et à quel niveau ? _(ex : français natif, anglais B2)_"),
+]
+
+async def _cvbuild_start(session: dict) -> tuple[str, dict]:
+    session["etape"] = "CVBUILD"
+    session["cvbuild_step"] = 0
+    session["cvbuild_data"] = {}
+    session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
+    msg = ("📝 *Créons ton CV ensemble* — 5 petites questions, puis je te génère un CV et j'analyse ton profil.\n"
+           "_Tape /annuler pour arrêter._\n\n" + CVBUILD_STEPS[0][1])
+    _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
+
+async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
+    data = session.get("cvbuild_data", {}) or {}
+    raw = "\n".join(f"{k}: {v}" for k, v in data.items())
+    profil = {}
+    try:
+        system = ("Tu es expert CV. À partir des infos d'un utilisateur SANS CV, construis un profil "
+                  "structuré RÉALISTE (n'invente pas d'expérience) + un bilan d'orientation court. "
+                  "est_cv=true. Réponds en JSON strict, uniquement le JSON.")
+        schema = ('{"est_cv":true,"identite":{"nom":"","email":"","telephone":"","localisation":"","langues":[]},'
+                  '"formation":[{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}],'
+                  '"experience":[{"poste":"","organisation":"","type":"","duree":"","missions":[]}],'
+                  '"competences":{"techniques":[],"outils":[],"soft_skills":[]},'
+                  '"bilan":{"forces":["..."],"axes":["..."],"pistes":["..."]},"niveau_global":"junior|mid|senior","resume_profil":""}')
+        profil = await call_groq(system, f"Infos utilisateur :\n{raw}\n\nSchéma JSON attendu : {schema}",
+                                 temperature=0.2, max_tokens=1500)
+    except Exception as e:
+        logger.error(f"[cvbuild] structuration: {e}")
+    if not isinstance(profil, dict) or not (profil.get("identite") or {}).get("nom"):
+        profil = {"identite": {"nom": data.get("nom", "").strip() or "Candidat"},
+                  "formation": [{"diplome": data.get("formation", "")}] if data.get("formation") else [],
+                  "experience": [], "resume_profil": raw[:200],
+                  "competences": {"techniques": [c.strip() for c in data.get("competences", "").split(",") if c.strip()]}}
+    profil["formation"] = _sort_formations(profil.get("formation"))
+    session["profil"] = profil
+    session["cv_parsed"] = True
+    _quota_bump(session, "cv")
+    session["etape"] = "CV_RECU"
+    nom = (profil.get("identite") or {}).get("nom") or data.get("nom") or "Candidat"
+    try:
+        comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
+        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps)
+        await deliver_file(session, f"CV_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV généré par NexMove")
+    except Exception as e:
+        logger.error(f"[cvbuild] pdf: {e}")
+    recap = (f"✅ *Profil créé* pour *{_md_clean(nom)}* — je t'ai généré un CV ci-dessus "
+             "(tu pourras l'adapter à chaque candidature avec /postuler).\n\n"
+             "On continue avec tes préférences ? Réponds *Oui* 👇 (ou envoie un vrai CV pour l'affiner).")
+    session["_kb_options"] = [("✅ Oui, continuer", "onb:oui"), ("🔄 Recommencer", "onb:reset")]
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _push(session, "assistant", recap)
+    return recap, session
+
+
+# ── /simulation : coach d'entretien interactif ──
+_SIM_TYPES = {
+    "campus": ("entretien Campus France / Études en France",
+               "motivation du projet d'études, cohérence du parcours, financement, projet de retour au pays"),
+    "visa":   ("entretien consulaire (visa étudiant)",
+               "sincérité du projet, attaches au pays d'origine, ressources financières, intention de retour"),
+    "emploi": ("entretien d'embauche",
+               "compétences et expériences concrètes, motivation, adéquation au poste, savoir-être"),
+}
+_SIM_FALLBACK = {
+    "campus": ["Présente-toi et explique ton projet d'études en France.",
+               "Pourquoi cette formation précise et cet établissement ?",
+               "En quoi ce cursus complète-t-il ton parcours actuel ?",
+               "Comment finances-tu tes études et ta vie sur place ?",
+               "Quel est ton projet professionnel après le diplôme ?"],
+    "visa":   ["Quel est l'objet exact de ton séjour en France ?",
+               "Quelles sont tes attaches (famille, biens, projets) dans ton pays ?",
+               "Comment prouves-tu que tu disposes des ressources nécessaires ?",
+               "Que feras-tu concrètement à la fin de tes études ?",
+               "Pourquoi reviendrais-tu dans ton pays plutôt que de rester ?"],
+    "emploi": ["Présente ton parcours en deux minutes.",
+               "Parle-moi d'une réalisation dont tu es fier·e et de ton rôle exact.",
+               "Pourquoi ce poste et cette entreprise t'intéressent-ils ?",
+               "Raconte une difficulté rencontrée et comment tu l'as gérée.",
+               "Où te vois-tu dans trois ans ?"],
+}
+
+def _sim_type_key(arg: str) -> str:
+    a = (arg or "").lower()
+    if "visa" in a or "consul" in a:
+        return "visa"
+    if any(k in a for k in ("emploi", "job", "embauche", "travail", "recrut", "poste")):
+        return "emploi"
+    return "campus"
+
+def _sim_fallback_q(session: dict) -> str:
+    bank = _SIM_FALLBACK.get(session.get("sim_type", "campus"), _SIM_FALLBACK["campus"])
+    idx = min(session.get("sim_count", 0), len(bank) - 1)
+    return bank[idx]
+
+def _sim_profil_txt(session: dict) -> str:
+    profil = session.get("profil", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    forms = [f.get("diplome", "") for f in (profil.get("formation") or []) if f.get("diplome")][:2]
+    return (f"résumé: {profil.get('resume_profil','')[:200]} | formations: {', '.join(forms) or '—'} | "
+            f"objectif: {prefs.get('objectif','')} | pays: {prefs.get('pays_cibles','')}")
+
+async def _sim_llm(session: dict, answer: str) -> dict:
+    key = session.get("sim_type", "campus")
+    label, focus = _SIM_TYPES.get(key, _SIM_TYPES["campus"])
+    hist = session.get("sim_history", [])
+    contexte = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist[-4:] if h.get("a"))
+    system = (f"Tu es un examinateur bienveillant qui fait passer un {label} à un candidat francophone "
+              f"d'Afrique de l'Ouest. Points évalués : {focus}. À partir de sa DERNIÈRE réponse, donne un "
+              "feedback court et constructif (1-2 phrases : un point fort + un axe précis d'amélioration), "
+              "puis pose LA question suivante (une seule, de plus en plus précise, jamais déjà posée). "
+              "Tutoie. Réponds en JSON strict.")
+    prompt = (f"Profil du candidat : {_sim_profil_txt(session)}\n"
+              f"Échanges précédents :\n{contexte or '(début)'}\n\n"
+              f"Dernière réponse du candidat : « {answer[:600]} »\n\n"
+              'JSON: {"feedback":"","question":""}')
+    try:
+        r = await call_groq(system, prompt, temperature=0.4, max_tokens=400)
+        return r if isinstance(r, dict) else {}
+    except Exception as e:
+        logger.warning(f"[sim] {e}")
+        return {}
+
+async def _sim_debrief(session: dict) -> str:
+    key = session.get("sim_type", "campus")
+    label, focus = _SIM_TYPES.get(key, _SIM_TYPES["campus"])
+    hist = session.get("sim_history", [])
+    echanges = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist if h.get("a"))
+    system = (f"Tu es coach d'{label}. Fais un BILAN synthétique et motivant de la simulation : 3 points forts, "
+              "3 axes d'amélioration concrets, et 2 conseils actionnables pour le vrai entretien. Tutoie, sois précis.")
+    try:
+        r = await call_groq(system, f"Points évalués : {focus}\nÉchanges :\n{echanges[:2500]}",
+                            temperature=0.4, max_tokens=600, json_mode=False)
+        return (r or "").strip() or "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté et les exemples concrets."
+    except Exception as e:
+        logger.warning(f"[sim] debrief {e}")
+        return "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté du projet et les exemples concrets."
+
+async def _simulation_start(session: dict, arg: str) -> tuple[str, dict]:
+    key = _sim_type_key(arg)
+    session["sim_mode"] = True
+    session["sim_type"] = key
+    session["sim_count"] = 0
+    session["sim_history"] = []
+    session["tool_mode"] = None; session["guide_mode"] = False
+    label, _f = _SIM_TYPES[key]
+    r = await _sim_llm(session, "")
+    q = (r.get("question") or "").strip() or _sim_fallback_q(session)
+    session["sim_history"] = [{"q": q}]
+    msg = (f"🎤 *Simulation — {label}*\nJe te pose {SIM_MAX_Q} questions, réponds naturellement comme au vrai "
+           "entretien. _Tape /terminer pour t'arrêter et recevoir ton bilan._\n\n"
+           f"❓ {q}")
+    return msg, session
+
+async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
+    hist = session.get("sim_history", [])
+    if hist and "a" not in hist[-1]:
+        hist[-1]["a"] = answer
+    session["sim_history"] = hist
+    session["sim_count"] = session.get("sim_count", 0) + 1
+    if session["sim_count"] >= SIM_MAX_Q:
+        debrief = await _sim_debrief(session)
+        session["sim_mode"] = False
+        session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        msg = (f"🎬 *Fin de la simulation — bilan :*\n\n{debrief}\n\n"
+               "🔁 Refaire : /simulation · 📄 Prépare ton dossier : /dossier <cible> · 🎯 /entretien pour les conseils.")
+        _push(session, "assistant", msg)
+        return msg, session
+    r = await _sim_llm(session, answer)
+    fb = (r.get("feedback") or "").strip()
+    q = (r.get("question") or "").strip() or _sim_fallback_q(session)
+    hist.append({"q": q}); session["sim_history"] = hist
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    reste = SIM_MAX_Q - session["sim_count"]
+    msg = (f"💬 {fb}\n\n" if fb else "") + f"❓ *Question {session['sim_count'] + 1}/{SIM_MAX_Q}* — {q}\n_(encore {reste})_"
+    _push(session, "assistant", msg)
+    return msg, session
+
 
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
 
+    # Mode /simulation (coach d'entretien) : capte les réponses libres (les commandes passent normalement).
+    if session.get("sim_mode") and not low.startswith("/"):
+        _push(session, "user", t)
+        return await _simulation_turn(session, t)
+
+    # Code premium collé tel quel (sans /premium) -> activation directe (UX client sur Chariow).
+    if not low.startswith("/") and not session.get("sim_mode"):
+        _mprem = _PRM_CODE_RE.search(t)
+        if _mprem:
+            return await process_text_message(session, "/premium " + _mprem.group(0).upper())
+
     if low.startswith("/start"):
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
-        session["onboarding_complete"] = False; session["pref_index"] = 0
+        session["onboarding_complete"] = False; session["pref_current"] = None
+        # /start <code> : soit une source de campagne (src_...), soit un code de parrainage (Pxxxxx).
+        parts = t.split(maxsplit=1)
+        arg = (parts[1].strip() if len(parts) > 1 else "")
+        if arg.lower().startswith("src_"):
+            # Attribution marketing : on garde la PREMIÈRE source vue (ne pas écraser).
+            if not session.get("source"):
+                session["source"] = arg[:64]
+        elif arg:
+            arg = arg.replace("ref_", "").replace("ref-", "")
+            try:
+                ref = referral_store.user_by_code(arg)
+                if ref:
+                    referral_store.attribute(str(session.get("user_id")), str(ref))
+            except Exception as e:
+                logger.warning(f"referral attribute: {e}")
         msg = ("👋 *Bienvenue sur NexMove !*\n"
-               "_Ton agent IA pour préparer ton prochain départ : études, emploi, bourses et mobilité internationale._\n\n"
+               "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n\n"
                "Voici comment ça marche :\n"
-               "1️⃣ Envoie-moi ton *CV en PDF* — j'analyse ton profil.\n"
+               "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil.\n"
                "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
                "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
-               "📄 *Pour commencer, envoie ton CV en PDF.*  (ou tape /tuto pour le guide)")
+               "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*\n"
+               "📝 Pas encore de CV ? Tape /creercv — je t'en crée un. (ou /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    if low.startswith("/aide") or low.startswith("/help"):
+    if low.startswith("/aide") or low.startswith("/help") or low.startswith("/menu"):
         _push(session, "user", t); _push(session, "assistant", AIDE_TXT); session["derniere_activite"] = now
+        session["_show_menu"] = True
         return AIDE_TXT, session
 
-    if low.startswith("/tuto") or low.startswith("/guide"):
+    if low.startswith("/tuto"):
         _push(session, "user", t); _push(session, "assistant", TUTO_TXT); session["derniere_activite"] = now
         return TUTO_TXT, session
+
+    if low.startswith("/guide"):
+        # Mode guidage par capture d'écran (vision) : l'utilisateur envoie des captures, on l'oriente.
+        session["guide_mode"] = True
+        session["tool_mode"] = None
+        # Contexte optionnel : /guide campus france -> aide ciblée
+        parts = t.split(maxsplit=1)
+        session["guide_context"] = parts[1].strip() if len(parts) > 1 else ""
+        msg = ("🧭 *Mode guidage activé.*\n\n"
+               "Envoie-moi une *capture d'écran* de là où tu es bloqué·e (Campus France / Études en France, "
+               "Parcoursup, Mon Master, eCandidat, un formulaire, un e-mail d'admission…) et je te dis "
+               "*quoi faire à cette étape précise*.\n\n"
+               "_Tape /annuler pour quitter le mode guidage._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/creercv") or low.startswith("/creer-cv") or low.startswith("/sanscv") or low.startswith("/nouveaucv"):
+        _push(session, "user", t)
+        return await _cvbuild_start(session)
+
+    if low.startswith("/simulation") or low.startswith("/simuler") or low.startswith("/entrainement"):
+        if not session.get("onboarding_complete"):
+            msg = "📄 Fais d'abord /start et envoie ton CV — la simulation s'adapte à ton profil."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        ok, _ = _quota_check(session, "sim", FREE_SIM_DAILY)
+        if not ok:
+            msg = (_quota_exceeded_msg("les simulations d'entretien")
+                   + "\n\n💎 Les abonnés ont les simulations *illimitées* — tape /offres.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        _quota_bump(session, "sim")
+        parts = t.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        _push(session, "user", t)
+        msg, session = await _simulation_start(session, arg)
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
 
     if low.startswith("/campusfrance") or low.startswith("/campus"):
         try:
@@ -472,8 +1009,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg += "📎 *Documents à préparer :*\n" + "\n".join(f"• {_md_clean(d)}" for d in docs[:8]) + "\n\n"
             if r.get("conseil"):
                 msg += f"💡 {_md_clean(r['conseil'])}\n\n"
-            msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n"
-            msg += "✍️ Prêt à candidater ? Tape : /postuler Bourse Eiffel master <ton domaine>"
+            msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n\n"
+            msg += ("✍️ *Je t'accompagne pas à pas :*\n"
+                    "• /ecoles <domaine> — trouver les bonnes écoles\n"
+                    "• /parcours — suivre tes étapes jusqu'au départ ✈️\n"
+                    "• /entretien — préparer l'entretien Campus France / visa\n"
+                    "• /logement <ville> — te loger sans arnaque\n"
+                    "• /dossier <programme> — monter le dossier (CV + projet)")
         except Exception as e:
             logger.error(f"campusfrance: {e}")
             msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
@@ -491,9 +1033,12 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             else:
                 lines.append(f"⬜ {st}")
         pos = min(stage + 1, len(CF_STAGES))
+        hint = CF_STAGE_HELP[stage] if stage < len(CF_STAGE_HELP) else ""
         msg = ("🇫🇷 *Ton parcours Campus France*\n━━━━━━━━━━━━━━━━━━\n\n" + "\n".join(lines) +
-               f"\n\nÉtape {pos}/{len(CF_STAGES)}. Tape /etape quand tu as terminé l'étape en cours.\n"
-               "/campusfrance pour les détails · /dossier <cible> pour préparer les documents.")
+               f"\n\nÉtape {pos}/{len(CF_STAGES)}")
+        if hint:
+            msg += f"\n👉 *Maintenant :* {hint}"
+        msg += "\n\nTape /etape quand tu as terminé l'étape en cours."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -510,6 +1055,516 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                        "/parcours pour voir l'ensemble.")
         else:
             msg = "Ton parcours est déjà complet 🎉. /parcours pour revoir."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/ecoles") or low.startswith("/écoles") or low.startswith("/ecole"):
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        parts = t.split(maxsplit=1)
+        domaine = parts[1].strip() if len(parts) > 1 else (prefs.get("mots_cles") or (profil.get("formation") or [{}])[0].get("domaine", "") or "ton domaine")
+        pays = prefs.get("pays_cibles") or "France"
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je cible ensuite les écoles adaptées."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    f"🏫 *Écoles & programmes — {_md_clean(domaine)}*",
+                    f"meilleures écoles universités programmes {domaine} {pays} admission candidature 2026 étudiant international",
+                    "Recommande 4 à 6 écoles/programmes RÉELS et ADAPTÉS au profil (niveau, domaine, budget/bourse), du plus accessible au plus sélectif, avec pour chacun comment et quand postuler.",
+                    cta="Ensuite : /dossier <programme> (préparer le dossier) · /logement <ville> · /entretien.")
+            except Exception as e:
+                logger.error(f"ecoles: {e}"); msg = "😕 Recherche d'écoles indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/logement"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        ville = parts[1].strip() if len(parts) > 1 else ((profil.get("preferences", {}) or {}).get("pays_cibles") or "France")
+        try:
+            msg = await conseil_grounded(profil,
+                f"🏠 *Logement étudiant — {_md_clean(ville)}*",
+                f"logement étudiant {ville} CROUS résidence universitaire garant Visale plateforme fiable budget arnaque 2026",
+                "Explique concrètement comment trouver un logement étudiant abordable et ÉVITER LES ARNAQUES : CROUS/résidences, plateformes fiables, dispositif garant Visale, budget réaliste, pièces à préparer, délais.",
+                cta="🔎 Commence tôt, les logements partent vite. /entretien pour la suite.")
+        except Exception as e:
+            logger.error(f"logement: {e}"); msg = "😕 Conseils logement indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/entretien"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        sujet = parts[1].strip() if len(parts) > 1 else "Campus France et visa"
+        try:
+            msg = await conseil_grounded(profil,
+                f"🎤 *Préparation entretien — {_md_clean(sujet)}*",
+                f"questions entretien {sujet} Campus France Institut Français entretien visa étudiant conseils réponses 2026",
+                "Prépare l'utilisateur à l'entretien (Campus France/Institut Français et/ou entretien visa type Capago/VFS). Donne 5 à 7 QUESTIONS TYPES avec, pour chacune, une PISTE de réponse ADAPTÉE à son profil, plus les erreurs à éviter et la posture attendue (projet cohérent, financement, retour au pays).",
+                cta="Cible si besoin : /entretien visa Capago · /entretien Campus France.")
+        except Exception as e:
+            logger.error(f"entretien: {e}"); msg = "😕 Prépa entretien indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/compatibilite") or low.startswith("/compatibilité") or low.startswith("/match"):
+        if not session.get("onboarding_complete"):
+            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) — j'évalue ensuite ta compatibilité."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        if not cible:
+            msg = ("🧩 *Compatibilité poste* — je note ta correspondance *compétence par compétence*.\n"
+                   "Ex : `/compatibilite Développeur Python junior` · `/match Data analyst Cotonou`.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        if not ok:
+            msg = _quota_exceeded_msg("les analyses de compatibilité") + "\n\n💎 Illimité en Premium — tape /offres."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        try:
+            profil = session.get("profil", {}) or {}
+            comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", [])
+                     + profil.get("competences", {}).get("outils", []))[:20]
+            exp = "; ".join(f"{e.get('poste','')} @ {e.get('organisation','')}" for e in (profil.get("experience") or [])[:4])
+            system = ("Tu évalues la COMPATIBILITÉ entre un candidat et un POSTE. Décompose PAR COMPÉTENCE clé du "
+                      "poste : nom + pourcentage 0-100 de correspondance avec le profil. Donne un score global 0-100, "
+                      "les compétences MANQUANTES à acquérir, et un verdict honnête. Réponds en JSON.")
+            prompt = (f"COMPÉTENCES DU CANDIDAT: {', '.join(comps) or '—'}\nEXPÉRIENCES: {exp or '—'}\n"
+                      f"RÉSUMÉ: {profil.get('resume_profil','')[:200]}\nPOSTE VISÉ: {cible}\n"
+                      'JSON: {"global":0,"competences":[{"nom":"","pct":0}],"manquantes":[""],"verdict":"","conseil":""}')
+            r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
+            _quota_bump(session, "score")
+            g = int(r.get("global", 0) or 0)
+            lab = "Excellent" if g >= 80 else ("Bon" if g >= 60 else ("Moyen" if g >= 40 else "Faible"))
+            msg = f"🧩 *Compatibilité :* {_md_clean(cible)[:55]}\n🎯 *{g}/100* — _{lab}_\n"
+            for c in (r.get("competences") or [])[:8]:
+                nom = _md_clean(str(c.get("nom", "")))[:26]; pct = int(c.get("pct", 0) or 0)
+                if nom:
+                    msg += f"• {nom:<26} {pct:3d}%  {'▓' * round(pct/10)}{'░' * (10 - round(pct/10))}\n"
+            if r.get("manquantes"):
+                msg += "\n➕ *À acquérir :* " + _md_clean(", ".join(str(x) for x in r["manquantes"][:5])) + "\n"
+            if r.get("verdict"):
+                msg += f"\n{_md_clean(r['verdict'])}\n"
+            if r.get("conseil"):
+                msg += f"💡 {_md_clean(r['conseil'])}\n"
+            msg += "\n▶️ /postuler <cible> (CV + lettre adaptés) · /formations <domaine> (combler les manques)."
+            if not _is_premium(session):
+                msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui — illimité en Premium : /offres.)_"
+        except Exception as e:
+            logger.error(f"compatibilite: {e}"); msg = "😕 Analyse indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/chances") or low.startswith("/monscore"):
+        if not session.get("onboarding_complete"):
+            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) — j'évalue ensuite tes chances."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        if not cible:
+            msg = ("🎯 *Score d'admissibilité* — j'estime tes chances pour une cible précise.\n"
+                   "Ex : `/chances master informatique en France` · `/chances visa étudiant Canada` · "
+                   "`/chances bourse Eiffel` · `/chances emploi data analyst Cotonou`.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        if not ok:
+            msg = (_quota_exceeded_msg("le score d'admissibilité")
+                   + "\n\n💎 Les abonnés ont le score *illimité* + le détail complet — tape /offres.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        try:
+            profil = session.get("profil", {}) or {}
+            system = ("Tu es évaluateur d'admissibilité HONNÊTE (études/visa/bourse/emploi) pour un candidat "
+                      "d'Afrique de l'Ouest. À partir de son PROFIL et de la CIBLE, estime ses chances de façon "
+                      "réaliste (ni faussement rassurant, ni décourageant). Donne un score sur 100, un verdict "
+                      "court, 3 forces, 3 manques/risques, et 3 ACTIONS concrètes pour AUGMENTER ses chances. "
+                      "Réponds en JSON.")
+            prompt = (f"PROFIL: {_profil_txt_court(profil)}\nCIBLE: {cible}\n"
+                      'JSON: {"score":0,"verdict":"","forces":["",""],"manques":["",""],"actions":["",""],"conseil":""}')
+            r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
+            _quota_bump(session, "score")
+            sc = int(r.get("score", 0) or 0)
+            emoji = "🟢" if sc >= 66 else ("🟡" if sc >= 40 else "🔴")
+            barre = "▓" * round(sc / 10) + "░" * (10 - round(sc / 10))
+            msg = f"🎯 *Chances pour :* {_md_clean(cible)[:60]}\n{emoji} *{sc}/100*  {barre}\n"
+            if r.get("verdict"):
+                msg += f"\n{_md_clean(r['verdict'])}\n"
+            if r.get("forces"):
+                msg += "\n💪 *Tes atouts :*\n" + "\n".join(f"• {_md_clean(x)}" for x in r["forces"][:3]) + "\n"
+            if r.get("manques"):
+                msg += "\n⚠️ *À combler :*\n" + "\n".join(f"• {_md_clean(x)}" for x in r["manques"][:3]) + "\n"
+            if r.get("actions"):
+                msg += "\n🚀 *Pour augmenter tes chances :*\n" + "\n".join(f"{i}. {_md_clean(x)}" for i, x in enumerate(r["actions"][:3], 1)) + "\n"
+            if r.get("conseil"):
+                msg += f"\n💡 {_md_clean(r['conseil'])}\n"
+            msg += "\n▶️ Prépare : /dossier <cible> · /postuler <cible> · /formations <domaine>."
+            if not _is_premium(session):
+                msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui — illimité en Premium : /offres.)_"
+        except Exception as e:
+            logger.error(f"chances: {e}"); msg = "😕 Estimation indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/canada"):
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je détermine ensuite la meilleure voie Canada pour toi."
+        else:
+            try:
+                rounds = await fetch_ircc_rounds(6)      # rondes réelles (open data IRCC, cache 6 h)
+                rounds_txt = _format_ircc_rounds(rounds)
+                consigne = ("Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : "
+                     "permis d'études (attestation provinciale/PAL, preuve de fonds à jour) si étudiant ; PGWP puis Entrée "
+                     "express / RP si diplômé/travailleur ; PEQ/Arrima Québec si visé Québec (avantage francophone). "
+                     "IMPORTANT — Entrée express : mentionne les *rondes fondées sur les catégories* d'IRCC (invitations "
+                     "à CRS plus BAS pour ces catégories prioritaires) et dis si le profil est éligible : francophones "
+                     "hors Québec (NCLC 7+ en français), santé, métiers spécialisés, STIM, transports, éducation, "
+                     "agriculture. Sois HONNÊTE sur les conditions (fonds, langue, points CRS, expérience canadienne).")
+                if rounds_txt:
+                    consigne += ("\n\nDONNÉES RÉELLES à jour (dernières rondes Entrée express IRCC — cite-les et "
+                                 f"appuie-toi dessus pour dire quelles catégories tirent en ce moment) :\n{rounds_txt}")
+                msg = await conseil_grounded(profil,
+                    "🇨🇦 *Immigration Canada — voies adaptées à ton profil*",
+                    f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
+                    consigne,
+                    cta="Ensuite : /dossier <programme canadien> · /entretien visa · /logement <ville>.")
+                if rounds_txt:
+                    msg += f"\n\n📅 *Dernières rondes Entrée express (IRCC, temps réel) :*\n{rounds_txt}"
+            except Exception as e:
+                logger.error(f"canada: {e}"); msg = "😕 Conseils Canada indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/compresser") or low.startswith("/compress") or low.startswith("/alleger"):
+        target = 2000  # Ko par défaut (~2 Mo)
+        for p in t.split()[1:]:
+            d = re.sub(r"[^0-9]", "", p)
+            if d:
+                target = int(d)
+                if target < 50:      # l'utilisateur a probablement donné des Mo
+                    target *= 1024
+                target = max(100, min(20000, target))
+        session["compress_target"] = target
+        msg = (f"🗜️ *Compression PDF* — cible ≈ {target} Ko.\n\n"
+               "Envoie-moi maintenant le *PDF* à alléger (CV, relevé, passeport scanné…). "
+               "Je te renvoie une version plus légère pour tes soumissions en ligne.\n"
+               "_Astuce : /compresser 500 pour viser 500 Ko._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/fusionner") or low.startswith("/fusion"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "merge"
+        msg = ("📎 *Fusion de PDF.*\nEnvoie les PDF à assembler un par un (dans l'ordre voulu), "
+               "puis tape */terminer*.\n_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/enpdf") or low.startswith("/img2pdf") or low.startswith("/imagepdf"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "img2pdf"
+        msg = ("🖼️➡️📄 *Images en PDF.*\nEnvoie tes images *en fichier* (📎 Fichier, pas Photo), une par une, "
+               "puis */terminer*.\n_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/decouper") or low.startswith("/découper") or low.startswith("/split"):
+        parts = t.split(maxsplit=1)
+        spec = parts[1].strip() if len(parts) > 1 else ""
+        if not spec:
+            msg = "✂️ Indique les pages à garder : */decouper 1-3,5*\nPuis envoie le PDF."
+        else:
+            _tool_clear(session.get("user_id")); session["tool_mode"] = "split"; session["split_spec"] = spec
+            msg = f"✂️ *Découpe.* Envoie maintenant le *PDF* — je garde les pages *{spec}*."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/terminer") or low.startswith("/fini") or low.startswith("/generer") or low.startswith("/générer"):
+        if session.get("sim_mode"):
+            _push(session, "user", t)
+            debrief = await _sim_debrief(session)
+            session["sim_mode"] = False
+            msg = (f"🎬 *Simulation terminée — bilan :*\n\n{debrief}\n\n"
+                   "🔁 Refaire : /simulation · 📄 /dossier <cible> · 🎯 /entretien.")
+            _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        mode = session.get("tool_mode")
+        files = _tool_files(session.get("user_id"))
+        if mode not in ("merge", "img2pdf"):
+            msg = "Rien à générer. Lance /fusionner (PDF) ou /enpdf (images) d'abord."
+        elif not files:
+            msg = "📎 Aucun fichier reçu. Envoie au moins un fichier avant /terminer."
+        else:
+            try:
+                if mode == "merge":
+                    data = await asyncio.to_thread(merge_pdfs, files); cap = "📎 PDF fusionné"
+                else:
+                    data = await asyncio.to_thread(images_to_pdf, files); cap = "📄 PDF créé depuis tes images"
+                await deliver_file(session, "NexMove_document.pdf", data, f"{cap} ({len(files)} fichier·s)")
+                msg = "✅ C'est prêt ! Trop lourd pour une soumission ? Tape /compresser."
+            except Exception as e:
+                logger.error(f"[tool {mode}] {e}"); msg = "😕 Génération impossible, réessaie."
+            _tool_clear(session.get("user_id")); session["tool_mode"] = None
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/annuler") or low.startswith("/cancel"):
+        _tool_clear(session.get("user_id"))
+        session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
+        session["guide_mode"] = False; session.pop("guide_context", None)
+        session["sim_mode"] = False
+        if session.get("etape") == "CVBUILD":
+            session["etape"] = "ATTENTE_CV"
+        msg = "🚫 Opération annulée."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/budget") or low.startswith("/cout") or low.startswith("/coût"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        ville = parts[1].strip() if len(parts) > 1 else ((profil.get("preferences", {}) or {}).get("pays_cibles") or "France")
+        try:
+            msg = await conseil_grounded(profil,
+                f"💶 *Budget & coût de la vie — {_md_clean(ville)}*",
+                f"coût de la vie étudiant {ville} loyer transport nourriture budget mensuel preuve de ressources visa 2026",
+                "Donne un budget mensuel étudiant réaliste (loyer, nourriture, transport, santé, divers) en euros — et l'ordre de grandeur en FCFA — puis rappelle le montant de RESSOURCES à justifier pour le visa/Campus France si connu.",
+                cta="Ensuite : /eligibilite <programme> · /compresser (justificatifs).")
+        except Exception as e:
+            logger.error(f"budget: {e}"); msg = "😕 Estimation budget indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/eligibilite") or low.startswith("/éligibilité") or low.startswith("/eligible"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        if not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je compare ensuite ton profil aux exigences."
+        elif not cible:
+            msg = "🎯 Précise la cible : */eligibilite <programme ou bourse>*\nEx : /eligibilite Bourse Eiffel master."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    f"🎯 *Éligibilité — {_md_clean(cible)}*",
+                    f"{cible} conditions éligibilité critères admission prérequis dossier requis 2026",
+                    "Compare HONNÊTEMENT le profil aux exigences réelles : dis s'il est éligible / limite / non éligible, liste précisément ce qui MANQUE et comment le combler. Pas de faux espoirs.",
+                    cta="Prêt ? /dossier <cible> pour monter le dossier.")
+            except Exception as e:
+                logger.error(f"eligibilite: {e}"); msg = "😕 Vérification indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/traduire") or low.startswith("/translate") or low.startswith("/traduction"):
+        parts = t.split(maxsplit=1)
+        texte = parts[1].strip() if len(parts) > 1 else ""
+        if not texte:
+            msg = ("🌐 *Traduction (informative).*\nColle le texte à traduire : */traduire <texte>*\n\n"
+                   "⚠️ Pour un DOSSIER officiel (diplômes, actes de naissance…), les institutions exigent une "
+                   "*traduction assermentée* (traducteur agréé). Ma traduction sert à COMPRENDRE, pas à soumettre.")
+        else:
+            try:
+                r = await call_groq(
+                    "Tu es traducteur professionnel. Traduis fidèlement : si le texte est en anglais traduis en français, sinon en anglais. Conserve le sens exact. JSON uniquement.",
+                    f'Texte: """{texte[:3000]}"""\nJSON: {{"traduction":"","langue_source":"","langue_cible":""}}',
+                    temperature=0.1, max_tokens=1300)
+                msg = (f"🌐 *Traduction* ({r.get('langue_source','?')} → {r.get('langue_cible','?')})\n\n"
+                       f"{r.get('traduction','')}\n\n⚠️ _Informatif. Un dossier officiel exige un traducteur assermenté._")
+            except Exception as e:
+                logger.error(f"traduire: {e}"); msg = "😕 Traduction indisponible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/procedure") or low.startswith("/procédure") or low.startswith("/pays"):
+        profil = session.get("profil", {}) or {}
+        parts = t.split(maxsplit=1)
+        pays = parts[1].strip() if len(parts) > 1 else ""
+        if not pays:
+            msg = ("🌍 *Procédures par pays.*\nÉcris : */procedure <pays>*\n"
+                   "Ex : /procedure Belgique · /procedure Allemagne · /procedure Suisse · /procedure Luxembourg · /procedure Pays-Bas.\n\n"
+                   "🇫🇷 France : /campusfrance  ·  🇨🇦 Canada : /canada")
+        elif not profil.get("identite"):
+            msg = "📄 Fais d'abord /start puis envoie ton CV — je route selon ton profil."
+        else:
+            try:
+                msg = await conseil_grounded(profil,
+                    f"🌍 *{_md_clean(pays)} — études & immigration (selon ton profil)*",
+                    f"{pays} étudier travailler immigration étudiant permis visa bourse programme officiel procédure {(profil.get('preferences', {}) or {}).get('objectif','')} 2026",
+                    f"Explique la ou les VOIES OFFICIELLES adaptées à CE profil pour {pays} (études : université + permis étudiant + preuve de fonds ; travail : permis/visa et programmes officiels). Étapes concrètes, conditions honnêtes, organismes RÉELS.",
+                    cta="Ensuite : /ecoles · /budget <ville> · /dossier <programme> · /entretien.")
+            except Exception as e:
+                logger.error(f"procedure: {e}"); msg = "😕 Infos pays indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    # --- Procédures françaises PARALLÈLES à Campus France (grosse demande du terrain) ---
+    _FR_PROCS = {
+        "parcoursup":   ("🎓 *Parcoursup — 1ʳᵉ année Licence/BUT/BTS/CPGE en France*",
+                         "Parcoursup 2026 candidature calendrier étudiant international vœux formations sélectives non sélectives dossier",
+                         "Explique CLAIREMENT Parcoursup pour un étudiant international : qui est concerné (bac étranger), calendrier de la campagne EN COURS (inscription, vœux, réponses), types de formations, dossier (bulletins, lettre de motivation par vœu, projet), lien avec Études en France quand nécessaire.",
+                         "Ensuite : /ecoles <domaine> · /dossier Parcoursup <formation> · /entretien."),
+        "monmaster":    ("📘 *MonMaster — candidatures Master en France*",
+                         "MonMaster 2026 candidature master université France calendrier étudiant international dossier lettre projet",
+                         "Explique la plateforme MonMaster pour candidater en M1 : calendrier RÉEL en cours, nombre de vœux, critères, différences avec Études en France (Campus France reste souvent obligatoire pour les étudiants hors UE), pièces à préparer.",
+                         "Ensuite : /ecoles master <domaine> · /dossier MonMaster <mention> · /campusfrance."),
+        "ecandidat":    ("🧾 *eCandidat — candidatures directes université (procédure parallèle)*",
+                         "eCandidat 2026 procédure université France candidature directe étudiant international dossier",
+                         "Explique eCandidat : quelles universités l'utilisent, quand cette voie remplace/complète Campus France (procédure blanche vs procédure Études en France), calendrier propre à chaque université, dossier type.",
+                         "Ensuite : /ecoles <domaine> · /dossier eCandidat <université> · /campusfrance."),
+        "dap":          ("📜 *DAP — Demande d'Admission Préalable (1ʳᵉ année licence hors UE)*",
+                         "DAP demande admission préalable Campus France 2026 calendrier hors UE licence université France dossier",
+                         "Explique la DAP (obligatoire pour candidater en L1 hors UE via Études en France) : qui est concerné, calendrier, épreuves de langue (TCF-DAP/DELF B2), pièces, différences avec Parcoursup.",
+                         "Ensuite : /campusfrance · /dossier DAP · /entretien."),
+        "visa":         ("🛂 *Visa étudiant France — phase consulaire (VFS/Capago)*",
+                         "visa étudiant France VFS Capago 2026 rendez-vous dépôt pièces preuves ressources OFII validation",
+                         "Détaille la phase CONSULAIRE APRÈS Campus France : prise de rendez-vous VFS/Capago, pièces à préparer, preuve de ressources (montant à jour), délais, retrait du visa, validation OFII à l'arrivée.",
+                         "Ensuite : /budget <ville> · /logement <ville> · /entretien visa."),
+        "recours":      ("⚖️ *Recours — refus Campus France ou refus de visa*",
+                         "recours refus Campus France refus visa étudiant France 2026 procédure appel commission délais",
+                         "Explique HONNÊTEMENT les recours possibles : recours gracieux auprès de Campus France, recours contentieux, refus de visa (Commission de recours contre les décisions de refus de visa d'entrée en France), délais impératifs, pièces à joindre. Reste réaliste sur les chances.",
+                         "En parallèle : /procedure Belgique · /procedure Allemagne · /canada."),
+    }
+    _MATCH_PROC = [(k, k.replace("-", "")) for k in _FR_PROCS] + [
+        ("parcoursup", "parcours-sup"), ("monmaster", "mon-master"),
+    ]
+    _cmd_proc = None
+    for k, alias in _MATCH_PROC:
+        if low.startswith("/" + alias):
+            _cmd_proc = k; break
+    if _cmd_proc:
+        titre, query, consigne, cta = _FR_PROCS[_cmd_proc]
+        profil = session.get("profil", {}) or {}
+        if not profil.get("identite"):
+            msg = f"📄 Fais d'abord /start puis envoie ton CV — j'adapte ensuite {_cmd_proc} à ton profil."
+        else:
+            try:
+                msg = await conseil_grounded(profil, titre, query, consigne, cta=cta)
+            except Exception as e:
+                logger.error(f"{_cmd_proc}: {e}"); msg = f"😕 Infos {_cmd_proc} indisponibles, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/setwebhook") or low.startswith("/webhookinfo") or low.startswith("/webhook"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if low.startswith("/webhookinfo") or low.strip() in ("/webhook",):
+            try:
+                r = await http().get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getWebhookInfo", timeout=10.0)
+                info = r.json().get("result", {}) if r.status_code == 200 else {}
+                msg = (f"🔗 *Webhook Telegram*\nurl : `{info.get('url') or '(vide)'}`\n"
+                       f"en attente : {info.get('pending_update_count', 0)}\n"
+                       f"dernière erreur : {info.get('last_error_message') or 'aucune'}")
+            except Exception as e:
+                msg = f"😕 getWebhookInfo a échoué : {e}"
+        else:
+            parts = t.split(maxsplit=1)
+            url = parts[1].strip() if len(parts) > 1 else ""
+            if not url.startswith("http"):
+                msg = ("🧰 *Basculer sur le webhook natif* (sans n8n) :\n`/setwebhook https://TON-DOMAINE`\n"
+                       "→ je pointe Telegram sur `…/webhook/telegram`. Ton domaine doit servir l'API (port 8000).")
+            else:
+                if not url.rstrip("/").endswith("/webhook/telegram"):
+                    url = url.rstrip("/") + "/webhook/telegram"
+                payload = {"url": url, "allowed_updates": ["message", "edited_message", "callback_query"],
+                           "drop_pending_updates": True}
+                if TELEGRAM_WEBHOOK_SECRET:
+                    payload["secret_token"] = TELEGRAM_WEBHOOK_SECRET
+                try:
+                    r = await http().post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook", json=payload, timeout=15.0)
+                    ok = r.status_code == 200 and r.json().get("ok")
+                    msg = (f"✅ *Webhook mis à jour* → `{url}`\nTelegram parle maintenant DIRECTEMENT à l'API (n8n retiré). "
+                           "Teste : envoie un message, puis un CV." if ok
+                           else f"❌ Échec setWebhook : {r.text[:180]}")
+                except Exception as e:
+                    msg = f"😕 setWebhook a échoué : {e}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low == "/id" or low.startswith("/id ") or low.startswith("/monid") or low.startswith("/whoami"):
+        uid = session.get("user_id"); cid = session.get("chat_id"); ch = session.get("channel", "?")
+        estadmin = "✅ admin" if _is_admin(session) else "non-admin"
+        msg = (f"🪪 *Tes identifiants* (canal : {ch})\n"
+               f"• chat_id : `{cid}`\n• user_id : `{uid}`\n• Statut : {estadmin}\n\n"
+               "Pour devenir *administrateur* : ajoute ce chat_id à `ADMIN_CHAT_ID` (ou `ADMIN_IDS`) "
+               "dans le `.env`, puis relance le conteneur. Sur WhatsApp, l'identifiant est ton numéro.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/version") or low.startswith("/about"):
+        prov = ", ".join([p["name"] for p in _LLM_PROVIDERS if p["key"]]) or "aucun"
+        flags = []
+        if _ocr_available(): flags.append("OCR")
+        if _DOCX_OK: flags.append("Word")
+        if _embeddings_available(): flags.append("Sémantique")
+        if GEMINI_API_KEY: flags.append("Vision")
+        if ADZUNA_APP_ID and ADZUNA_APP_KEY: flags.append("Adzuna")
+        msg = (f"🧭 *NexMove — version {VERSION}*\n"
+               f"🤖 IA : {prov}\n"
+               f"🧩 Modules : {' · '.join(flags) or 'base'}\n"
+               f"📚 {len(SOURCE_FEEDS)} sources de veille · 6 procédures FR parallèles (Parcoursup, MonMaster, eCandidat, DAP, Visa, Recours).\n\n"
+               "Un souci ? Une idée ? → /contact")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/contact") or low.startswith("/support") or low.startswith("/rencontrer") or low.startswith("/rdv"):
+        parts = t.split(maxsplit=1)
+        message_user = parts[1].strip() if len(parts) > 1 else ""
+        # Bloc "comment nous joindre" — toujours affiché
+        contacts = []
+        if CONTACT_WHATSAPP: contacts.append(f"📱 WhatsApp : {CONTACT_WHATSAPP}")
+        if CONTACT_EMAIL:    contacts.append(f"✉️ Email : {CONTACT_EMAIL}")
+        if CONTACT_CALENDAR: contacts.append(f"📅 Prendre rendez-vous : {CONTACT_CALENDAR}")
+        contact_bloc = "\n".join(contacts) if contacts else "_(canaux directs non configurés — utilise /contact <ton message>)_"
+        if not message_user:
+            msg = ("💬 *Nous contacter*\n" + contact_bloc + "\n\n"
+                   "Ou écris ici : */contact ton message* — je le transmets à l'équipe.\n"
+                   "Envie d'échanger avec un conseiller ? */rencontrer <disponibilités>*.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        # Forward vers l'admin Telegram si configuré
+        ok = False
+        if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
+            uid = session.get("user_id"); uname = session.get("username", "utilisateur")
+            forward = (f"📨 *Nouveau contact NexMove*\n"
+                       f"👤 @{_md_clean(uname)} (`{uid}`)\n"
+                       f"🕒 {datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}\n\n"
+                       f"{_md_clean(message_user)[:2000]}")
+            try:
+                ok = await send_message(ADMIN_CHAT_ID, forward)
+            except Exception as e:
+                logger.error(f"[contact] forward: {e}")
+        try:
+            opp_store.add_contact(session.get("user_id"), session.get("username"), message_user, ok)
+        except Exception as e:
+            logger.warning(f"[contact] log: {e}")
+        if ok:
+            msg = f"✅ Merci, ton message a été transmis à l'équipe. Nous te recontactons vite.\n\n{contact_bloc}"
+        else:
+            msg = ("📝 Message bien noté (enregistré, l'équipe le verra). Pour être recontacté rapidement, joins-nous directement :\n\n"
+                   + contact_bloc)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/contacts_log") or low.startswith("/contacts-log") or low.startswith("/messages_log"):
+        # Historique des /contact — RÉSERVÉ à l'admin
+        if not ADMIN_CHAT_ID or str(session.get("chat_id") or "") != str(ADMIN_CHAT_ID):
+            msg = "🔒 Commande réservée à l'administrateur."
+        else:
+            rows = opp_store.list_contacts(20)
+            if not rows:
+                msg = "📭 Aucun message /contact enregistré."
+            else:
+                lignes = []
+                for (cid, uid, uname, txt, fwd, dt) in rows:
+                    when = str(dt)[5:16].replace("T", " ")
+                    flag = "📨" if fwd else "📥"
+                    ex = _md_clean(str(txt))[:120]
+                    lignes.append(f"{flag} #{cid} · {when} · @{_md_clean(str(uname) or 'x')} (`{uid}`)\n   {ex}")
+                msg = "📇 *20 derniers messages /contact*\n\n" + "\n\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -573,7 +1628,149 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             ident = profil.get("identite", {})
             msg = f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\nÉtape : {session.get('etape','—')}\n\n" + _resume_prefs(profil.get("preferences", {}) or {})
         else:
-            msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV en PDF."
+            msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV (PDF, Word ou image)."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/premium") or low.startswith("/activer") or low.startswith("/code"):
+        parts = t.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else ""
+        if not code:
+            msg = ("💎 *Activer un abonnement*\nTape */premium TON-CODE* (le code reçu après ton achat).\n\n"
+                   "Pas encore d'abonnement ? Tape /offres pour voir les formules.")
+        else:
+            r = premium_store.redeem(code, session.get("user_id"))
+            if not r.get("ok"):
+                raison = {"introuvable": "ce code n'existe pas", "déjà utilisé": "ce code a déjà été utilisé"}.get(
+                    r.get("reason"), r.get("reason", "code invalide"))
+                msg = f"❌ Activation impossible : {raison}. Vérifie le code (format PRM-XXXXXXXX) ou contacte-nous via /contact."
+            else:
+                tier = r["tier"]; days = r["days"]
+                exp = _apply_premium(session, tier, days)
+                session_manager.set(session.get("user_id"), session)   # persiste l'abonnement
+                exp_j = exp[:10]
+                msg = (f"✅ *Abonnement {_TIER_LABEL.get(tier, tier)} activé !* 🎉\n"
+                       f"Valable jusqu'au *{exp_j}* ({days} jours).\n\n"
+                       "Tu as maintenant l'accès *illimité* (CV, /guide, /simulation) et les alertes étendues.\n"
+                       "Tape /monabo pour ton statut à tout moment.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/monabo") or low.startswith("/monabonnement") or low.startswith("/statut"):
+        tier = _user_tier(session)
+        if tier == "admin":
+            msg = "👑 *Statut : Admin* — accès illimité."
+        elif tier in _PREMIUM_TIERS:
+            exp = session.get("premium_until", "")[:10]
+            msg = (f"💎 *Abonnement {_TIER_LABEL.get(tier, tier)}* — actif jusqu'au *{exp}*.\n"
+                   "Accès illimité (CV, /guide, /simulation) + alertes étendues.\n"
+                   "_Pense à réactiver un code avant l'échéance pour ne pas perdre l'accès._")
+        else:
+            msg = ("🆓 *Statut : Gratuit.*\nTu profites des bases (1 CV/jour, veille à la demande, 1 alerte…).\n\n"
+                   "💎 Passe en Premium pour l'illimité : tape /offres, puis active ton code avec /premium.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/offres") or low.startswith("/tarifs") or low.startswith("/abonnement"):
+        msg = ("💎 *Passe au niveau supérieur*\n\n"
+               "*Premium* — CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
+               "*Pro* — tout Premium + sources premium, alertes illimitées, relecture.\n\n"
+               "👉 Récupère ton code d'activation, puis tape */premium TON-CODE*.\n"
+               "Besoin d'aide pour t'abonner ? Tape /contact.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/parrainage") or low.startswith("/parrain") or low.startswith("/invite"):
+        code = referral_store.code_for(session.get("user_id"))
+        n = referral_store.count_completed(session.get("user_id"))
+        reste = REFERRAL_GOAL - (n % REFERRAL_GOAL) if (n % REFERRAL_GOAL) else REFERRAL_GOAL
+        lien = f"https://t.me/{BOT_USERNAME}?start={code}" if BOT_USERNAME else ""
+        msg = ("🎁 *Parraine, gagne du Premium !*\n"
+               f"Invite *{REFERRAL_GOAL}* amis qui créent leur profil → *{REFERRAL_REWARD_DAYS} jours Premium* offerts (à chaque palier).\n\n"
+               + (f"🔗 Ton lien à partager : {lien}\n" if lien else f"Ton code : *{code}* — ton ami tape */start {code}* au 1er message.\n")
+               + f"\n✅ Filleuls validés : *{n}* · plus que *{reste}* pour la prochaine récompense.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/gencodes"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split()
+        tier = parts[1].lower() if len(parts) > 1 else ""
+        days = int(re.sub(r"[^0-9]", "", parts[2]) or 0) if len(parts) > 2 else 0
+        count = int(re.sub(r"[^0-9]", "", parts[3]) or 0) if len(parts) > 3 else 0
+        if tier not in _PREMIUM_TIERS or days <= 0 or not (1 <= count <= 500):
+            msg = ("🧰 *Génération de codes* (admin)\n`/gencodes <premium|pro|vip> <jours> <nombre>`\n"
+                   "Ex : `/gencodes premium 30 50` → 50 codes Premium de 30 jours.\n"
+                   f"État actuel : {premium_store.stats()}")
+        else:
+            codes = premium_store.create_codes(tier, days, count, batch=now[:10])
+            entete = f"{len(codes)} codes {tier} / {days} j :"
+            if len(codes) <= 25:
+                msg = f"✅ {entete}\n" + "\n".join(f"`{c}`" for c in codes)
+            else:
+                data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
+                await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
+                msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/srcstats") or low.startswith("/sources-stats"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        stats = session_manager.sources_stats()
+        if not stats:
+            msg = "📊 Aucune donnée de source pour l'instant."
+        else:
+            lignes = []
+            for r in stats[:25]:
+                tx = f"{round(100*r['onboarded']/r['total'])}%" if r["total"] else "0%"
+                lignes.append(f"• `{r['source']}` — {r['total']} users · {r['onboarded']} onbo. ({tx}) · {r['paid']} payants")
+            msg = ("📊 *Attribution par source* (liens `?start=src_...`)\n" + "\n".join(lignes) +
+                   "\n\n_Convention : `src_<persona>_<canal>` (ex. src_etu_tt, src_dip_wa)._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/moncode"):
+        code = session.get("recovery_code") or profile_store.code_for(session.get("user_id"))
+        if not code and session.get("onboarding_complete"):
+            try:
+                code = profile_store.save(session.get("user_id"), session)
+                session["recovery_code"] = code
+            except Exception as e:
+                logger.error(f"moncode save: {e}")
+        if code:
+            msg = (f"🔐 *Ton code de récupération :* `{code}`\n\n"
+                   f"Depuis un autre appareil ou WhatsApp, tape */moi {code}* pour retrouver ce profil.\n"
+                   "_Je garde toujours ta version la plus complète._")
+        else:
+            msg = "Tu n'as pas encore de profil enregistré. Envoie ton *CV (PDF, Word ou image)* pour démarrer."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/moi"):
+        parts = t.split(maxsplit=1)
+        code = parts[1].strip().upper() if len(parts) > 1 else ""
+        if not code:
+            msg = "Donne ton code après la commande : */moi NEX-XXXXX* (reçu à la fin de ton profil, ou via /moncode)."
+        else:
+            data = profile_store.restore(code, session.get("user_id"))
+            if not data:
+                msg = f"❌ Aucun profil trouvé pour le code *{_md_clean(code)}*. Vérifie-le (format NEX-XXXXX) ou refais /start."
+            else:
+                profil = data.get("profil") or {}
+                session["profil"] = profil
+                session["etape"] = "ACTIF"; session["onboarding_complete"] = True
+                session["cv_parsed"] = True; session["recovery_code"] = code
+                nom = (profil.get("identite") or {}).get("nom") or "—"
+                msg = (f"✅ *Profil restauré* ({_md_clean(code)}) — content de te revoir, {_md_clean(nom)} !\n\n"
+                       + _resume_prefs(profil.get("preferences", {}) or {})
+                       + "\n\nTape /veille pour tes opportunités, ou /menu.")
+                session["_show_menu"] = True
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -581,7 +1778,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cleared = {"user_id": session.get("user_id"), "chat_id": session.get("chat_id"),
                    "username": session.get("username"), "etape": "WELCOME", "profil": {},
                    "historique": [], "cv_parsed": False, "cv_file_id": None,
-                   "onboarding_complete": False, "pref_index": 0, "derniere_activite": now}
+                   "onboarding_complete": False, "pref_current": None, "derniere_activite": now}
         msg = "🗑️ Tes données ont été effacées. Fais /start pour recommencer."
         cleared["historique"] = [{"role": "assistant", "content": msg, "ts": now}]
         return msg, cleared
@@ -590,8 +1787,17 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
         try:
-            res = await run_osint(session.get("profil", {}) or {}, cible)
+            seen = set(session.get("seen_urls", []))
+            res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"),
+                                  exclude_urls=seen, alertes=session.get("alertes", []))
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
+            opps = res.get("opportunites", [])
+            for o in opps:
+                u = o.get("url") or o.get("portail_officiel")
+                if u:
+                    seen.add(u)
+            session["seen_urls"] = list(seen)[-60:]
+            _attach_feedback(session, opps)
         except Exception as e:
             logger.error(f"Erreur mobilite: {e}")
             msg = "😕 L'analyse mobilité a échoué, réessaie dans un instant."
@@ -603,7 +1809,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cible_desc = parts[1].strip() if len(parts) > 1 else ""
         profil = session.get("profil", {}) or {}
         if not profil.get("identite"):
-            msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV en PDF."
+            msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV (PDF, Word ou image)."
         elif not cible_desc:
             msg = ("✍️ Indique la cible :\n/postuler <poste ou bourse>\n\n"
                    "Ex : /postuler Analyste SOC chez Orange\n"
@@ -613,14 +1819,23 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
                 pack = await generate_pack(profil, cible_desc, type_cible)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = build_cv_pdf(profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
                 ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation — {cible_desc[:60]}")
+                if _DOCX_OK:
+                    try:
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
+                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                        await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
+                        await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
+                    except Exception as de:
+                        logger.warning(f"[docx] postuler: {de}")
                 if ok_cv and ok_lm:
-                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n\n"
+                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n"
+                           "📄 PDF (à envoyer) + 📝 Word (à personnaliser).\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
                 elif ok_cv or ok_lm:
                     msg = "⚠️ Un seul document a pu être envoyé. Réessaie dans un instant."
@@ -637,7 +1852,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         cible_desc = parts[1].strip() if len(parts) > 1 else ""
         profil = session.get("profil", {}) or {}
         if not profil.get("identite"):
-            msg = "📄 Fais d'abord /start puis envoie ton CV en PDF."
+            msg = "📄 Fais d'abord /start puis envoie ton CV (PDF, Word ou image)."
         elif not cible_desc:
             msg = ("🗂️ Indique la cible du dossier :\n/dossier <bourse ou programme>\n\n"
                    "Ex : /dossier Bourse Eiffel master cybersécurité\n"
@@ -674,18 +1889,62 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if r.get("conseils"):
                     msg += "💡 *Conseils :*\n" + "\n".join(f"• {_md_clean(c)}" for c in r["conseils"][:5]) + "\n\n"
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = build_cv_pdf(profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                lm_buf = build_letter_pdf(profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
                 nom = _slug(ident.get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
                 await deliver_file(session,f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
+                if _DOCX_OK:
+                    try:
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
+                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                        await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 CV Word (modifiable)")
+                        await deliver_file(session, f"Projet_{nom}.docx", pr_dx.getvalue(), "📝 Projet Word (modifiable)")
+                    except Exception as de:
+                        logger.warning(f"[docx] dossier: {de}")
                 opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""), r.get("deadline_iso", ""))
-                msg += ("📄 CV + lettre/projet d'études envoyés. Dossier ajouté à ton suivi (/status).\n"
+                msg += ("📄 CV + lettre/projet d'études envoyés (PDF + 📝 Word modifiable). Dossier ajouté à ton suivi (/status).\n"
                         "⚠️ _Vérifie les exigences exactes sur le site officiel._")
             except Exception as e:
                 logger.error(f"dossier: {e}")
                 msg = "😕 La préparation du dossier a échoué, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/alerte"):
+        alertes = list(session.get("alertes", []) or [])
+        parts = t.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        low_arg = arg.lower()
+        if not arg:
+            if alertes:
+                msg = ("🔔 *Tes alertes mots-clés :*\n" + "\n".join(f"• {_md_clean(a)}" for a in alertes)
+                       + "\n\nAjouter : /alerte <mot> · Retirer : /alerte off <mot>")
+            else:
+                msg = ("🔔 *Alertes mots-clés* — sois prévenu·e en priorité quand une offre contient TES mots-clés.\n\n"
+                       "Ex : /alerte cybersécurité · /alerte bourse master\nRetirer : /alerte off <mot>")
+        elif low_arg in ("off", "clear", "reset", "vider", "stop"):
+            session["alertes"] = []
+            msg = "🔕 Toutes tes alertes ont été retirées."
+        elif low_arg.split(maxsplit=1)[0] in ("off", "supprimer", "retirer", "stop", "-"):
+            cible = arg.split(maxsplit=1)[1].strip().lower() if len(arg.split(maxsplit=1)) > 1 else ""
+            alertes = [a for a in alertes if a.lower() != cible]
+            session["alertes"] = alertes
+            msg = f"🔕 Alerte « {_md_clean(cible)} » retirée." if cible else "Précise le mot à retirer : /alerte off <mot>."
+        else:
+            kw = arg.strip()
+            if len(kw) < 2:
+                msg = "Donne un mot-clé d'au moins 2 lettres (ex : /alerte data)."
+            elif kw.lower() in [a.lower() for a in alertes]:
+                msg = f"🔔 « {_md_clean(kw)} » est déjà dans tes alertes."
+            elif len(alertes) >= ALERTES_MAX.get(_user_tier(session), 1):
+                cap = ALERTES_MAX.get(_user_tier(session), 1)
+                extra = "" if _is_premium(session) else " 💎 Passe en Premium pour en ajouter plus (/offres)."
+                msg = f"⚠️ Limite atteinte ({cap} alerte·s). Retires-en une : /alerte off <mot>.{extra}"
+            else:
+                alertes.append(kw); session["alertes"] = alertes
+                msg = f"🔔 Alerte ajoutée : « {_md_clean(kw)} ». Je te la signalerai en priorité dans /veille et le digest."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -694,23 +1953,89 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
         else:
             try:
-                res = await run_osint(session.get("profil", {}) or {}, "")
+                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"),
+                                      alertes=session.get("alertes", []))
                 new = 0
                 for opp in res.get("opportunites", []):
                     if opp_store.add(session.get("user_id"), opp):
                         new += 1
                 msg = res.get("message") or "Aucune opportunité trouvée pour l'instant."
                 msg += f"\n\n🆕 {new} nouvelle(s) opportunité(s) ajoutée(s) à ta veille."
+                _attach_feedback(session, res.get("opportunites", []))
             except Exception as e:
                 logger.error(f"Erreur veille: {e}")
                 msg = "😕 La veille a échoué, réessaie dans un instant."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/timeline") or low.startswith("/planning") or low.startswith("/feuille"):
+        if not session.get("onboarding_complete"):
+            msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if not _PIL_OK:
+            msg = "🖼️ La génération d'image n'est pas disponible sur ce serveur. Tape /status pour ta progression en texte."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        cf = int(session.get("cf_stage", 0) or 0)
+        deadlines = opp_store.list_candidatures(session.get("user_id"))
+        prenom = ((session.get("profil", {}) or {}).get("identite", {}) or {}).get("nom", "") or ""
+        titre = f"Feuille de route — {prenom.split()[0]}" if prenom.strip() else "Ma feuille de route Campus France"
+        try:
+            png = await asyncio.to_thread(render_timeline_png, CF_STAGES, cf, titre, deadlines)
+            if png:
+                await deliver_file(session, "NexMove_timeline.png", png, "🗺️ Ta feuille de route visuelle")
+                msg = "🗺️ Voici ta *feuille de route* ! Étapes ✅ faites · 🟠 en cours · ⚪ à venir.\nFais /etape quand tu avances, puis /timeline pour la remettre à jour."
+            else:
+                msg = "😕 Génération de la feuille de route impossible pour le moment."
+        except Exception as e:
+            logger.error(f"[timeline] {e}")
+            msg = "😕 Génération de la feuille de route impossible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/mescandidatures") or low.startswith("/candidatures") or low.startswith("/suivi") or low.startswith("/pipeline"):
+        cands = opp_store.list_candidatures(session.get("user_id"))
+        if not cands:
+            msg = ("🗂️ *Tes candidatures* — vide pour l'instant.\n"
+                   "Prépare un dossier avec /dossier <cible> ou /postuler <cible> : il apparaîtra ici, et tu suivras son avancement.")
+        else:
+            lignes = []
+            for (cible, deadline, statut) in cands[:20]:
+                lib, emo = _CAND_STATUTS.get(statut or "en_preparation", ("En préparation", "📝"))
+                d = f" · 📅 {_md_clean(deadline)}" if deadline else ""
+                lignes.append(f"{emo} *{_md_clean(cible)[:48]}* — _{lib}_{d}")
+            msg = ("🗂️ *Suivi de tes candidatures*\n" + "\n".join(lignes)
+                   + "\n\n✏️ Mettre à jour : `/candidature <statut> <cible>`\n"
+                     "_statuts : envoyée · relancée · entretien · réponse · acceptée · refusée · clôturée_")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/candidature") and not low.startswith("/candidatures"):
+        parts = t.split(maxsplit=2)   # /candidature <statut> <cible...>
+        statut = _norm_statut(parts[1]) if len(parts) > 1 else ""
+        cible = parts[2].strip() if len(parts) > 2 else ""
+        if not statut or not cible:
+            msg = ("✏️ *Mettre à jour une candidature*\n`/candidature <statut> <cible>`\n"
+                   "Ex : `/candidature entretien Master informatique`\n"
+                   "_statuts : envoyée · relancée · entretien · réponse · acceptée · refusée · clôturée_")
+        else:
+            n = opp_store.update_statut(session.get("user_id"), cible, statut)
+            lib, emo = _CAND_STATUTS[statut]
+            msg = (f"{emo} Mis à jour : *{_md_clean(cible)[:48]}* → _{lib}_." if n else
+                   f"🤔 Aucune candidature ne correspond à « {_md_clean(cible)} ». Vérifie avec /mescandidatures.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/status"):
         prefs = (session.get("profil", {}) or {}).get("preferences", {}) or {}
         if session.get("onboarding_complete"):
+            _tier = _user_tier(session)
+            _tier_line = (f"Abonnement : 💎 {_TIER_LABEL.get(_tier, _tier)}"
+                          + (f" (jusqu'au {session.get('premium_until','')[:10]})" if _tier in _PREMIUM_TIERS else "")
+                          ) if _tier != "free" else "Abonnement : 🆓 Gratuit — /offres pour l'illimité"
             msg = ("📊 *Ton statut NexMove*\nProfil : ✅ actif\n"
+                   f"{_tier_line}\n"
                    f"Objectif : {prefs.get('objectif','—')} · Pays : {prefs.get('pays_cibles','—')}\n\n")
             cands = opp_store.list_candidatures(session.get("user_id"))
             if cands:
@@ -721,34 +2046,133 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 msg += "\n"
             else:
                 msg += "🗂️ Aucun dossier en cours. Lance /dossier <cible> pour en préparer un.\n\n"
-            msg += "Utilise /veille pour explorer, /campusfrance pour Études en France."
+            # 🏅 Progression (gamification)
+            st = opp_store.user_stats(session.get("user_id"))
+            cf = int(session.get("cf_stage", 0) or 0)
+            msg += ("🏅 *Ta progression*\n"
+                    f"• Opportunités trouvées : *{st['total']}*"
+                    + (f"  ( +{st['recent']} cette semaine 🔥)" if st['recent'] else "") + "\n"
+                    f"• Dossiers suivis : *{len(cands)}*\n"
+                    f"• Campus France : {_progress_bar(cf, len(CF_STAGES))}\n\n")
+            msg += "Continue : /veille · /parcours · /campusfrance · /ecoles · /canada."
         else:
             msg = f"📊 Onboarding en cours (étape : {session.get('etape','WELCOME')}). Fais /start."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/rappels") or low.startswith("/notifications"):
+        n = _get_notif(session)
+        sp = t.split(maxsplit=1)
+        arg = sp[1].strip().lower() if len(sp) > 1 else ""
+        if arg in ("on", "oui", "activer", "active", "1"):
+            n["enabled"] = True; msg = "🔔 Notifications *activées*."
+        elif arg in ("off", "non", "desactiver", "désactiver", "stop", "0"):
+            n["enabled"] = False
+            msg = "🔕 Notifications d'opportunités *désactivées*.\n_(Les rappels de deadline de tes dossiers restent actifs.)_"
+        else:
+            etat = "activées 🔔" if n["enabled"] else "désactivées 🔕"
+            freq = "quotidien" if n["freq"] == "quotidien" else f"hebdo (chaque {n['jour']})"
+            msg = (f"⚙️ *Tes notifications*\nÉtat : {etat}\nFréquence : {freq}\n\n"
+                   "Modifier :\n• /rappels on · /rappels off\n• /digest quotidien · /digest hebdo <jour>")
+        session["notif"] = n
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/digest"):
+        n = _get_notif(session)
+        parts = low.split()
+        if len(parts) >= 2 and parts[1] in ("quotidien", "quotidienne", "jour", "daily"):
+            n["freq"] = "quotidien"; msg = "🗓️ Digest *quotidien* activé."
+        elif len(parts) >= 2 and parts[1] in ("hebdo", "hebdomadaire", "semaine", "weekly"):
+            jour = next((p for p in parts[2:] if p in JOURS), "lundi")
+            n["freq"] = "hebdo"; n["jour"] = jour
+            msg = f"🗓️ Digest *hebdomadaire* activé (chaque *{jour}*)."
+        else:
+            msg = ("🗓️ *Fréquence du digest*\n• /digest quotidien\n• /digest hebdo <jour>\n\nEx : /digest hebdo lundi")
+        n["enabled"] = True
+        session["notif"] = n
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     etape = session.get("etape", "WELCOME")
 
+    if etape == "CVBUILD":
+        step = session.get("cvbuild_step", 0)
+        data = session.get("cvbuild_data", {}) or {}
+        if 0 <= step < len(CVBUILD_STEPS):
+            field = CVBUILD_STEPS[step][0]
+            val = t.strip()
+            if val.lower().startswith("/") or len(val) < 2:
+                _push(session, "user", t)
+                q = "🤔 Réponds à la question (sans commande).\n\n" + CVBUILD_STEPS[step][1]
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            data[field] = val
+            session["cvbuild_data"] = data
+        _push(session, "user", t)
+        step += 1; session["cvbuild_step"] = step
+        if step < len(CVBUILD_STEPS):
+            q = CVBUILD_STEPS[step][1]
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        return await _cvbuild_finish(session)
+
     if etape == "CV_RECU" and detecter_reponse_positive(t):
-        session["etape"] = "PREFERENCES"; session["pref_index"] = 0
-        q = PREF_QUESTIONS[0][1]
+        session["etape"] = "PREFERENCES"
+        q = _ask_pref(session, "objectif")
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
 
     if etape == "PREFERENCES":
-        idx = session.get("pref_index", 0)
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
-        if 0 <= idx < len(PREF_QUESTIONS):
-            prefs[PREF_QUESTIONS[idx][0]] = t
+        # 1) Enregistrer la réponse à la question EN COURS (si valide).
+        field = session.get("pref_current")
+        if field:
+            ok, indice = valider_pref(field, t)
+            if not ok:
+                _push(session, "user", t)
+                q = f"🤔 {indice}\n\n{_ask_pref(session, field)}"
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            prefs[field] = t
             profil["preferences"] = prefs; session["profil"] = profil
-        idx += 1; session["pref_index"] = idx
         _push(session, "user", t)
-        if idx < len(PREF_QUESTIONS):
-            q = PREF_QUESTIONS[idx][1]
+        # 2) Prochaine question du plan ADAPTATIF (recalculé selon les réponses déjà données).
+        plan = _build_pref_plan(prefs)
+        nxt = next((f for f in plan if not prefs.get(f)), None)
+        if nxt:
+            q = _ask_pref(session, nxt)
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        session["pref_current"] = None
+        # Question conditionnelle : type de poste (seulement si l'objectif est de travailler)
+        if _is_travail(prefs.get("objectif")) and not prefs.get("type_emploi"):
+            session["etape"] = "PREF_TYPE_EMPLOI"
+            q = "💼 Type de poste recherché ?\n(temps plein / temps partiel / télétravail / alternance / peu importe)"
+            session["_kb_options"] = [(c, "pref:" + c) for c in ["Temps plein", "Temps partiel", "Télétravail", "Alternance", "Peu importe"]]
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
         session["etape"] = "CONFIRMATION"
+        session["_kb_options"] = _CONFIRM_KB
+        resume = _resume_prefs(prefs)
+        _push(session, "assistant", resume); session["derniere_activite"] = now
+        return resume, session
+
+    if etape == "PREF_TYPE_EMPLOI":
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        if t.strip().lower().startswith("/") or len(t.strip()) < 2:
+            _push(session, "user", t)
+            q = "🤔 Réponds à la question (sans commande).\n💼 Type de poste ? (temps plein / temps partiel / télétravail / alternance / peu importe)"
+            session["_kb_options"] = [(c, "pref:" + c) for c in ["Temps plein", "Temps partiel", "Télétravail", "Alternance", "Peu importe"]]
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        prefs["type_emploi"] = t.strip()
+        profil["preferences"] = prefs; session["profil"] = profil
+        session["etape"] = "CONFIRMATION"
+        session["_kb_options"] = _CONFIRM_KB
+        _push(session, "user", t)
         resume = _resume_prefs(prefs)
         _push(session, "assistant", resume); session["derniere_activite"] = now
         return resume, session
@@ -757,31 +2181,112 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         if detecter_reponse_positive(t):
             session["etape"] = "ACTIF"; session["onboarding_complete"] = True
-            msg = ("🎉 *Profil validé !* Je vais chercher des opportunités adaptées.\n\n"
-                   "Commandes : /mobilite <pays/domaine>, /status, /profil, /aide.")
+            # Persistance du profil par identifiant : code de récupération stable (inter-canaux).
+            try:
+                session["recovery_code"] = profile_store.save(session.get("user_id"), session)
+            except Exception as e:
+                logger.error(f"profile save: {e}")
+            # Parrainage : ce filleul vient de finir son profil -> récompense le parrain si palier atteint.
+            try:
+                parrain = referral_store.mark_completed(str(session.get("user_id")))
+                if parrain:
+                    cnt = referral_store.count_completed(parrain)
+                    if cnt and cnt % REFERRAL_GOAL == 0:
+                        ps = session_manager.get(parrain)
+                        if ps:
+                            _apply_premium(ps, "premium", REFERRAL_REWARD_DAYS)
+                            session_manager.set(parrain, ps)
+                            if _valid_id(ps.get("chat_id")):
+                                await send_message(str(ps.get("chat_id")),
+                                    f"🎉 *Parrainage réussi !* Tu as {cnt} filleuls → *{REFERRAL_REWARD_DAYS} jours Premium* offerts. Tape /monabo.")
+            except Exception as e:
+                logger.error(f"referral reward: {e}")
+            msg = "🎉 *Profil validé !* Voici déjà des pistes pour toi :\n"
+            # Première veille AUTOMATIQUE : de la valeur immédiate (levier de rétention).
+            try:
+                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+                top = res.get("opportunites", [])[:3]
+                for o in res.get("opportunites", []):
+                    opp_store.add(session.get("user_id"), o)
+                if top:
+                    for i, o in enumerate(top, 1):
+                        msg += f"\n{i}. {_type_label(o.get('type',''))} *{_md_clean(o.get('titre',''))[:55]}*"
+                        lien = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
+                        if lien:
+                            msg += f"\n   🔗 {lien}"
+                    _attach_feedback(session, top)
+                else:
+                    msg += "\nJe scrute déjà le web — tape /veille dans un instant."
+            except Exception as e:
+                logger.error(f"auto-veille: {e}")
+                msg += "\nTape /veille pour tes premières opportunités."
+            # Intention forte captée AVANT la fin de l'onboarding : on la relance maintenant.
+            # La commande reste stockée côté serveur (session["pending_intent"]) ; le bouton
+            # ne porte qu'un jeton court (contrainte Telegram : callback_data <= 64 octets).
+            pending = session.get("pending_intent", "")
+            if pending:
+                label = pending.split()[0].lstrip("/").capitalize()
+                msg += f"\n\n📌 Tu m'avais demandé quelque chose au début — clique ci-dessous pour que je m'en occupe (ou tape *{pending.split()[0]}*)."
+                session["_kb_options"] = [("▶️ " + label, "act:pending")]
+            code = session.get("recovery_code")
+            if code:
+                msg += (f"\n\n🔐 *Ton code de récupération :* `{code}`\n"
+                        "_Garde-le : tape /moi <code> depuis WhatsApp ou un autre appareil pour retrouver ton profil._")
+            msg += ("\n\n▶️ *La suite :* /veille (plus d'offres) · /campusfrance (études en France) · "
+                    "/ecoles · /canada · /menu.\n_Je t'enverrai chaque jour les meilleures offres liées à ton profil._")
+            session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
         else:
-            session["etape"] = "PREFERENCES"; session["pref_index"] = 0
-            msg = "Pas de souci, on reprend.\n\n" + PREF_QUESTIONS[0][1]
+            session["etape"] = "PREFERENCES"
+            # On repart de zéro : vider les réponses pour re-parcourir le plan adaptatif.
+            profil = session.get("profil", {}) or {}
+            profil["preferences"] = {}; session["profil"] = profil
+            msg = "Pas de souci, on reprend.\n\n" + _ask_pref(session, "objectif")
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    historique = session.get("historique", [])
-    historique.append({"role": "user", "content": t})
+    # Pas encore onboardé : on COMPREND n'importe quelle phrase (IA), on ne réclame pas bêtement le CV.
+    if not session.get("onboarding_complete"):
+        # 1) « Je n'ai pas de CV » -> création guidée directe.
+        if _wants_no_cv(low):
+            _push(session, "user", t)
+            return await _cvbuild_start(session)
+        _push(session, "user", t)
+        # 2) Intention forte captée au passage (déclenchée à la fin de l'onboarding) — sans bloquer la réponse.
+        intent_cmd = _free_text_to_command(low, t)
+        if intent_cmd and len(t) > 3:
+            session["pending_intent"] = intent_cmd
+        # 3) On répond VRAIMENT à sa question (RGPD, prix, fiabilité, « c'est quoi »… n'importe quoi) via l'IA.
+        msg = await _preonboarding_reply(session, t)
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    # Utilisateur actif — langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
+    # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.
+    cmd = _free_text_to_command(low, t)
+    if cmd:
+        return await process_text_message(session, cmd)
+
     profil_str = json.dumps(session.get("profil", {}), ensure_ascii=False)[:800]
-    system = f"""Tu es NexMove, agent IA chaleureux qui aide à préparer son prochain départ (études, emploi, bourses, mobilité internationale).
-ETAPE: {etape}
+    system = f"""Tu es NexMove. {CONSEILLER_PERSONA}
 PROFIL: {profil_str}
-INSTRUCTIONS: {ETAPE_INSTRUCTIONS.get(etape, ETAPE_INSTRUCTIONS["ACTIF"])}
-REGLES: francais, TUTOIE l'utilisateur, ton amical et encourageant, ne le re-salue PAS en pleine conversation, max 120 mots, propose une action utile (ex: /veille, /campusfrance, /dossier, /postuler), ne redemande jamais le CV si etape=ACTIF.
-JSON: {{"message":"..."}}"""
+L'utilisateur écrit librement. Deux cas :
+1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
+2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
+COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · dossier <cible> · postuler <cible> · compresser · traduire <texte> · status · profil · parcours · aide.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots.
+JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
-        llm = await call_groq(system, t, temperature=0.3, max_tokens=350)
-        message = llm.get("message", "Je suis là pour t'aider.")
+        r = await call_groq(system, t, temperature=0.3, max_tokens=380)
     except Exception as e:
         logger.error(f"Erreur LLM: {e}")
-        message = "Désolé, souci technique. Reformule ta demande."
-    historique.append({"role": "assistant", "content": message, "ts": now})
-    session["historique"] = historique[-30:]; session["derniere_activite"] = now
+        r = {}
+    action = str(r.get("action", "") or "").strip().lower().lstrip("/")
+    if action in _VALID_INTENTS:
+        arg = str(r.get("argument", "") or "").strip()
+        return await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
+    message = (r.get("message") or "Je suis là pour t'aider — dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…).").strip()
+    _push(session, "user", t); _push(session, "assistant", message)
+    session["derniere_activite"] = now
     return message, session
 
 def session_to_sheets_row(session: dict) -> dict:
@@ -798,18 +2303,199 @@ def session_to_sheets_row(session: dict) -> dict:
         "derniere_activite": session.get("derniere_activite", datetime.now(timezone.utc).isoformat())
     }
 
+def _ocr_pdf(pdf_bytes: bytes) -> str:
+    """OCR de secours pour PDF scannés/images : rend chaque page en image puis tesseract."""
+    if not _ocr_available():
+        return ""
+    parts = []
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        mat = fitz.Matrix(OCR_ZOOM, OCR_ZOOM)
+        for i, page in enumerate(doc):
+            if i >= OCR_MAX_PAGES:
+                break
+            try:
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                img = Image.open(io.BytesIO(pix.tobytes("png")))
+                txt = pytesseract.image_to_string(img, lang=OCR_LANG)
+                if txt and txt.strip():
+                    parts.append(txt.strip())
+            except Exception as pe:
+                logger.warning(f"[ocr] page {i} échouée: {pe}")
+        doc.close()
+    except Exception as e:
+        logger.warning(f"[ocr] échec global: {e}")
+        return ""
+    out = "\n".join(parts).strip()
+    if out:
+        logger.info(f"[ocr] {len(out)} caractères extraits (lang={OCR_LANG})")
+    return out
+
 def extract_text_pdf(pdf_bytes: bytes) -> str:
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         text = "\n".join(p.get_text("text") for p in doc if p.get_text("text").strip())
         doc.close()
-        return text.strip()
+        text = text.strip()
     except Exception as e:
         raise HTTPException(422, f"Lecture PDF impossible: {e}")
+    # PDF scanné / image : le texte embarqué est vide ou trop court -> bascule OCR
+    if len(text) < 50:
+        ocr_text = _ocr_pdf(pdf_bytes)
+        if len(ocr_text) > len(text):
+            return ocr_text
+    return text
+
+def extract_text_docx(data: bytes) -> str:
+    """Extraction texte d'un .docx (python-docx)."""
+    if not _DocxDocument:
+        raise HTTPException(422, "Lecture DOCX indisponible sur ce serveur.")
+    try:
+        d = _DocxDocument(io.BytesIO(data))
+        parts = [p.text for p in d.paragraphs if p.text and p.text.strip()]
+        for tbl in d.tables:
+            for row in tbl.rows:
+                for cell in row.cells:
+                    if cell.text and cell.text.strip():
+                        parts.append(cell.text)
+        return "\n".join(parts).strip()
+    except Exception as e:
+        raise HTTPException(422, f"Lecture DOCX impossible: {e}")
+
+def extract_text_image(img_bytes: bytes) -> str:
+    """OCR d'une image (JPG/PNG/HEIC…) via tesseract."""
+    if not _ocr_available():
+        return ""
+    try:
+        img = Image.open(io.BytesIO(img_bytes))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        txt = pytesseract.image_to_string(img, lang=OCR_LANG)
+        return (txt or "").strip()
+    except Exception as e:
+        logger.warning(f"[img-ocr] {e}")
+        return ""
+
+# (analyze_cv_image_vision : voir llm.py — PR-B)
 
 def pdf_to_b64(buf: io.BytesIO) -> str:
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
+
+def _parse_pages(spec: str, n: int) -> list:
+    """« 1-3,5,8 » (1-indexé) -> indices 0-indexés valides et ordonnés."""
+    out = []
+    for part in str(spec or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        if "-" in part:
+            try:
+                a, b = part.split("-", 1)
+                a = int(a); b = int(b)
+            except Exception:
+                continue
+            for p in range(min(a, b), max(a, b) + 1):
+                if 1 <= p <= n:
+                    out.append(p - 1)
+        else:
+            try:
+                p = int(part)
+                if 1 <= p <= n:
+                    out.append(p - 1)
+            except Exception:
+                continue
+    seen = set(); res = []
+    for i in out:
+        if i not in seen:
+            seen.add(i); res.append(i)
+    return res
+
+def merge_pdfs(paths: list) -> bytes:
+    out = fitz.open()
+    for p in paths:
+        try:
+            src = fitz.open(p); out.insert_pdf(src); src.close()
+        except Exception as e:
+            logger.warning(f"[merge] {p}: {e}")
+    data = out.tobytes(garbage=4, deflate=True); out.close()
+    return data
+
+def images_to_pdf(paths: list) -> bytes:
+    out = fitz.open()
+    for p in paths:
+        try:
+            im = fitz.open(p)
+            pdfbytes = im.convert_to_pdf(); im.close()
+            src = fitz.open("pdf", pdfbytes); out.insert_pdf(src); src.close()
+        except Exception as e:
+            logger.warning(f"[img2pdf] {p}: {e}")
+    data = out.tobytes(garbage=4, deflate=True); out.close()
+    return data
+
+def split_pdf(pdf_bytes: bytes, spec: str) -> bytes:
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    idx = _parse_pages(spec, doc.page_count)
+    out = fitz.open()
+    for i in idx:
+        out.insert_pdf(doc, from_page=i, to_page=i)
+    data = out.tobytes(garbage=4, deflate=True); out.close(); doc.close()
+    return data
+
+# --- Tampon de fichiers sur disque (fusion PDF / images->PDF), volume ./data persistant ---
+_TOOL_DIR = "data/tmp"
+
+def _tool_dir(uid) -> str:
+    return os.path.join(_TOOL_DIR, hashlib.sha1(str(uid).encode()).hexdigest()[:16])
+
+def _tool_add_file(uid, data: bytes, ext: str) -> int:
+    d = _tool_dir(uid); os.makedirs(d, exist_ok=True)
+    n = len(os.listdir(d))
+    if n >= 15:
+        return -1
+    with open(os.path.join(d, f"{n:02d}.{ext}"), "wb") as f:
+        f.write(data)
+    return n + 1
+
+def _tool_files(uid) -> list:
+    d = _tool_dir(uid)
+    return [os.path.join(d, f) for f in sorted(os.listdir(d))] if os.path.isdir(d) else []
+
+def _tool_clear(uid):
+    shutil.rmtree(_tool_dir(uid), ignore_errors=True)
+
+def compress_pdf(pdf_bytes: bytes, target_kb: int = 2000) -> tuple:
+    """Compresse un PDF sous ~target_kb. 1) reconstruction lossless (nettoyage/deflate).
+    2) si toujours trop lourd et Pillow dispo, rendu des pages en JPEG à DPI décroissant.
+    Renvoie (bytes, taille_ko_finale)."""
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        best = doc.tobytes(garbage=4, deflate=True, clean=True, deflate_images=True, deflate_fonts=True)
+    except Exception:
+        best = pdf_bytes
+    target = max(50, target_kb) * 1024
+    if len(best) <= target or Image is None:
+        doc.close()
+        return best, len(best) // 1024
+    for dpi, q in ((150, 75), (120, 70), (96, 65), (72, 55)):
+        try:
+            nd = fitz.open()
+            for page in doc:
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+                b = io.BytesIO(); img.save(b, format="JPEG", quality=q, optimize=True)
+                npage = nd.new_page(width=page.rect.width, height=page.rect.height)
+                npage.insert_image(page.rect, stream=b.getvalue())
+            cand = nd.tobytes(garbage=4, deflate=True)
+            nd.close()
+            if len(cand) < len(best):
+                best = cand
+            if len(best) <= target:
+                break
+        except Exception as e:
+            logger.warning(f"[compress] dpi={dpi}: {e}")
+            break
+    doc.close()
+    return best, len(best) // 1024
 
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
@@ -817,8 +2503,8 @@ GRIS = HexColor("#546e7a")
 def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
-    s_nom = ParagraphStyle("n", fontSize=20, textColor=BLEU, fontName="Helvetica-Bold", spaceAfter=2)
-    s_sous = ParagraphStyle("s", fontSize=11, textColor=GRIS, fontName="Helvetica-Oblique", spaceAfter=8)
+    s_nom = ParagraphStyle("n", fontSize=19, leading=23, textColor=BLEU, fontName="Helvetica-Bold", spaceBefore=0, spaceAfter=5)
+    s_sous = ParagraphStyle("s", fontSize=11, leading=14, textColor=GRIS, fontName="Helvetica-Oblique", spaceAfter=6)
     s_sec = ParagraphStyle("se", fontSize=11, textColor=BLEU, fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4)
     s_body = ParagraphStyle("b", fontSize=9.5, fontName="Helvetica", spaceAfter=3, leading=13)
     s_bullet = ParagraphStyle("bu", fontSize=9.5, fontName="Helvetica", spaceAfter=2, leftIndent=12)
@@ -826,12 +2512,13 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list) -> io
     formation = profil.get("formation", [])
     experience = profil.get("experience", [])
     els = []
-    els.append(Paragraph(identite.get("nom", "Candidat"), s_nom))
-    els.append(Paragraph(titre, s_sous))
+    els.append(Paragraph(_xml(identite.get("nom", "Candidat")), s_nom))
+    if titre:
+        els.append(Paragraph(_xml(titre), s_sous))
     contacts = [x for x in [identite.get("email"), identite.get("telephone"), identite.get("localisation")] if x]
     if contacts:
-        els.append(Paragraph(" · ".join(contacts), s_body))
-    els.append(HRFlowable(width="100%", thickness=2, color=BLEU, spaceAfter=8))
+        els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
+    els.append(HRFlowable(width="100%", thickness=1.5, color=BLEU, spaceBefore=6, spaceAfter=10))
     if resume:
         els.append(Paragraph("PROFIL", s_sec))
         els.append(Paragraph(resume, s_body))
@@ -885,61 +2572,68 @@ def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
     doc.build(els)
     return buf
 
-async def _send_telegram_document(chat_id, filename, pdf_bytes, caption=""):
-    if not TELEGRAM_TOKEN:
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            r = await client.post(
-                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument",
-                data={"chat_id": str(chat_id), "caption": (caption or "")[:1000]},
-                files={"document": (filename, pdf_bytes, "application/pdf")},
-            )
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"sendDocument erreur: {e}")
-        return False
+# ---------- Export Word (.docx) : versions modifiables du CV et de la lettre ----------
+_BLEU_RGB = (0x1a, 0x23, 0x7e)
+_GRIS_RGB = (0x54, 0x6e, 0x7a)
 
-async def _tg(method, payload):
-    if not TELEGRAM_TOKEN:
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            r = await client.post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/{method}", json=payload)
-        if r.status_code != 200:
-            logger.error(f"tg {method} {r.status_code}: {r.text[:150]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"tg {method}: {e}")
-        return False
+def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
+    d = _DocxDocument()
+    ident = profil.get("identite", {})
+    p = d.add_paragraph(); r = p.add_run(ident.get("nom", "Candidat") or "Candidat")
+    r.bold = True; r.font.size = _DocxPt(19); r.font.color.rgb = _DocxRGB(*_BLEU_RGB)
+    if titre:
+        p = d.add_paragraph(); r = p.add_run(titre); r.italic = True
+        r.font.size = _DocxPt(11); r.font.color.rgb = _DocxRGB(*_GRIS_RGB)
+    contacts = [x for x in [ident.get("email"), ident.get("telephone"), ident.get("localisation")] if x]
+    if contacts:
+        d.add_paragraph(" · ".join(contacts))
+    def section(t):
+        p = d.add_paragraph(); r = p.add_run(t.upper())
+        r.bold = True; r.font.size = _DocxPt(11); r.font.color.rgb = _DocxRGB(*_BLEU_RGB)
+    if resume:
+        section("Profil"); d.add_paragraph(resume)
+    if competences:
+        section("Compétences"); d.add_paragraph(" · ".join(competences[:16]))
+    exp = profil.get("experience", [])
+    if exp:
+        section("Expérience")
+        for e in exp[:5]:
+            p = d.add_paragraph(); r = p.add_run(f"{e.get('poste','')} — {e.get('organisation','')}"); r.bold = True
+            for m in (e.get("missions", []) or [])[:4]:
+                d.add_paragraph(str(m), style="List Bullet")
+    form = profil.get("formation", [])
+    if form:
+        section("Formation")
+        for f in form[:4]:
+            p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} — {f.get('etablissement','')}"); r.bold = True
+    buf = io.BytesIO(); d.save(buf); return buf
 
-async def send_message(chat_id, text, keyboard=None):
-    payload = {"chat_id": str(chat_id), "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
-    if keyboard:
-        payload["reply_markup"] = keyboard
-    return await _tg("sendMessage", payload)
+def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
+    d = _DocxDocument()
+    ident = profil.get("identite", {})
+    p = d.add_paragraph(); r = p.add_run(ident.get("nom", "Candidat") or "Candidat"); r.bold = True
+    for c in [ident.get("email"), ident.get("telephone"), ident.get("localisation")]:
+        if c:
+            d.add_paragraph(str(c))
+    d.add_paragraph("")
+    d.add_paragraph(datetime.now(timezone.utc).strftime("%d/%m/%Y"))
+    p = d.add_paragraph(); r = p.add_run(f"Objet : {objet}"); r.bold = True
+    for para in (corps or "").split("\n\n"):
+        para = para.strip()
+        if para:
+            d.add_paragraph(para.replace("\n", " "))
+    d.add_paragraph("")
+    d.add_paragraph("Cordialement,")
+    p = d.add_paragraph(); r = p.add_run(ident.get("nom", "") or ""); r.bold = True
+    buf = io.BytesIO(); d.save(buf); return buf
 
-async def _send_telegram_message(chat_id, text):
-    return await send_message(chat_id, text)
-
-async def edit_message(chat_id, message_id, text, keyboard=None):
-    try:
-        mid = int(message_id)
-    except Exception:
-        return await send_message(chat_id, text, keyboard)
-    payload = {"chat_id": str(chat_id), "message_id": mid, "text": (text or "")[:4000], "parse_mode": "Markdown", "disable_web_page_preview": True}
-    if keyboard:
-        payload["reply_markup"] = keyboard
-    return await _tg("editMessageText", payload)
-
-async def answer_callback(cb_id, text=""):
-    return await _tg("answerCallbackQuery", {"callback_query_id": str(cb_id), "text": text[:180]})
-
-def _btn(text, data):
-    return {"text": text, "callback_data": data}
-
-def _kb(rows):
-    return {"inline_keyboard": rows}
+# ── Canaux (Telegram/WhatsApp/Messenger) extraits dans channels.py (PR-C) ──
+from channels import (
+    TELEGRAM_TOKEN, WHATSAPP_TOKEN, WHATSAPP_PHONE_ID, MESSENGER_TOKEN,
+    _mime_for, send_message, edit_message, answer_callback, _send_telegram_document,
+    _tg_keyboard, wa_text, wa_menu, wa_document, wa_get_media,
+    fb_text, fb_menu, fb_document, tg_get_file,
+)  # noqa: F401
 
 def get_menu(session, key):
     if key == "find":
@@ -948,15 +2642,29 @@ def get_menu(session, key):
             ("🌍 Recherche ciblée", "act:mobilite_help"),
             ("⬅️ Retour", "m:root")])
     if key == "cf":
-        opts = [("🇫🇷 Campus France", "act:parcours")]
+        opts = [
+            ("🇫🇷 Campus France", "act:campusfrance"),
+            ("🗺️ Mon parcours", "act:parcours"),
+            ("🎓 Parcoursup", "act:parcoursup"),
+            ("📘 MonMaster", "act:monmaster"),
+            ("🧾 eCandidat", "act:ecandidat"),
+            ("📜 DAP (L1 hors UE)", "act:dap"),
+            ("🛂 Visa (Capago/VFS)", "act:visa"),
+            ("⚖️ Recours refus", "act:recours"),
+            ("🏫 Trouver une école", "act:ecoles"),
+            ("🏠 Logement", "act:logement"),
+            ("🎤 Prépa entretien", "act:entretien"),
+            ("🇨🇦 Canada", "act:canada"),
+            ("🌍 Autres pays", "act:procedure"),
+            ("💶 Budget", "act:budget"),
+        ]
         try:
-            for (cible, dl, st) in (opp_store.list_candidatures(session.get("user_id")) or [])[:4]:
+            for (cible, dl, st) in (opp_store.list_candidatures(session.get("user_id")) or [])[:2]:
                 opts.append((("🗂️ " + str(cible))[:20], "act:status"))
         except Exception:
             pass
-        opts.append(("➕ Nouvelle candid.", "act:dossier_help"))
         opts.append(("⬅️ Retour", "m:root"))
-        return ("🗂️ *Tes procédures de candidature*", opts)
+        return ("🗂️ *Procédures & accompagnement*", opts)
     if key == "apply":
         return ("📄 *Candidater*", [
             ("🗂️ Dossier complet", "act:dossier_help"),
@@ -967,6 +2675,9 @@ def get_menu(session, key):
         return ("📊 *Mon espace*", [
             ("👤 Mon profil", "act:profil"),
             ("📊 Mon suivi", "act:status"),
+            ("🗜️ Compresser un PDF", "act:compresser"),
+            ("💬 Nous contacter", "act:contact"),
+            ("ℹ️ Version", "act:version"),
             ("🗑️ Effacer données", "act:supprimer"),
             ("⬅️ Retour", "m:root")])
     return ("🧭 *NexMove* — que veux-tu faire ?", [
@@ -974,118 +2685,7 @@ def get_menu(session, key):
         ("📄 Candidater", "m:apply"), ("🎓 Formations", "act:formations"),
         ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
 
-def _tg_keyboard(options):
-    rows, cur = [], []
-    for (lbl, aid) in options:
-        cur.append(_btn(lbl, aid))
-        if len(cur) == 2:
-            rows.append(cur); cur = []
-    if cur:
-        rows.append(cur)
-    return _kb(rows)
-
-# ---------- WhatsApp Cloud API ----------
-async def wa_send(payload):
-    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as c:
-            r = await c.post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/messages",
-                             headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"}, json=payload)
-        if r.status_code != 200:
-            logger.error(f"wa {r.status_code}: {r.text[:200]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"wa send: {e}")
-        return False
-
-async def wa_text(to, text):
-    return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "text",
-                          "text": {"body": (text or "")[:4000], "preview_url": True}})
-
-async def wa_menu(to, title, options):
-    opts = [(l[:20], a) for (l, a) in options][:10]
-    if len(opts) <= 3:
-        inter = {"type": "button", "body": {"text": (title or "Menu")[:1000]},
-                 "action": {"buttons": [{"type": "reply", "reply": {"id": a[:200], "title": l}} for (l, a) in opts]}}
-    else:
-        inter = {"type": "list", "body": {"text": (title or "Menu")[:1000]},
-                 "action": {"button": "Choisir", "sections": [{"title": "Options",
-                            "rows": [{"id": a[:200], "title": l} for (l, a) in opts]}]}}
-    return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "interactive", "interactive": inter})
-
-async def wa_document(to, filename, data, caption=""):
-    if not (WHATSAPP_TOKEN and WHATSAPP_PHONE_ID):
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=45.0) as c:
-            up = await c.post(f"https://graph.facebook.com/v21.0/{WHATSAPP_PHONE_ID}/media",
-                              headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                              data={"messaging_product": "whatsapp", "type": "application/pdf"},
-                              files={"file": (filename, data, "application/pdf")})
-            if up.status_code != 200:
-                logger.error(f"wa media {up.status_code}: {up.text[:200]}")
-                return False
-            mid = up.json().get("id")
-        return await wa_send({"messaging_product": "whatsapp", "to": str(to), "type": "document",
-                              "document": {"id": mid, "filename": filename, "caption": (caption or "")[:900]}})
-    except Exception as e:
-        logger.error(f"wa doc: {e}")
-        return False
-
-async def wa_get_media(media_id):
-    if not WHATSAPP_TOKEN:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as c:
-            meta = await c.get(f"https://graph.facebook.com/v21.0/{media_id}",
-                               headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
-            url = meta.json().get("url")
-            if not url:
-                return None
-            r = await c.get(url, headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"})
-        return r.content if r.status_code == 200 else None
-    except Exception as e:
-        logger.error(f"wa get_media: {e}")
-        return None
-
-# ---------- Messenger (Facebook Page) ----------
-async def fb_send(payload):
-    if not MESSENGER_TOKEN:
-        return False
-    try:
-        async with httpx.AsyncClient(timeout=25.0) as c:
-            r = await c.post("https://graph.facebook.com/v21.0/me/messages",
-                             params={"access_token": MESSENGER_TOKEN}, json=payload)
-        if r.status_code != 200:
-            logger.error(f"fb {r.status_code}: {r.text[:200]}")
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"fb send: {e}")
-        return False
-
-async def fb_text(to, text):
-    return await fb_send({"recipient": {"id": str(to)}, "message": {"text": (text or "")[:1900]}})
-
-async def fb_menu(to, text, options):
-    qrs = [{"content_type": "text", "title": l[:20], "payload": a[:900]} for (l, a) in options[:13]]
-    return await fb_send({"recipient": {"id": str(to)}, "message": {"text": (text or "Menu")[:640], "quick_replies": qrs}})
-
-async def fb_document(to, filename, data, caption=""):
-    if not MESSENGER_TOKEN:
-        return False
-    try:
-        if caption:
-            await fb_text(to, caption)
-        async with httpx.AsyncClient(timeout=45.0) as c:
-            r = await c.post("https://graph.facebook.com/v21.0/me/messages", params={"access_token": MESSENGER_TOKEN},
-                             data={"recipient": json.dumps({"id": str(to)}),
-                                   "message": json.dumps({"attachment": {"type": "file", "payload": {"is_reusable": False}}})},
-                             files={"filedata": (filename, data, "application/pdf")})
-        return r.status_code == 200
-    except Exception as e:
-        logger.error(f"fb doc: {e}")
-        return False
+# (WhatsApp/Messenger + _tg_keyboard -> channels.py, PR-C)
 
 # ---------- Couche canal (dispatch) ----------
 async def deliver_menu(session, title, options):
@@ -1096,18 +2696,23 @@ async def deliver_menu(session, title, options):
         return await fb_menu(to, title, options)
     return await send_message(to, title, _tg_keyboard(options))
 
-async def deliver_text(session, text, with_menu=False):
+async def deliver_text(session, text, with_menu=False, options=None):
+    # `options` = boutons attachés à CE message (confirmation, choix d'onboarding…), prioritaires sur le menu.
     ch = session.get("channel", "telegram"); to = session.get("chat_id")
     if ch == "whatsapp":
+        if options:
+            return await wa_menu(to, text, options)
         await wa_text(to, text)
         if with_menu:
             await wa_menu(to, "👉 Que veux-tu faire ?", get_menu(session, "root")[1])
         return True
     if ch == "messenger":
+        if options:
+            return await fb_menu(to, text, options)
         if with_menu:
             return await fb_menu(to, text, get_menu(session, "root")[1])
         return await fb_text(to, text)
-    kb = _tg_keyboard(get_menu(session, "root")[1]) if with_menu else None
+    kb = _tg_keyboard(options) if options else (_tg_keyboard(get_menu(session, "root")[1]) if with_menu else None)
     return await send_message(to, text, kb)
 
 async def deliver_file(session, filename, data, caption=""):
@@ -1120,20 +2725,61 @@ async def deliver_file(session, filename, data, caption=""):
 
 _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "profil": "/profil",
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
-            "formations": "/formations", "supprimer": "/supprimer"}
+            "formations": "/formations", "supprimer": "/supprimer",
+            "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
+            "compresser": "/compresser", "procedure": "/procedure", "budget": "/budget",
+            "parcoursup": "/parcoursup", "monmaster": "/monmaster", "ecandidat": "/ecandidat",
+            "dap": "/dap", "visa": "/visa", "recours": "/recours",
+            "contact": "/contact", "version": "/version", "rencontrer": "/rencontrer"}
 _ACT_HELP = {
     "mobilite_help": "🌍 Écris : /mobilite <pays ou domaine>\nEx : /mobilite Canada cybersécurité",
     "dossier_help": "🗂️ Écris : /dossier <bourse ou programme>\nEx : /dossier Bourse Eiffel master cybersécurité",
     "postuler_help": "✉️ Écris : /postuler <poste ou bourse>\nEx : /postuler Analyste SOC chez Orange",
 }
 
-async def handle_action(session, data):
+async def handle_action(session, data, callback_id=None):
+    if data.startswith("fb:"):
+        # feedback offre : fb:u:<i> (👍) / fb:d:<i> (👎)
+        try:
+            _, v, idx = data.split(":", 2)
+            i = int(idx)
+        except Exception:
+            v, i = "", -1
+        offers = session.get("last_offers", []) or []
+        if 0 <= i < len(offers):
+            vote = 1 if v == "u" else -1
+            opp_store.add_feedback(session.get("user_id"), offers[i].get("sig", ""), vote)
+            if callback_id:
+                await answer_callback(callback_id, "👍 Noté, merci !" if vote > 0 else "👎 Compris, j'en tiendrai compte.")
+        elif callback_id:
+            await answer_callback(callback_id)
+        return session
+    if callback_id:
+        await answer_callback(callback_id)
+    # Confirmation / choix d'onboarding cliquables : on rejoue la réponse comme si elle était tapée
+    if data.startswith(("onb:", "pref:")):
+        val = data.split(":", 1)[1]
+        txt = "/start" if val == "reset" else val
+        msg, session = await process_text_message(session, txt)
+        opts = session.pop("_kb_options", None)
+        show = session.pop("_show_menu", False)
+        fb = session.pop("_feedback_kb", None)
+        await deliver_text(session, msg, with_menu=show, options=opts)
+        if fb:
+            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb)
+        return session
     if data.startswith("m:"):
         title, opts = get_menu(session, data[2:])
         await deliver_menu(session, title, opts)
         return session
     if data.startswith("act:"):
         act = data[4:]
+        if act == "pending":
+            # Rejoue l'intention forte captée pendant l'onboarding (commande stockée côté serveur).
+            cmd = session.pop("pending_intent", "") or "/veille"
+            msg, session = await process_text_message(session, cmd)
+            await deliver_text(session, msg, with_menu=True)
+            return session
         if act in _ACT_HELP:
             await deliver_text(session, _ACT_HELP[act], with_menu=True)
             return session
@@ -1146,38 +2792,308 @@ async def handle_action(session, data):
     await deliver_menu(session, title, opts)
     return session
 
-async def process_cv(session, pdf_bytes, filename="cv.pdf"):
-    if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
-        await deliver_text(session, "❌ PDF illisible ou trop lourd (max 20 Mo).")
+def _tl_font(size: int):
+    for name in ("DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                 "DejaVuSans-Bold.ttf"):
+        try:
+            return _PILFont.truetype(name, size)
+        except Exception:
+            continue
+    return _PILFont.load_default()
+
+def _tl_wrap(text: str, n: int = 46) -> list:
+    words, lines, cur = str(text).split(), [], ""
+    for w in words:
+        if len(cur) + len(w) + 1 <= n:
+            cur = (cur + " " + w).strip()
+        else:
+            lines.append(cur); cur = w
+    if cur:
+        lines.append(cur)
+    return lines or [""]
+
+def render_timeline_png(stages, current_idx: int, title: str = "Ma feuille de route",
+                        deadlines=None) -> bytes:
+    """Rend une frise verticale (PNG) : étapes faites/en cours/à venir + échéances.
+    Fonction pure (renvoie des octets PNG) — testable hors réseau."""
+    if not _PIL_OK:
+        return b""
+    W = 900
+    pad, rail_x, row_h = 40, 70, 78
+    deadlines = deadlines or []
+    head_h = 90
+    body_h = max(len(stages), 1) * row_h
+    dl_h = (40 + len(deadlines) * 30 + 20) if deadlines else 0
+    H = head_h + body_h + dl_h + pad
+    bg, ink, muted = (255, 255, 255), (17, 24, 39), (107, 114, 128)
+    green, orange, grey = (34, 197, 94), (249, 115, 22), (203, 213, 225)
+    img = _PILImg.new("RGB", (W, H), bg)
+    d = _PILDraw.Draw(img)
+    d.text((pad, 28), title, fill=ink, font=_tl_font(30))
+    d.line([(pad, head_h - 12), (W - pad, head_h - 12)], fill=(229, 231, 235), width=2)
+    f_stage, f_small = _tl_font(21), _tl_font(17)
+    for i, st in enumerate(stages):
+        cy = head_h + i * row_h + 26
+        done, current = i < current_idx, i == current_idx
+        col = green if done else (orange if current else grey)
+        if i < len(stages) - 1:
+            d.line([(rail_x, cy + 14), (rail_x, cy + row_h)], fill=(226, 232, 240), width=4)
+        d.ellipse([rail_x - 16, cy - 16, rail_x + 16, cy + 16], fill=col)
+        mark = "✓" if done else ("●" if current else str(i + 1))
+        d.text((rail_x - 6, cy - 11), mark, fill=(255, 255, 255), font=f_small)
+        tx = rail_x + 40
+        lines = _tl_wrap(st, 52)
+        d.text((tx, cy - 16), lines[0], fill=ink if (done or current) else muted, font=f_stage)
+        if len(lines) > 1:
+            d.text((tx, cy + 8), lines[1], fill=muted, font=f_small)
+        if current:
+            badge = "  EN COURS"
+            d.text((tx, cy + 30), badge, fill=orange, font=f_small)
+    if deadlines:
+        y = head_h + body_h + 6
+        d.line([(pad, y), (W - pad, y)], fill=(229, 231, 235), width=2)
+        d.text((pad, y + 10), "Échéances", fill=ink, font=_tl_font(22))
+        y += 42
+        for (cible, dl, statut) in deadlines[:8]:
+            txt = f"• {str(cible)[:48]}"
+            if dl:
+                txt += f"  —  {dl}"
+            if statut:
+                txt += f"  ({statut})"
+            d.text((pad + 6, y), txt, fill=muted, font=f_small)
+            y += 30
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
+    """Mode /guide : analyse une capture d'écran (vision Gemini) et renvoie un guidage concret."""
+    if not img_bytes or len(img_bytes) > 20 * 1024 * 1024:
+        await deliver_text(session, "❌ Capture illisible ou trop lourde (max 20 Mo). Reprends une capture nette.")
         return
+    fn = (filename or "capture").lower()
+    is_image = fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")) or (img_bytes[:3] in (b"\xff\xd8\xff", b"\x89PN"))
+    if not is_image:
+        await deliver_text(session, "📸 Envoie une *capture d'écran* (image JPG/PNG) de l'écran où tu es bloqué·e. "
+                                    "_Tape /annuler pour quitter le mode guidage._")
+        return
+    # Quota gratuit (option coûteuse : vision) — admin illimité.
+    ok, _ = _quota_check(session, "guide", FREE_GUIDE_DAILY)
+    if not ok:
+        await deliver_text(session, _quota_exceeded_msg("le guidage par capture d'écran"))
+        return
+    mime = "image/png" if fn.endswith(".png") else ("image/webp" if fn.endswith(".webp") else "image/jpeg")
     try:
-        cv_text = extract_text_pdf(pdf_bytes)
-    except Exception:
-        cv_text = ""
-    if not cv_text or len(cv_text.strip()) < 50:
-        await deliver_text(session, "❌ PDF vide ou scanné sans OCR.\n\nEnvoie un PDF avec texte sélectionnable (Word/LibreOffice).")
+        guidance = await analyze_screenshot_vision(img_bytes, mime, session.get("guide_context", ""))
+    except Exception as e:
+        logger.error(f"[guide] {e}"); guidance = ""
+    if not guidance:
+        await deliver_text(session, "😕 Je n'arrive pas à lire cette capture (ou le service vision est momentanément "
+                                    "indisponible). Reprends une capture *nette*, ou réessaie dans un instant.")
         return
-    system = "Tu es expert en analyse de CV. Extrais toutes les informations. JSON uniquement."
-    prompt = f"""Analyse ce CV:
-{{"identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
-CV: {cv_text[:6000]}"""
-    profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
-    nom = profil.get("identite", {}).get("nom", "N/A")
-    diplome = profil.get("formation", [{}])[0].get("diplome", "N/A") if profil.get("formation") else "N/A"
+    _quota_bump(session, "guide")
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _push(session, "assistant", guidance)
+    logger.info(f"[guide] {session.get('channel')} capture analysée")
+    await deliver_text(session, "🧭 " + guidance + "\n\n_Envoie la capture suivante, ou tape /annuler pour quitter._")
+
+
+async def process_cv(session, pdf_bytes, filename="cv.pdf"):
+    uid = session.get("user_id")
+    # Mode /guide : la capture d'écran est analysée par la vision (pas comme un CV).
+    if session.get("guide_mode"):
+        await _process_guide_screenshot(session, pdf_bytes, filename)
+        return
+    # Boîte à outils PDF : fusion / images->PDF (tampon) ou découpe (immédiat)
+    mode = session.get("tool_mode")
+    if mode in ("merge", "img2pdf"):
+        ext = "pdf" if (filename or "").lower().endswith(".pdf") else ((filename or "img").rsplit(".", 1)[-1].lower() or "jpg")
+        n = await asyncio.to_thread(_tool_add_file, uid, pdf_bytes, ext)
+        if n < 0:
+            await deliver_text(session, "⚠️ Limite atteinte (15 fichiers). Tape /terminer pour générer, ou /annuler.")
+        else:
+            quoi = "PDF" if mode == "merge" else "image"
+            await deliver_text(session, f"📎 {quoi} n°{n} ajouté. Envoie le suivant, ou tape /terminer pour générer le PDF.")
+        return
+    if mode == "split":
+        spec = session.pop("split_spec", "")
+        session["tool_mode"] = None
+        session_manager.set(uid, session)
+        try:
+            data = await asyncio.to_thread(split_pdf, pdf_bytes, spec)
+            ok = data and len(data) > 100
+        except Exception as e:
+            logger.error(f"[split] {e}"); ok = False
+        if ok:
+            await deliver_file(session, f"{_slug((filename or 'document').rsplit('.',1)[0])}_pages_{spec.replace(',', '_')}.pdf", data, f"✂️ Pages {spec}")
+        else:
+            await deliver_text(session, "😕 Découpe impossible (vérifie les numéros de pages).")
+        return
+    # Mode compression : l'utilisateur a demandé /compresser puis envoie un PDF
+    target_kb = session.pop("compress_target", 0)
+    if target_kb:
+        session_manager.set(session.get("user_id"), session)   # on retire le flag
+        if not pdf_bytes or len(pdf_bytes) > 25 * 1024 * 1024:
+            await deliver_text(session, "❌ PDF illisible ou trop lourd (max 25 Mo).")
+            return
+        orig_kb = len(pdf_bytes) // 1024
+        try:
+            data, kb = await asyncio.to_thread(compress_pdf, pdf_bytes, target_kb)
+        except Exception as e:
+            logger.error(f"[compress] {e}")
+            await deliver_text(session, "😕 Compression impossible sur ce fichier.")
+            return
+        base = _slug((filename or "document").rsplit(".", 1)[0])
+        await deliver_file(session, f"{base}_compresse.pdf", data, f"🗜️ {orig_kb} Ko → {kb} Ko")
+        note = "" if kb <= target_kb else f"\n⚠️ Je n'ai pas pu descendre sous {target_kb} Ko sans trop dégrader la qualité. Relance avec une cible plus haute si besoin."
+        await deliver_text(session, f"✅ PDF allégé : *{orig_kb} Ko → {kb} Ko*.{note}")
+        logger.info(f"[compress] {session.get('channel')} {orig_kb}->{kb} Ko (cible {target_kb})")
+        return
+    if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
+        await deliver_text(session, "❌ Fichier illisible ou trop lourd (max 20 Mo).")
+        return
+    # Quota gratuit : l'analyse de CV (LLM/vision) est coûteuse ; l'admin est illimité.
+    ok, _ = _quota_check(session, "cv", FREE_CV_DAILY)
+    if not ok:
+        await deliver_text(session, _quota_exceeded_msg("l'analyse de CV"))
+        return
+    fn = (filename or "cv").lower()
+    is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
+    is_docx = fn.endswith((".docx", ".dotx"))
+    is_image = fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")) or pdf_bytes[:3] in (b"\xff\xd8\xff", b"\x89PN")
+    profil_from_vision = None
+    cv_text = ""
+    try:
+        if is_pdf:
+            cv_text = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
+        elif is_docx:
+            cv_text = await asyncio.to_thread(extract_text_docx, pdf_bytes)
+        elif is_image:
+            # 1) Vision Gemini (le mieux sur photos) — renvoie DIRECTEMENT le JSON profil
+            mime = "image/png" if fn.endswith(".png") else ("image/webp" if fn.endswith(".webp") else "image/jpeg")
+            profil_from_vision = await analyze_cv_image_vision(pdf_bytes, mime)
+            if not profil_from_vision:
+                # 2) Repli OCR
+                cv_text = await asyncio.to_thread(extract_text_image, pdf_bytes)
+        else:
+            await deliver_text(session, "❌ Format non supporté. Envoie ton CV en *PDF*, *DOCX* ou *image* (JPG/PNG).")
+            return
+    except HTTPException as he:
+        await deliver_text(session, f"❌ {he.detail}")
+        return
+    except Exception as e:
+        logger.error(f"[cv] extraction {fn}: {e}")
+        cv_text = ""
+    if profil_from_vision is None and (not cv_text or len(cv_text.strip()) < 50):
+        if is_image and not _ocr_available():
+            await deliver_text(session, "❌ Image reçue mais l'OCR n'est pas disponible.\n\nEnvoie plutôt ton CV (PDF, Word ou image) ou DOCX.")
+        elif is_image:
+            await deliver_text(session, "❌ Je n'arrive pas à lire cette image. Prends une photo *plus nette* (bonne lumière, cadrée sur le CV), ou envoie un PDF/DOCX.")
+        elif is_docx:
+            await deliver_text(session, "❌ Le DOCX semble vide.\n\nRenvoie-le, ou exporte en PDF depuis Word.")
+        elif not _ocr_available():
+            await deliver_text(session, "❌ Ce PDF semble scanné (image) et l'OCR n'est pas disponible.\n\nEnvoie un PDF avec texte sélectionnable (Word/LibreOffice).")
+        else:
+            await deliver_text(session, "❌ Impossible de lire ce PDF, même après OCR.\n\nVérifie que le document est lisible (bonne qualité) ou envoie un PDF avec texte sélectionnable.")
+        return
+    system = ("Tu es expert en analyse de CV ET " + CONSEILLER_PERSONA + " D'abord détermine si le document EST "
+              "un CV/résumé professionnel (identité + parcours/formation/expérience/compétences). Si ce n'est PAS "
+              "un CV (facture, article, cours, lettre, relevé, capture, texte quelconque), mets \"est_cv\": false "
+              "et laisse les autres champs vides. Sinon, remplis aussi un \"bilan\" d'orientation bref et "
+              "personnalisé (forces réelles, axes à renforcer, 2-3 pistes réalistes de destinations/programmes "
+              "adaptées au profil). Réponds en JSON uniquement.")
+    prompt = f"""Analyse ce document:
+{{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"bilan":{{"forces":["..."],"axes":["..."],"pistes":["..."]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
+Document: {cv_text[:6000]}"""
+    if profil_from_vision:
+        profil = profil_from_vision   # analyse vision directe (image) : pas de deuxième appel LLM
+    else:
+        try:
+            profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+        except Exception as e:
+            logger.error(f"[cv] analyse LLM échouée: {e}")
+            await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute — je m'en occupe dès que possible.")
+            return
+    if not isinstance(profil, dict) or not profil:
+        await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
+        return
+    # Rejet des documents qui ne sont pas des CV (retour testeurs)
+    ident = profil.get("identite", {}) or {}
+    a_du_contenu = bool(profil.get("formation") or profil.get("experience") or
+                        any((profil.get("competences", {}) or {}).values()))
+    if profil.get("est_cv") is False or not (ident.get("nom") or a_du_contenu):
+        raison = profil.get("raison_rejet") or "il ne ressemble pas à un CV"
+        await deliver_text(session, f"❌ Ce document n'a pas été accepté : {raison}.\n\nEnvoie ton *CV* (formation, expériences, compétences) en PDF pour démarrer.")
+        logger.info(f"[cv] {session.get('channel')} document rejeté (non-CV)")
+        return
+    # Diplôme principal en premier (le plus élevé/récent) — sinon le bot retenait la licence au lieu du master
+    profil["formation"] = _sort_formations(profil.get("formation"))
+    nom = (profil.get("identite", {}).get("nom") or "").strip()
+    if not nom or nom.upper() in ("N/A", "NA", "-", "—"):
+        # Repli : deviner le nom depuis le nom de fichier du CV (ex. « CV_Judicael.pdf »).
+        devine = _name_from_filename(filename)
+        nom = devine or "—"
+        if devine:
+            profil.setdefault("identite", {})["nom"] = devine   # persister pour lettres/dossiers
+    forms = profil.get("formation", []) or []
+    if forms:
+        lignes_f = []
+        for f in forms[:3]:
+            dip = (f.get("diplome", "") or "").strip()
+            etab = (f.get("etablissement", "") or "").strip()
+            an = (f.get("annee", "") or "").strip()
+            ligne = dip + (f" — {etab}" if etab else "") + (f" ({an})" if an else "")
+            if ligne.strip():
+                lignes_f.append("   • " + _md_clean(ligne))
+        formation_txt = "\n".join(lignes_f) if lignes_f else "   • _non précisé_"
+        if len(forms) > 3:
+            formation_txt += f"\n   • _(+{len(forms) - 3} autre·s)_"
+    else:
+        formation_txt = "   • _Aucune formation détectée dans ton CV — dis-le-moi si c'est une erreur._"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
-    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formation :* {diplome}\n💻 *Compétences :* {', '.join(skills)}\n\nCes informations sont-elles correctes ? Réponds *Oui* pour continuer."
+    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
+    bilan = profil.get("bilan", {}) or {}
+    if bilan.get("forces"):
+        message += "\n💪 *Tes atouts :* " + _md_clean(", ".join(bilan["forces"][:3])) + "\n"
+    if bilan.get("axes"):
+        message += "📈 *À renforcer :* " + _md_clean(", ".join(bilan["axes"][:3])) + "\n"
+    if bilan.get("pistes"):
+        message += "🎯 *Pistes réalistes pour toi :*\n" + "\n".join(f"• {_md_clean(p)}" for p in bilan["pistes"][:3]) + "\n"
+    message += "\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*)."
     session["etape"] = "CV_RECU"
     session["profil"] = profil
     session["cv_parsed"] = True
+    _quota_bump(session, "cv")   # analyse réussie -> décompte le quota (admin exclu)
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     _push(session, "assistant", message)
     session_manager.set(session.get("user_id"), session)
     logger.info(f"[cv] {session.get('channel')} {nom} -> CV_RECU")
-    await deliver_text(session, message)
+    await deliver_text(session, message, options=[("✅ C'est correct", "onb:oui"), ("🔄 Recommencer", "onb:reset")])
 
 def _extract_incoming(channel, raw):
     text, callback, doc = None, None, None
-    if channel == "whatsapp":
+    if channel == "telegram":
+        cq = raw.get("callback_query")
+        if cq:
+            callback = cq.get("data")
+        else:
+            m = raw.get("message") or raw.get("edited_message") or {}
+            if m.get("document"):
+                d = m["document"]
+                doc = {"id": d.get("file_id"), "filename": d.get("file_name") or "cv.pdf"}
+            elif m.get("photo"):
+                sizes = m.get("photo") or []
+                ph = sizes[-1] if sizes else {}     # la plus grande résolution
+                doc = {"id": ph.get("file_id"), "filename": "cv.jpg"}
+            elif "text" in m:
+                text = m.get("text", "")
+            elif m.get("voice") or m.get("audio"):
+                a = m.get("voice") or m.get("audio")
+                doc = {"id": a.get("file_id"), "voice": True, "mime": a.get("mime_type") or "audio/ogg"}
+            elif m.get("video") or m.get("video_note") or m.get("sticker"):
+                text = "__wa_unsupported__"
+    elif channel == "whatsapp":
         t = raw.get("type")
         if t == "text":
             text = raw.get("text", {}).get("body", "")
@@ -1188,8 +3104,18 @@ def _extract_incoming(channel, raw):
         elif t == "document":
             d = raw.get("document", {})
             doc = {"id": d.get("id"), "filename": d.get("filename", "cv.pdf")}
+        elif t == "image":
+            # Photo directe (WhatsApp) — traitée comme un CV en image via vision Gemini
+            im = raw.get("image", {})
+            ext = ".png" if "png" in (im.get("mime_type") or "") else ".jpg"
+            doc = {"id": im.get("id"), "filename": f"cv{ext}"}
         elif t == "button":
             callback = raw.get("button", {}).get("payload")
+        elif t in ("audio", "voice"):
+            a = raw.get(t, {}) or {}
+            doc = {"id": a.get("id"), "voice": True, "mime": a.get("mime_type") or "audio/ogg"}
+        elif t in ("video", "sticker"):
+            text = "__wa_unsupported__"   # message poli renvoyé plus bas
     elif channel == "messenger":
         pb = raw.get("postback"); msg = raw.get("message")
         if pb:
@@ -1209,6 +3135,8 @@ def _extract_incoming(channel, raw):
     return text, callback, doc
 
 async def _download_doc(channel, doc):
+    if channel == "telegram":
+        return await tg_get_file(doc.get("id"))
     if channel == "whatsapp":
         return await wa_get_media(doc.get("id"))
     if channel == "messenger":
@@ -1216,8 +3144,7 @@ async def _download_doc(channel, doc):
         if not url:
             return None
         try:
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as c:
-                r = await c.get(url)
+            r = await http().get(url, timeout=30.0, follow_redirects=True)
             return r.content if r.status_code == 200 else None
         except Exception:
             return None
@@ -1230,39 +3157,129 @@ async def route_incoming(channel, user_id, chat_id, username, raw):
     if username and username != "utilisateur":
         session["username"] = username
     text, callback, doc = _extract_incoming(channel, raw)
+    # Message vocal : on télécharge, on transcrit (Gemini), et on traite comme du texte.
+    if doc and doc.get("voice"):
+        ok, _ = _quota_check(session, "voice", FREE_VOICE_DAILY)
+        if not ok:
+            await deliver_text(session, _quota_exceeded_msg("les messages vocaux")
+                               + "\n\n💎 Les abonnés ont les vocaux *illimités* — tape /offres.")
+            return
+        audio = await _download_doc(channel, doc)
+        transcript = await transcribe_audio(audio, doc.get("mime", "audio/ogg")) if audio else ""
+        if not transcript or len(transcript.strip()) < 2:
+            await deliver_text(session, "🎙️ Je n'ai pas bien compris ton vocal. Réessaie près du micro, ou écris-le.")
+            return
+        _quota_bump(session, "voice")
+        logger.info(f"[voice] {channel} transcrit: {transcript[:60]!r}")
+        text, doc = transcript, None      # on continue dans le flux TEXTE ci-dessous
     if doc:
         pdf = await _download_doc(channel, doc)
         await process_cv(session, pdf, doc.get("filename", "cv.pdf"))
         return
     if callback:
-        session = await handle_action(session, callback)
+        cb_id = (raw.get("callback_query") or {}).get("id") if channel == "telegram" else None
+        session = await handle_action(session, callback, cb_id)
         session_manager.set(user_id, session)
         return
     if text is not None:
+        if text == "__wa_unsupported__":
+            await deliver_text(session, "🎙️ Je ne traite pas encore les messages audio/vidéo/sticker. Écris-moi en *texte* ou envoie ton CV en *PDF/Word/image*.")
+            return
         if not check_rate_limit(user_id):
             await deliver_text(session, "⚠️ Trop de messages. Attends une minute.")
             return
         msg, session = await process_text_message(session, text)
+        show_menu = session.pop("_show_menu", False)
+        kb_options = session.pop("_kb_options", None)
+        fb_kb = session.pop("_feedback_kb", None)
         session_manager.set(user_id, session)
-        await deliver_text(session, msg, with_menu=session.get("onboarding_complete"))
+        await deliver_text(session, msg, with_menu=show_menu, options=kb_options)
+        if fb_kb:
+            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
+
+def _profil_txt_court(profil: dict) -> str:
+    prefs = (profil.get("preferences", {}) or {})
+    dom = prefs.get("mots_cles") or (profil.get("resume_profil", "")[:60])
+    dip = (profil.get("formation") or [{}])[0].get("diplome", "")
+    return (f"diplôme={dip}, domaine={dom}, objectif={prefs.get('objectif','')}, "
+            f"pays visés={prefs.get('pays_cibles','')}, niveau={prefs.get('niveau','')}, "
+            f"financement={prefs.get('financement','')}, type poste={prefs.get('type_emploi','')}")
+
+async def conseil_grounded(profil: dict, titre_aff: str, tavily_query: str, consigne: str, cta: str = "") -> str:
+    """Conseil personnalisé façon conseiller senior, ancré sur le web (Tavily) — réutilisé par
+    /ecoles, /logement, /entretien, /canada. Liens réels uniquement, jamais d'échéance passée."""
+    grounded = await tavily_search(tavily_query, 6)
+    sources = "\n".join(f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:180]}"
+                        for s in grounded[:6]) if grounded else "(pas de résultat web — n'utilise que des organismes/plateformes RÉELS et connus, sans inventer d'URL)"
+    system = (CONSEILLER_PERSONA + " " + consigne +
+              " Ne cite QUE des organismes, plateformes ou écoles RÉELS (jamais d'URL inventée). JSON uniquement.")
+    prompt = f"""PROFIL: {_profil_txt_court(profil)}
+SOURCES WEB:
+{sources}
+DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()} — n'indique jamais une échéance déjà passée.
+JSON: {{"intro":"","points":[{{"titre":"","detail":"","lien":""}}],"checklist":["..."],"conseil":""}}"""
+    r = await call_groq(system, prompt, temperature=0.2, max_tokens=1400)
+    msg = f"{titre_aff}\n━━━━━━━━━━━━━━━━━━\n"
+    if r.get("intro"):
+        msg += _md_clean(r["intro"]) + "\n\n"
+    for p in (r.get("points") or [])[:6]:
+        ti = _md_clean(p.get("titre", ""))
+        if not ti:
+            continue
+        msg += f"• *{ti}*"
+        if p.get("detail"):
+            msg += f" — {_md_clean(p['detail'])}"
+        lien = str(p.get("lien", "") or "").replace("*", "").replace("`", "").strip()
+        if lien:
+            msg += f"\n  🔗 {lien}"
+        msg += "\n"
+    if r.get("checklist"):
+        msg += "\n📋 *À préparer :*\n" + "\n".join(f"⬜ {_md_clean(c)}" for c in r["checklist"][:6]) + "\n"
+    if r.get("conseil"):
+        msg += f"\n💡 {_md_clean(r['conseil'])}\n"
+    if cta:
+        msg += "\n" + cta
+    return msg
 
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:12]
     resume = profil.get("resume_profil", "")
+    # Ancrer la lettre dans le vécu réel du candidat (expériences + formations) pour éviter le texte générique.
+    exp_lignes = []
+    for e in (profil.get("experience", []) or [])[:4]:
+        poste = e.get("poste", ""); org = e.get("organisation", "")
+        missions = "; ".join((e.get("missions", []) or [])[:2])
+        exp_lignes.append(f"- {poste} @ {org} : {missions}".strip())
+    form_lignes = []
+    for f in (profil.get("formation", []) or [])[:3]:
+        form_lignes.append(f"- {f.get('diplome','')} ({f.get('domaine','')}), {f.get('etablissement','')}".strip())
+    experiences_txt = "\n".join(exp_lignes) or "(aucune expérience renseignée)"
+    formations_txt = "\n".join(form_lignes) or "(aucune formation renseignée)"
     if type_cible == "bourse":
         consigne = ("Rédige un CV adapté ET une lettre de motivation académique (statement of purpose) pour cette bourse/programme. "
-                    "La lettre met en avant le projet d'études, la motivation, l'adéquation au programme et l'impact visé.")
+                    "La lettre met en avant le projet d'études, la motivation, l'adéquation au programme et l'impact visé au retour.")
     else:
         consigne = ("Rédige un CV adapté ET une lettre de motivation professionnelle ciblée pour ce poste. "
                     "Structure : accroche, adéquation profil/poste, valeur ajoutée, conclusion.")
-    system = "Tu es expert en recrutement et candidatures internationales. Français impeccable, concret, sans clichés. JSON uniquement."
+    system = ("Tu es expert en recrutement et candidatures internationales. Français impeccable et NATUREL, comme "
+              "écrit par la personne elle-même. INTERDIT : les tournures d'IA et clichés (« je suis convaincu que », "
+              "« correspond parfaitement à mes aspirations », « dynamique et motivé », « c'est avec un grand "
+              "intérêt », « fort de mon expérience »). Appuie CHAQUE argument sur un fait CONCRET du profil "
+              "(expérience, mission, diplôme, compétence réels ci-dessous) — jamais de généralités. JSON uniquement.")
     prompt = f"""{consigne}
 CANDIDAT: {ident.get('nom','')}
 RÉSUMÉ: {resume}
+FORMATIONS:
+{formations_txt}
+EXPÉRIENCES:
+{experiences_txt}
 COMPÉTENCES: {competences}
 CIBLE: {cible_desc}
-La lettre (lettre_corps) fait 250-320 mots, paragraphes séparés par une ligne vide, sans en-tête ni signature.
+
+Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par une ligne vide, sans en-tête ni
+signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
+professionnel, phrases variées, pas de superlatifs creux.
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
     return await call_groq(system, prompt, temperature=0.4, max_tokens=1200)
 
@@ -1271,12 +3288,15 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     uid = request.user_id
     session = session_manager.get(uid) or session_manager.create_default(uid, request.chat_id, request.username)
     session["channel"] = "telegram"
-    session["chat_id"] = request.chat_id
-    session["username"] = request.username
+    # Robustesse : ne pas écraser un chat_id valide par une valeur bidon (repli : chat_id == user_id).
+    if _valid_id(request.chat_id):
+        session["chat_id"] = str(request.chat_id)
+    elif not _valid_id(session.get("chat_id")):
+        session["chat_id"] = str(uid) if _valid_id(uid) else session.get("chat_id")
+    if request.username and request.username != "utilisateur":
+        session["username"] = request.username
     if request.callback_data:
-        if request.callback_id:
-            await answer_callback(request.callback_id)
-        session = await handle_action(session, request.callback_data)
+        session = await handle_action(session, request.callback_data, request.callback_id)
         session_manager.set(uid, session)
         return {"ok": True}
     if not check_rate_limit(uid):
@@ -1284,18 +3304,43 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
         return {"ok": True}
     logger.info(f"[chat] tg user={uid} text={request.text[:50]!r}")
     message, session = await process_text_message(session, request.text)
+    show_menu = session.pop("_show_menu", False)
+    kb_options = session.pop("_kb_options", None)
+    fb_kb = session.pop("_feedback_kb", None)
     session_manager.set(uid, session)
-    await deliver_text(session, message, with_menu=session.get("onboarding_complete"))
+    await deliver_text(session, message, with_menu=show_menu, options=kb_options)
+    if fb_kb:
+        await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
     return {"ok": True}
 
 @app.post("/api/chat-cv")
 async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), chat_id: str = Form("0"), username: str = Form("utilisateur"), _auth: bool = Depends(verify_api_key)):
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
     session["channel"] = "telegram"
-    session["chat_id"] = chat_id
-    session["username"] = username
-    if not (file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")):
-        await deliver_text(session, "❌ Envoie ton CV en PDF.")
+    # Ne pas écraser un chat_id valide déjà connu par une valeur bidon du nœud fichier n8n
+    # (0, vide, "undefined", "null"…). Repli : en privé Telegram, chat_id == user_id.
+    if _valid_id(chat_id):
+        session["chat_id"] = str(chat_id)
+    elif not _valid_id(session.get("chat_id")):
+        session["chat_id"] = str(user_id) if _valid_id(user_id) else session.get("chat_id")
+    if username and username != "utilisateur":
+        session["username"] = username
+    logger.info(f"[chat-cv] user={user_id} chat_in={chat_id!r} chat_resolved={session.get('chat_id')!r} file={file.filename!r}")
+    if not _valid_id(session.get("chat_id")):
+        # n8n n'a fourni AUCUN identifiant exploitable -> impossible de répondre. On l'indique clairement.
+        logger.error("[chat-cv] aucun chat_id/user_id valide reçu de n8n (nœud fichier à corriger) — réponse impossible.")
+        return {"ok": False, "error": "no_valid_chat_id"}
+    fn = (file.filename or "").lower()
+    ct = (file.content_type or "").lower()
+    is_pdf = ct == "application/pdf" or fn.endswith(".pdf")
+    is_img = ct.startswith("image/") or fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic"))
+    is_docx = "word" in ct or fn.endswith((".docx", ".dotx"))
+    if session.get("tool_mode") == "img2pdf":
+        if not (is_img or is_pdf):
+            await deliver_text(session, "🖼️ Envoie une *image* (en fichier/document), ou /annuler.")
+            return {"ok": True}
+    elif not (is_pdf or is_img or is_docx):
+        await deliver_text(session, "❌ Format non supporté. Envoie ton CV en *PDF*, *DOCX* ou *image* (JPG/PNG).")
         return {"ok": True}
     pdf_bytes = await file.read()
     await process_cv(session, pdf_bytes, file.filename or "cv.pdf")
@@ -1307,7 +3352,7 @@ async def parse_cv(file: UploadFile = File(...), user_id: str = Form("unknown"),
     if not (file.content_type == "application/pdf" or (file.filename or "").lower().endswith(".pdf")):
         raise HTTPException(415, "PDF requis.")
     pdf_bytes = await file.read()
-    cv_text = extract_text_pdf(pdf_bytes)
+    cv_text = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
     if not cv_text.strip():
         raise HTTPException(422, "PDF vide ou scanné sans OCR.")
     system = "Tu es expert en analyse de CV. JSON uniquement."
@@ -1327,8 +3372,8 @@ async def generate_documents(request: GenerateDocumentsRequest, _auth: bool = De
     cible_desc = f"{titre} — {entreprise}"
     pack = await generate_pack(profil, cible_desc, type_cible)
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-    cv_buf = build_cv_pdf(profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
-    lm_buf = build_letter_pdf(profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+    cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
+    lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
     nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
     return {"success": True, "user_id": request.user_id,
             "cv_pdf_base64": pdf_to_b64(cv_buf), "cv_filename": f"CV_{nom}.pdf",
@@ -1357,14 +3402,13 @@ async def tavily_search(query: str, max_results: int = 7) -> list:
     if cached is not None:
         return cached
     try:
-        async with httpx.AsyncClient(timeout=25.0) as client:
-            r = await client.post("https://api.tavily.com/search", json={
-                "api_key": TAVILY_API_KEY,
-                "query": query,
-                "search_depth": "advanced",
-                "max_results": max_results,
-                "include_answer": False,
-            })
+        r = await http().post("https://api.tavily.com/search", json={
+            "api_key": TAVILY_API_KEY,
+            "query": query,
+            "search_depth": "advanced",
+            "max_results": max_results,
+            "include_answer": False,
+        }, timeout=25.0)
         if r.status_code != 200:
             logger.error(f"Tavily {r.status_code}: {r.text[:200]}")
             return []
@@ -1376,47 +3420,440 @@ async def tavily_search(query: str, max_results: int = 7) -> list:
         return []
 
 # Flux RSS de bourses / opportunités (sources réelles, sans clé API)
-SOURCE_FEEDS = [
-    "https://www.scholars4dev.com/feed/",
-    "https://opportunitydesk.org/feed/",
-    "https://www.opportunitiesforafricans.com/feed/",
+# ── Catalogue de sources STRUCTURÉ (scope: local/intl/both, type: bourse/emploi/fellowship/ong) ──
+# `active_env` (optionnel) : la source n'est active que si la variable d'env correspondante est vraie.
+SOURCE_CATALOG = [
+    {"url": "https://www.scholars4dev.com/feed/",              "type": "bourse",     "scope": "intl"},
+    {"url": "https://opportunitydesk.org/feed/",               "type": "bourse",     "scope": "both"},
+    {"url": "https://www.opportunitiesforafricans.com/feed/",  "type": "bourse",     "scope": "both"},
+    {"url": "https://afterschoolafrica.com/feed/",             "type": "bourse",     "scope": "both"},
+    {"url": "https://www.opportunitiesforyouth.org/feed/",     "type": "fellowship", "scope": "both"},
+    {"url": "https://youthop.com/feed/",                       "type": "fellowship", "scope": "both"},
+    {"url": "https://mladiinfo.eu/feed/",                      "type": "bourse",     "scope": "intl"},
+    # Humanitaire / ONG (emplois & consultances) — activable via ENABLE_RELIEFWEB=1
+    {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
+     "active_env": "ENABLE_RELIEFWEB"},
 ]
+
+# ── IRCC Entrée express : rondes d'invitations en TEMPS RÉEL (open data officiel, cache 6 h) ──
+IRCC_ROUNDS_URL = os.getenv("IRCC_ROUNDS_URL",
+                            "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json")
+
+def _parse_ee_rounds(data: dict, limit: int = 12) -> list:
+    """Extrait les dernières rondes du JSON open data IRCC (tolérant aux champs manquants)."""
+    rounds = (data or {}).get("rounds") or []
+    out = []
+    for r in rounds:
+        if not isinstance(r, dict):
+            continue
+        out.append({
+            "date": (r.get("drawDate") or r.get("drawDateFull") or "").strip(),
+            "categorie": (r.get("drawName") or "").strip(),
+            "invitations": (r.get("drawSize") or "").strip(),
+            "crs": (r.get("drawCRS") or "").strip(),
+        })
+    return out[:limit]
+
+async def fetch_ircc_rounds(limit: int = 6) -> list:
+    ck = "ircc_ee_rounds"
+    cached = cache.get(ck)
+    if cached is not None:
+        return cached[:limit]
+    try:
+        r = await http().get(IRCC_ROUNDS_URL, headers={"User-Agent": _BROWSER_UA},
+                             timeout=20.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        parsed = _parse_ee_rounds(r.json(), limit=12)
+        cache.set(ck, parsed, ttl=6 * 3600)
+        return parsed[:limit]
+    except Exception as e:
+        logger.warning(f"[ircc] {e}")
+        return []
+
+def _format_ircc_rounds(rounds: list) -> str:
+    lignes = []
+    for r in rounds or []:
+        cat = r.get("categorie") or "Ronde générale"
+        det = []
+        if r.get("crs"):
+            det.append(f"CRS {r['crs']}")
+        if r.get("invitations"):
+            det.append(f"{r['invitations']} invitations")
+        suffix = f" — {', '.join(det)}" if det else ""
+        d = f" ({r['date']})" if r.get("date") else ""
+        lignes.append(f"• {_md_clean(cat)}{suffix}{d}")
+    return "\n".join(lignes[:6])
+
+
+def _source_active(s: dict) -> bool:
+    env = s.get("active_env")
+    return True if not env else str(os.getenv(env, "")).strip().lower() in ("1", "true", "yes", "on", "oui")
+
+
+# Flux RSS supplémentaires ajoutables sans toucher au code (URLs séparées par des virgules ; scope 'both').
+for _u in (u.strip() for u in os.getenv("SOURCE_FEEDS_EXTRA", "").split(",") if u.strip()):
+    SOURCE_CATALOG.append({"url": _u, "type": "bourse", "scope": "both"})
+
+_SOURCE_META = {s["url"]: s for s in SOURCE_CATALOG}
+# Liste plate des feeds ACTIFS (rétro-compat : ingest_feeds itère dessus).
+SOURCE_FEEDS = [s["url"] for s in SOURCE_CATALOG if _source_active(s)]
+
+
+def _sources_for_profile(prefs: dict) -> list[str]:
+    """Sélection ADAPTATIVE des sources selon le profil : un objectif purement LOCAL
+    n'inonde pas l'utilisateur de sources uniquement internationales, et inversement."""
+    local_only = _is_travail(prefs.get("objectif")) and not _vise_international(prefs)
+    out = []
+    for s in SOURCE_CATALOG:
+        if not _source_active(s):
+            continue
+        if local_only and s["scope"] == "intl":
+            continue          # visée locale : on écarte les sources 100 % internationales
+        out.append(s["url"])
+    return out
+# EURAXESS : flux RSS explicite (facultatif) d'une recherche filtrée.
+EURAXESS_RSS = os.getenv("EURAXESS_RSS", "")
+# EURAXESS API : endpoint de recherche ({q} = requête). Vide -> on tente des endpoints candidats.
+# Pour le fixer précisément : ouvrir euraxess.ec.europa.eu/jobs/search, F12 > Network > taper un mot,
+# copier l'URL de la requête qui renvoie du JSON et remplacer le mot par {q}.
+EURAXESS_API = os.getenv("EURAXESS_API", "")
+# EURAXESS rend ses résultats en HTML (recherche à facettes Drupal) : on lit la page et on
+# extrait les liens d'offres. Le mot-clé va dans la facette keywords.
+_EURAXESS_CANDIDATES = [
+    "https://euraxess.ec.europa.eu/jobs/search?f[0]=keywords:{q}",
+    "https://euraxess.ec.europa.eu/jobs/search?keywords={q}",
+]
+_euraxess_working = None  # mémorise le template qui a répondu (évite de re-sonder)
+
+# Certains sites (EURAXESS, afterschoolafrica, youthop…) renvoient une page de blocage aux bots :
+# on se présente avec un User-Agent de navigateur.
+_BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64; rv:125.0) Gecko/20100101 Firefox/125.0"
+
+def _rss_regex(text: str) -> list:
+    """Extraction RSS tolérante (feeds WordPress mal formés : & nus, CDATA). Renvoie [] si pas d'items."""
+    def _tag(block, tag):
+        m = re.search(rf"<{tag}[^>]*>(?:<!\[CDATA\[)?(.*?)(?:\]\]>)?</{tag}>", block, re.S | re.I)
+        return m.group(1) if m else ""
+    out = []
+    for block in re.findall(r"<item[ >].*?</item>", text, re.S | re.I):
+        titre = _htmlmod.unescape(re.sub(r"<[^>]+>", " ", _tag(block, "title"))).strip()
+        link = _htmlmod.unescape(_tag(block, "link")).strip()
+        desc = _htmlmod.unescape(re.sub(r"<[^>]+>", " ", _tag(block, "description"))).strip()[:300]
+        if titre and link:
+            out.append({"titre": titre, "url": link, "resume": desc, "date": ""})
+    return out
 
 async def fetch_rss(url: str) -> list:
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            r = await client.get(url, headers={"User-Agent": "NexMoveBot/1.0"})
+        r = await http().get(url, headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
         if r.status_code != 200:
             return []
-        root = ET.fromstring(r.content)
         items = []
-        for it in root.iter("item"):
-            titre = (it.findtext("title") or "").strip()
-            link = (it.findtext("link") or "").strip()
-            desc = re.sub("<[^>]+>", " ", (it.findtext("description") or ""))
-            desc = re.sub(r"\s+", " ", desc).strip()[:300]
-            pub = (it.findtext("pubDate") or "").strip()
-            if titre and link:
-                items.append({"titre": titre, "url": link, "resume": desc, "date": pub})
+        try:
+            root = ET.fromstring(r.content)
+            for it in root.iter("item"):
+                titre = (it.findtext("title") or "").strip()
+                link = (it.findtext("link") or "").strip()
+                desc = re.sub("<[^>]+>", " ", (it.findtext("description") or ""))
+                desc = re.sub(r"\s+", " ", desc).strip()[:300]
+                pub = (it.findtext("pubDate") or "").strip()
+                if titre and link:
+                    items.append({"titre": titre, "url": link, "resume": desc, "date": pub})
+        except Exception:
+            items = _rss_regex(r.text)   # feed mal formé -> parseur tolérant
         return items[:30]
     except Exception as e:
-        logger.error(f"RSS {url}: {e}")
+        logger.warning(f"RSS {url}: {e}")
         return []
 
 async def ingest_feeds() -> int:
     total = 0
     for url in SOURCE_FEEDS:
+        meta = _SOURCE_META.get(url, {})
         for it in await fetch_rss(url):
+            it.setdefault("type", meta.get("type", "bourse"))   # type/scope hérités de la source
+            it.setdefault("scope", meta.get("scope", "both"))
             if opp_store.add_source(it):
                 total += 1
+    return total
+
+# ---------- Sources d'emplois structurées (APIs open data) ----------
+async def fetch_arbeitnow() -> list:
+    """Job board ouvert (EU/tech, sans clé API). https://www.arbeitnow.com/api/job-board-api"""
+    try:
+        r = await http().get("https://www.arbeitnow.com/api/job-board-api",
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("data") or [])[:40]:
+            titre = (j.get("title") or "").strip()
+            url = (j.get("url") or "").strip()
+            comp = (j.get("company_name") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            tags = ", ".join((j.get("tags") or [])[:5])
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": (desc or tags)[:300], "type": "emploi", "date": ""})
+        return out
+    except Exception as e:
+        logger.error(f"arbeitnow: {e}")
+        return []
+
+async def fetch_adzuna(query: str, country: str = "fr") -> list:
+    """API emploi Adzuna (clés gratuites). Ne fait rien si non configurée."""
+    if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
+        return []
+    try:
+        url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+        r = await http().get(url, params={"app_id": ADZUNA_APP_ID, "app_key": ADZUNA_APP_KEY,
+                                          "results_per_page": 20, "what": query, "content-type": "application/json"},
+                             timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            logger.warning(f"adzuna {r.status_code}: {r.text[:120]}")
+            return []
+        out = []
+        for j in (r.json().get("results") or [])[:20]:
+            titre = (j.get("title") or "").strip()
+            link = (j.get("redirect_url") or "").strip()
+            comp = ((j.get("company") or {}).get("display_name") or "").strip()
+            desc = re.sub(r"\s+", " ", j.get("description") or "").strip()[:300]
+            if titre and link:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": link,
+                            "resume": desc, "type": "emploi", "date": (j.get("created") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"adzuna: {e}")
+        return []
+
+def _euraxess_pick(item: dict):
+    """Extrait titre/url/description d'un item EURAXESS quel que soit le nom des champs."""
+    def first(keys):
+        for k in keys:
+            v = item.get(k)
+            if isinstance(v, dict):
+                v = v.get("value") or v.get("uri") or v.get("href")
+            if isinstance(v, str) and v.strip():
+                return v.strip()
+        return ""
+    titre = first(["title", "name", "jobTitle", "label", "offerTitle"])
+    url = first(["url", "link", "jobUrl", "detailUrl", "path", "alias", "self", "href"])
+    desc = first(["description", "summary", "teaser", "body", "abstract", "content"])
+    return titre, url, desc
+
+def _euraxess_items(payload):
+    """Retrouve la liste d'items dans une réponse JSON EURAXESS (formes variées)."""
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        for k in ("results", "hits", "data", "jobs", "items", "content", "offers", "rows"):
+            v = payload.get(k)
+            if isinstance(v, list):
+                return v
+        emb = payload.get("_embedded")
+        if isinstance(emb, dict):
+            for v in emb.values():
+                if isinstance(v, list):
+                    return v
+    return []
+
+async def fetch_euraxess(query: str) -> list:
+    """Recherche EURAXESS (chercheurs/PhD/postdoc). Endpoint configurable ou auto-sondé, parse JSON ou XML."""
+    global _euraxess_working
+    if EURAXESS_API:
+        templates = [EURAXESS_API]
+    elif _euraxess_working:
+        templates = [_euraxess_working]
+    else:
+        templates = _EURAXESS_CANDIDATES
+    for tmpl in [t for t in templates if t]:
+        url = tmpl.replace("{q}", quote(query)).replace("{query}", quote(query))
+        try:
+            r = await http().get(url, headers={"User-Agent": _BROWSER_UA,
+                                               "Accept": "text/html,application/xhtml+xml,application/json"},
+                                 timeout=15.0, follow_redirects=True)
+            if r.status_code != 200:
+                continue
+            out = []
+            body = r.text.lstrip()
+            ct = r.headers.get("content-type", "").lower()
+            if "json" in ct or body[:1] in "{[":
+                for it in _euraxess_items(r.json())[:25]:
+                    if not isinstance(it, dict):
+                        continue
+                    titre, u, desc = _euraxess_pick(it)
+                    if titre and u:
+                        if u.startswith("/"):
+                            u = "https://euraxess.ec.europa.eu" + u
+                        out.append({"titre": titre, "url": u,
+                                    "resume": re.sub(r"<[^>]+>", " ", desc)[:300], "type": "fellowship", "date": ""})
+            elif body[:5].lower().startswith("<?xml") or "<rss" in body[:200].lower():
+                for it in ET.fromstring(r.content).iter("item"):
+                    titre = (it.findtext("title") or "").strip()
+                    link = (it.findtext("link") or "").strip()
+                    if titre and link:
+                        out.append({"titre": titre, "url": link,
+                                    "resume": re.sub(r"<[^>]+>", " ", (it.findtext("description") or ""))[:300],
+                                    "type": "fellowship", "date": ""})
+            else:
+                # HTML : offres = liens /jobs/<id numérique>. Une carte a souvent 2 liens (image + titre) :
+                # on garde, par offre, l'intitulé le plus long (le vrai titre).
+                best = {}
+                for m in re.finditer(r'<a\s+[^>]*href="(/jobs/\d+)"[^>]*>(.*?)</a>', r.text, re.S | re.I):
+                    href = m.group(1)
+                    titre = _htmlmod.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", m.group(2))).strip())
+                    if len(titre) >= 6 and (href not in best or len(titre) > len(best[href])):
+                        best[href] = titre
+                for href, titre in list(best.items())[:25]:
+                    out.append({"titre": titre[:150], "url": "https://euraxess.ec.europa.eu" + href,
+                                "resume": "", "type": "fellowship", "date": ""})
+            if out:
+                _euraxess_working = tmpl
+                return out
+        except Exception as e:
+            logger.warning(f"[euraxess] {tmpl[:60]}: {e}")
+    return []
+
+async def ingest_euraxess() -> int:
+    """EURAXESS via API (requêtes adaptées aux mots-clés des utilisateurs) + flux RSS explicite éventuel."""
+    total = 0
+    queries = _collect_user_queries(6)
+    if queries:
+        # 1ère requête = découverte de l'endpoint ; si rien ne répond, on n'insiste pas.
+        first = await fetch_euraxess(queries[0])
+        if first:
+            for it in first:
+                if opp_store.add_source(it):
+                    total += 1
+            for q in queries[1:]:
+                for it in await fetch_euraxess(q):
+                    if opp_store.add_source(it):
+                        total += 1
+    if EURAXESS_RSS:
+        for it in await fetch_rss(EURAXESS_RSS):
+            it["type"] = "fellowship"
+            if opp_store.add_source(it):
+                total += 1
+    return total
+
+def _collect_user_queries(limit: int = 8) -> list:
+    """Construit les requêtes Adzuna à partir des VRAIS mots-clés des utilisateurs actifs
+    (les plus fréquents d'abord) ; repli sur ADZUNA_QUERIES si aucun."""
+    from collections import Counter
+    c = Counter()
+    for s in session_manager.list_active():
+        prefs = (s.get("profil", {}) or {}).get("preferences", {}) or {}
+        for champ in ("mots_cles", "objectif"):
+            for m in re.split(r"[,/;]| et ", str(prefs.get(champ, ""))):
+                m = m.strip().lower()
+                if len(m) > 2 and m not in ("tous", "aucun", "aucune", "travailler", "etudier", "étudier"):
+                    c[m] += 1
+        for comp in (s.get("profil", {}) or {}).get("competences", {}).get("techniques", [])[:3]:
+            comp = str(comp).strip().lower()
+            if len(comp) > 2:
+                c[comp] += 1
+    qs = [w for w, _ in c.most_common(limit)]
+    return qs or ADZUNA_QUERIES
+
+async def ingest_structured() -> int:
+    """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré + EURAXESS) dans le pool."""
+    total = 0
+    for it in await fetch_arbeitnow():
+        if opp_store.add_source(it):
+            total += 1
+    if ADZUNA_APP_ID and ADZUNA_APP_KEY:
+        queries = _collect_user_queries()          # requêtes adaptées aux mots-clés réels
+        for country in (ADZUNA_COUNTRIES or ["fr"]):
+            for q in queries:
+                for it in await fetch_adzuna(q, country):
+                    if opp_store.add_source(it):
+                        total += 1
+    total += await ingest_euraxess()
     return total
 
 def _domain(url):
     d = re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0]
     return d[:40]
 
-async def run_osint(profil: dict, cible: str = "") -> dict:
+# Nationalité -> pays (pour proposer aussi des opportunités LOCALES, pas seulement à l'étranger)
+_NAT_PAYS = {
+    "béninoise": "Bénin", "beninoise": "Bénin", "ivoirienne": "Côte d'Ivoire", "sénégalaise": "Sénégal",
+    "senegalaise": "Sénégal", "togolaise": "Togo", "burkinabé": "Burkina Faso", "burkinabe": "Burkina Faso",
+    "malienne": "Mali", "nigérienne": "Niger", "nigerienne": "Niger", "nigériane": "Nigéria",
+    "camerounaise": "Cameroun", "guinéenne": "Guinée", "guineenne": "Guinée", "gabonaise": "Gabon",
+    "congolaise": "Congo", "tchadienne": "Tchad", "centrafricaine": "Centrafrique", "marocaine": "Maroc",
+    "tunisienne": "Tunisie", "algérienne": "Algérie", "algerienne": "Algérie",
+}
+
+def _pays_from_nat(nat: str) -> str:
+    n = str(nat or "").strip().lower()
+    if n in _NAT_PAYS:
+        return _NAT_PAYS[n]
+    for k, v in _NAT_PAYS.items():
+        if k in n or v.lower() in n:
+            return v
+    return ""
+
+# Portails d'emploi LOCAUX réels (vérifiés) par pays — pour ancrer la veille locale sans flux RSS.
+# Complétable via env LOCAL_SOURCES_EXTRA_<PAYS> (ex. LOCAL_SOURCES_EXTRA_BENIN=site1.com,site2.com).
+LOCAL_JOB_SOURCES = {
+    "Bénin": ["emploibenin.com", "jobbenin.com", "offresdemplois.bj", "talentsplusafrique.com",
+              "afriqueemplois.com/bj", "gouv.bj (offres publiques)"],
+    "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "novojob.com"],
+    "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com"],
+    "Togo": ["emploitogo.info", "togocarriere.com"],
+    "Burkina Faso": ["emploiburkina.com", "burkinajob.com"],
+    "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com"],
+    "Mali": ["malipages.com", "novojob.com"],
+    "Niger": ["nigeremploi.com"],
+}
+# Sources régionales / panafricaines (servent tous les pays d'Afrique de l'Ouest).
+_REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "AfricaWork",
+                         "ReliefWeb (ONG/humanitaire)", "Emploi.org"]
+
+_ACCENTS = str.maketrans("àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ", "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
+
+def _env_key(pays: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]", "_", str(pays or "").translate(_ACCENTS)).upper()
+
+def _local_sources_txt(pays: str) -> str:
+    """Snippet de prompt : liste des portails locaux réels à privilégier pour la veille locale."""
+    locales = list(LOCAL_JOB_SOURCES.get(pays, []))
+    extra = os.getenv("LOCAL_SOURCES_EXTRA_" + _env_key(pays), "")
+    locales += [s.strip() for s in extra.split(",") if s.strip()]
+    src = locales + _REGIONAL_JOB_SOURCES
+    if not src:
+        return ""
+    return ("PORTAILS LOCAUX RÉELS à privilégier (cite des offres concrètes issues de ces sources quand "
+            "c'est pertinent, avec le lien du portail) : " + ", ".join(src) + ".\n")
+
+_STOP_SIG = {"pour", "avec", "dans", "les", "des", "une", "chez", "sur", "the", "and",
+             "for", "master", "bourse", "offre", "emploi", "stage", "junior", "senior"}
+
+def _offer_signal(opp, domaine="") -> str:
+    """Signature apprenante d'une offre : type + 1er mot-clé significatif (pour agréger le feedback)."""
+    typ = str(opp.get("type", "") or "opp").lower().strip()[:12]
+    base = f"{opp.get('titre','')} {domaine}".lower()
+    toks = [w for w in re.findall(r"[a-zàâçéèêëîïôûùüÿñ]{4,}", base) if w not in _STOP_SIG]
+    return f"{typ}|{toks[0] if toks else 'general'}"
+
+def _attach_feedback(session, opps):
+    """Prépare les boutons 👍/👎 pour les offres affichées et mémorise leur signature."""
+    lo, kb = [], []
+    for i, o in enumerate((opps or [])[:5]):
+        lo.append({"sig": _offer_signal(o), "titre": (o.get("titre") or "")[:40]})
+        kb.append((f"👍 {i+1}", f"fb:u:{i}"))
+        kb.append((f"👎 {i+1}", f"fb:d:{i}"))
+    if lo:
+        session["last_offers"] = lo
+        session["_feedback_kb"] = kb
+
+async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None) -> dict:
     profil = profil or {}
+    exclude_urls = exclude_urls or set()
+    alertes = alertes or []
     prefs = profil.get("preferences", {}) or {}
     nationalite = prefs.get("nationalite") or "béninoise"
     financement = prefs.get("financement") or "non précisé"
@@ -1427,15 +3864,22 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
     experiences = [f"{e.get('poste','')} ({e.get('organisation','')})" for e in (profil.get("experience") or []) if e.get("poste")][:3]
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
     mots = prefs.get("mots_cles") or ""
-    if mots and mots.lower() not in ("tous", "aucun", "aucune", "-", ""):
+    mots_list = [m.strip() for m in re.split(r"[,/;]| et ", mots) if m.strip()] if mots and mots.lower() not in ("tous", "aucun", "aucune", "-", "") else []
+    if mots_list:
         domaine = mots
     else:
         last_poste = (profil.get("experience") or [{}])[0].get("poste", "")
-        domaine = last_poste or (resume[:60]) or (formations[0] if formations else "") or "opportunités internationales"
-    cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités internationales"
+        domaine = last_poste or (resume[:60]) or (formations[0] if formations else "") or "opportunités"
+    type_emploi = prefs.get("type_emploi") or ""
+    cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités"
     cible_lower = cible.lower()
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
+    # Champ élargi : proposer aussi des opportunités LOCALES (pas seulement à l'étranger)
+    local_pays = _pays_from_nat(nationalite)
+    _pc_low = (pays_cibles or "").lower()
+    _pc_vide = (not pays_cibles) or _pc_low in ("tous", "local", "sur place", "mon pays", "")
+    veut_local = _pc_vide or "afrique" in _pc_low or (local_pays and local_pays.lower() in (_pc_low + " " + cible_lower))
     today = datetime.now(timezone.utc).date().isoformat()
     profil_txt = (f"résumé: {resume[:200]} | formations: {', '.join(formations) or '—'} | "
                   f"expériences: {', '.join(experiences) or '—'} | compétences: {competences} | "
@@ -1445,20 +3889,44 @@ async def run_osint(profil: dict, cible: str = "") -> dict:
     if TAVILY_API_KEY:
         type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
                     "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
-        zone = pays_detecte or pays_cibles or ""
-        query = f"{type_mot} {domaine} {zone} 2026 candidature".strip()
-        grounded = await tavily_search(query, 8)
+        if pays_detecte:
+            zone = pays_detecte
+        elif not _pc_vide:
+            zone = pays_cibles
+        else:
+            zone = local_pays if veut_local else ""
+        domaine_q = " OR ".join(mots_list) if len(mots_list) > 1 else domaine
+        query = f"{type_mot} {domaine_q} {type_emploi} {zone} 2026 candidature".strip()
+        # Recherche LOCALE : on oriente vers les portails d'emploi réels du pays.
+        if veut_local and local_pays and objectif in ("travailler", "tous", "tout", ""):
+            portails = LOCAL_JOB_SOURCES.get(local_pays, [])[:3]
+            if portails:
+                query += " " + " OR ".join(p.split()[0] for p in portails)
+        grounded = await tavily_search(query, 10)
 
     if grounded:
+        # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
+        sims = await semantic_scores(profil_txt, grounded, lambda s: f"{s.get('title','')} {(s.get('content','') or '')[:300]}")
+        if sims:
+            for s, sim in zip(grounded, sims):
+                s["_sim"] = sim
+            grounded = sorted(grounded, key=lambda s: s.get("_sim", 0.0), reverse=True)
+        grounded = grounded[:8]
         sources_txt = "\n".join(f"[{i}] {s.get('title','')} — {(s.get('content','') or '')[:200]}"
-                                for i, s in enumerate(grounded[:8]))
-        system = ("Tu es expert en orientation et mobilité internationale. On te fournit des RÉSULTATS WEB numérotés. "
-                  "Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du candidat (respecte une éventuelle "
-                  "reconversion : cible son domaine ACTUEL/visé, pas ses anciens diplômes). Réponds avec l'INDEX du résultat "
-                  "(jamais d'URL inventée). Ignore le hors-sujet. JSON uniquement.")
+                                for i, s in enumerate(grounded))
+        system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale). On te fournit des "
+                  "RÉSULTATS WEB numérotés. Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du "
+                  "candidat (respecte une éventuelle reconversion : cible son domaine ACTUEL/visé, pas ses anciens "
+                  "diplômes). Réponds avec l'INDEX du résultat (jamais d'URL inventée). Ignore le hors-sujet. JSON uniquement.")
+        diversite = (f"MOTS-CLÉS À COUVRIR (varie les résultats entre ces thèmes, pas tous sur le même) : {', '.join(mots_list)}.\n"
+                     if len(mots_list) > 1 else "")
+        type_emploi_txt = f"TYPE DE POSTE souhaité : {type_emploi}.\n" if type_emploi else ""
+        local_txt = ((f"IMPORTANT : inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations comme "
+                      f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
+                     if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or 'indifférent'}
-DATE DU JOUR: {today}. Exclus les deadlines passées.
+DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent')}
+{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
 Sélectionne 3 à 5 résultats PERTINENTS pour CE profil. Donne l'index de chacun.
@@ -1475,17 +3943,33 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                 o["titre"] = src.get("title", "")
                 o["url"] = src.get("url", "")
                 o["organisation"] = _domain(src.get("url", ""))
+                o["_sim"] = src.get("_sim")
                 clean.append(o)
+        # Mélange du score LLM avec la similarité sémantique + feedback appris de l'utilisateur
+        for o in clean:
+            sim = o.get("_sim")
+            if isinstance(sim, (int, float)):
+                base = o.get("score_composite") or 0
+                o["score_composite"] = int(round(0.6 * base + 0.4 * sim * 100))
+            if user_id:
+                d = opp_store.feedback_delta(user_id, _offer_signal(o, domaine))
+                if d:
+                    o["score_composite"] = max(0, min(100, (o.get("score_composite") or 0) + d))
+        clean.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles — vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
-        system = ("Tu es expert en orientation et mobilité internationale pour ressortissants africains. "
-                  "Respecte le PARCOURS RÉEL (reconversion incluse) : cible le domaine actuel/visé. "
-                  "Ne cite QUE des organismes RÉELS (DAAD, Campus France, Erasmus Mundus, Chevening, AUF, "
-                  "Mastercard Foundation, Mitacs...). N'invente jamais d'URL (portail officiel en clair). JSON uniquement.")
+        system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale) pour ressortissants "
+                  "africains. Respecte le PARCOURS RÉEL (reconversion incluse) : cible le domaine actuel/visé. "
+                  "Ne cite QUE des organismes RÉELS — locaux (agences, universités, entreprises, programmes du pays) "
+                  "ET internationaux (DAAD, Campus France, Erasmus Mundus, Chevening, AUF, Mastercard Foundation…). "
+                  "N'invente jamais d'URL (portail officiel en clair). JSON uniquement.")
+        local_txt = ((f"Inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations locales, bourses "
+                      f"nationales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
+                     if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or 'Non précisé'}
-DATE DU JOUR: {today}. Uniquement des opportunités ouvertes ou à venir.
+DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' + international' if local_pays else 'Non précisé')}
+{local_txt}DATE DU JOUR: {today}. Uniquement des opportunités ouvertes ou à venir.
 Donne 3 à 5 opportunités RÉELLES adaptées à CE profil.
 JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship|formation","portail_officiel":"","financement":"total|partiel|aucun","deadline":"","deadline_iso":"","confiance":"haute|moyenne|faible","score_composite":0,"raison":""}}],"conseil_principal":""}}"""
         result = await call_groq(system, prompt, temperature=0.15, max_tokens=1500)
@@ -1502,9 +3986,24 @@ JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fel
         except Exception:
             return True
     opps = [o for o in opps if _open(o)]
+    if exclude_urls:   # anti-doublons entre deux /mobilite d'affilée
+        opps = [o for o in opps if str(o.get("url", "") or o.get("portail_officiel", "")) not in exclude_urls]
+    # Alertes mots-clés : les offres qui matchent remontent en tête + tag 🔔.
+    n_alertes = 0
+    if alertes and opps:
+        for o in opps:
+            kw = _alertes_match(o, alertes)
+            if kw:
+                n_alertes += 1
+                o["score_composite"] = min(100, (o.get("score_composite") or 0) + 20)
+                r = str(o.get("raison", "") or "")
+                o["raison"] = f"🔔 correspond à ton alerte « {kw} ». " + r
+        opps.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
     titre_aff = _md_clean(domaine)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
     msg = f"🌍 *NexMove — {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
+    if n_alertes:
+        msg += f"🔔 *{n_alertes} offre(s) correspondent à tes alertes !*\n"
     if pays_detecte:
         msg += f"🗺️ Visa {pays_detecte} : {visa_info['facilite']}/100, ~{visa_info['delai']}j\n\n"
     for i, opp in enumerate(opps[:5], 1):
@@ -1537,34 +4036,55 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
     logger.info(f"[osint] user={request.user_id} cible={request.cible}")
     session = session_manager.get(request.user_id)
     profil = session.get("profil", {}) if session else {}
-    res = await run_osint(profil, request.cible)
+    res = await run_osint(profil, request.cible, request.user_id)
     return {**res, "chat_id": request.chat_id}
 
 @app.post("/api/collect")
 async def collect(_auth: bool = Depends(verify_api_key)):
-    ingested = await ingest_feeds()
+    ingested = await ingest_feeds() + await ingest_structured()
     users = session_manager.list_active()
-    sem = asyncio.Semaphore(5)
+    sem = asyncio.Semaphore(3)
     async def _one(s):
         async with sem:
             n = 0
             profil = s.get("profil", {}) or {}
             prefs = profil.get("preferences", {}) or {}
-            try:
-                res = await run_osint(profil, "")
-                for opp in res.get("opportunites", []):
-                    if opp_store.add(s.get("user_id"), opp):
-                        n += 1
-            except Exception as e:
-                logger.error(f"[collect] osint user={s.get('user_id')}: {e}")
+            if COLLECT_OSINT_PER_USER:
+                try:
+                    res = await run_osint(profil, "", s.get("user_id"), alertes=s.get("alertes", []))
+                    for opp in res.get("opportunites", []):
+                        if opp_store.add(s.get("user_id"), opp):
+                            n += 1
+                except Exception as e:
+                    logger.error(f"[collect] osint user={s.get('user_id')}: {e}")
             try:
                 kws = []
                 for key in ("mots_cles", "objectif", "pays_cibles"):
                     kws += str(prefs.get(key, "")).replace(",", " ").split()
                 kws += (profil.get("competences", {}).get("techniques", []))[:6]
-                for src in opp_store.search_sources(kws):
-                    opp = {"titre": src["titre"], "organisation": "Source vérifiée", "type": "bourse",
-                           "url": src["url"], "raison": (src.get("resume") or "")[:150], "score_composite": 62}
+                # Filtrage adaptatif : privilégie le périmètre visé (local si job local, sinon intl).
+                prefer = None if _vise_international(prefs) else ("local" if _is_travail(prefs.get("objectif")) else None)
+                srcs = opp_store.search_sources(kws, prefer_scope=prefer)
+                comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
+                profil_txt = (f"{profil.get('resume_profil','')} | objectif: {prefs.get('objectif','')} | "
+                              f"domaine: {prefs.get('mots_cles','')} | pays: {prefs.get('pays_cibles','')} | compétences: {comps}")
+                sims = await semantic_scores(profil_txt, srcs, lambda x: f"{x.get('titre','')} {(x.get('resume') or '')[:300]}") if srcs else None
+                for i, src in enumerate(srcs):
+                    if sims:
+                        sim = sims[i]
+                        if sim < 0.5:   # trop éloigné du profil → on n'inonde pas l'utilisateur
+                            continue
+                        score = int(round(45 + sim * 55))
+                    else:
+                        score = 62
+                    styp = src.get("type", "bourse")
+                    orga = "Offre d'emploi" if styp == "emploi" else "Source vérifiée"
+                    opp = {"titre": src["titre"], "organisation": orga, "type": styp,
+                           "url": src["url"], "raison": (src.get("resume") or "")[:150], "score_composite": score}
+                    delta = opp_store.feedback_delta(s.get("user_id"), _offer_signal(opp))
+                    if delta <= -20:      # l'utilisateur a rejeté ce type d'offres à répétition
+                        continue
+                    opp["score_composite"] = max(0, min(100, score + delta))
                     if opp_store.add(s.get("user_id"), opp):
                         n += 1
             except Exception as e:
@@ -1584,8 +4104,14 @@ async def score(_auth: bool = Depends(verify_api_key)):
 async def notify(_auth: bool = Depends(verify_api_key)):
     users = session_manager.list_active()
     notified = 0
+    weekday_today = datetime.now(timezone.utc).weekday()
     for s in users[:50]:
         chat_id = s.get("chat_id")
+        n = _get_notif(s)
+        if not n["enabled"]:
+            continue
+        if n["freq"] == "hebdo" and weekday_today != JOURS.get(n["jour"], 0):
+            continue  # digest hebdomadaire : seulement le jour choisi
         rows = opp_store.pending(s.get("user_id"), 60)
         if not rows or not chat_id:
             continue
@@ -1599,9 +4125,13 @@ async def notify(_auth: bool = Depends(verify_api_key)):
             if deadline:
                 ligne += "\n   📅 " + _md_clean(deadline)
             lignes.append(ligne)
-        msg = ("🔔 *Nouvelles opportunités pour toi*\n━━━━━━━━━━━━━━━━━━\n\n"
+        st = opp_store.user_stats(s.get("user_id"))
+        entete = f"🔔 *Tes meilleures offres du jour* ({len(rows)} sélectionnées pour ton profil)\n"
+        if st["recent"]:
+            entete += f"📈 {st['recent']} nouvelles cette semaine · {st['total']} au total dans ta veille\n"
+        msg = (entete + "━━━━━━━━━━━━━━━━━━\n\n"
                + "\n\n".join(lignes)
-               + "\n\n_Utilise /postuler <titre> pour générer CV + lettre._")
+               + "\n\n_/postuler <titre> pour ton CV + lettre · 👍/👎 pour affiner._")
         if await deliver_text(s, msg):
             opp_store.mark_notified(ids)
             notified += 1
@@ -1643,6 +4173,38 @@ async def set_session(user_id: str, session_data: dict, _auth: bool = Depends(ve
     session_manager.set(user_id, session_data)
     return {"ok": True}
 
+async def _bg_route(channel, user_id, chat_id, username, update):
+    """Traite un message en arrière-plan (le webhook a déjà répondu 200 à Telegram → pas de timeout/retry)."""
+    try:
+        await route_incoming(channel, user_id, chat_id, username, update)
+    except Exception as e:
+        logger.error(f"[webhook {channel}] traitement: {e}")
+
+
+@app.post("/webhook/telegram")
+async def telegram_webhook(request: Request):
+    """Webhook Telegram NATIF — supprime la dépendance à n8n pour le bot Telegram.
+    Pointer Telegram ici : setWebhook url=https://TON-DOMAINE/webhook/telegram (voir /setwebhook admin)."""
+    # Sécurité : si un secret est configuré, Telegram doit le renvoyer dans l'en-tête.
+    if TELEGRAM_WEBHOOK_SECRET and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != TELEGRAM_WEBHOOK_SECRET:
+        return {"ok": False}
+    try:
+        update = await request.json()
+    except Exception:
+        return {"ok": True}
+    cq = update.get("callback_query")
+    src = (cq or {}).get("from", {}) if cq else ((update.get("message") or update.get("edited_message") or {}).get("from", {}) or {})
+    chat = ((cq or {}).get("message", {}) or {}).get("chat", {}) if cq else ((update.get("message") or update.get("edited_message") or {}).get("chat", {}) or {})
+    user_id = str(src.get("id") or chat.get("id") or "")
+    chat_id = str(chat.get("id") or src.get("id") or "")
+    username = src.get("username") or src.get("first_name") or "utilisateur"
+    if not _valid_id(chat_id):
+        return {"ok": True}
+    # Réponse immédiate à Telegram, traitement en tâche de fond (évite les timeouts sur les appels LLM/CV).
+    asyncio.create_task(_bg_route("telegram", user_id, chat_id, username, update))
+    return {"ok": True}
+
+
 @app.get("/webhook/whatsapp")
 async def wa_verify(request: Request):
     p = request.query_params
@@ -1650,10 +4212,23 @@ async def wa_verify(request: Request):
         return Response(content=p.get("hub.challenge", ""), media_type="text/plain")
     raise HTTPException(403, "verify failed")
 
+def _meta_signature_ok(raw: bytes, header: str) -> bool:
+    """Vérifie X-Hub-Signature-256 des webhooks Meta. Ouvert si META_APP_SECRET absent (dev)."""
+    if not META_APP_SECRET:
+        return True
+    if not header or not header.startswith("sha256="):
+        return False
+    expected = hmac.new(META_APP_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, header.split("=", 1)[1])
+
 @app.post("/webhook/whatsapp")
 async def wa_webhook(request: Request):
+    raw = await request.body()
+    if not _meta_signature_ok(raw, request.headers.get("X-Hub-Signature-256", "")):
+        logger.warning("wa webhook: signature invalide")
+        return {"ok": True}
     try:
-        body = await request.json()
+        body = json.loads(raw or b"{}")
         for entry in body.get("entry", []):
             for ch in entry.get("changes", []):
                 val = ch.get("value", {})
@@ -1661,7 +4236,8 @@ async def wa_webhook(request: Request):
                 for m in val.get("messages", []):
                     frm = m.get("from")
                     if frm:
-                        await route_incoming("whatsapp", frm, frm, names.get(frm, "utilisateur"), m)
+                        # Réponse immédiate à Meta, traitement en tâche de fond (évite timeouts/retries).
+                        asyncio.create_task(_bg_route("whatsapp", frm, frm, names.get(frm, "utilisateur"), m))
     except Exception as e:
         logger.error(f"wa webhook: {e}")
     return {"ok": True}
@@ -1675,20 +4251,83 @@ async def fb_verify(request: Request):
 
 @app.post("/webhook/messenger")
 async def fb_webhook(request: Request):
+    raw = await request.body()
+    if not _meta_signature_ok(raw, request.headers.get("X-Hub-Signature-256", "")):
+        logger.warning("fb webhook: signature invalide")
+        return {"ok": True}
     try:
-        body = await request.json()
+        body = json.loads(raw or b"{}")
         for entry in body.get("entry", []):
             for ev in entry.get("messaging", []):
                 psid = (ev.get("sender", {}) or {}).get("id")
                 if psid:
-                    await route_incoming("messenger", psid, psid, "utilisateur", ev)
+                    asyncio.create_task(_bg_route("messenger", psid, psid, "utilisateur", ev))
     except Exception as e:
         logger.error(f"fb webhook: {e}")
     return {"ok": True}
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "groq_configured": bool(GROQ_API_KEY), "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+async def _check_health() -> dict:
+    """Vérifie les dépendances critiques (surtout le webhook Telegram, cause n°1 des coupures)."""
+    problems, webhook = [], {}
+    if TELEGRAM_TOKEN:
+        try:
+            r = await http().get(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getWebhookInfo", timeout=10.0)
+            info = r.json().get("result", {}) if r.status_code == 200 else {}
+            webhook = {"url_set": bool(info.get("url")), "last_error": info.get("last_error_message"),
+                       "pending": info.get("pending_update_count", 0)}
+            if not info.get("url"):
+                problems.append("Webhook Telegram non configuré (url vide) → réactive le workflow n8n / réenregistre le webhook.")
+            elif info.get("last_error_message"):
+                problems.append(f"Webhook Telegram en erreur : {info.get('last_error_message')} (n8n/ngrok à vérifier).")
+            elif (info.get("pending_update_count") or 0) > 20:
+                problems.append(f"{info.get('pending_update_count')} messages en attente non livrés → le bot ne répond probablement plus.")
+        except Exception as e:
+            problems.append(f"Impossible d'interroger Telegram (getWebhookInfo) : {e}")
+    if not [p for p in _LLM_PROVIDERS if p["key"]]:
+        problems.append("Aucun fournisseur LLM configuré.")
+    return {"ok": not problems, "problems": problems, "webhook": webhook, "version": VERSION,
+            "checked_at": datetime.now(timezone.utc).isoformat()}
+
+
+async def _alert_admin(text: str) -> None:
+    for aid in (_ADMIN_IDS or ([ADMIN_CHAT_ID] if ADMIN_CHAT_ID else [])):
+        if _valid_id(aid) and TELEGRAM_TOKEN:
+            try:
+                await send_message(str(aid), text)
+            except Exception as e:
+                logger.warning(f"alert admin {aid}: {e}")
+
+
+@app.get("/api/selfcheck")
+async def selfcheck(alert: int = 1, _auth: bool = Depends(verify_api_key)):
+    """Surveillance : à appeler périodiquement (cron/uptime). Alerte l'admin sur CHANGEMENT d'état."""
+    res = await _check_health()
+    if alert:
+        prev = cache.get("_health_ok")
+        now_ok = res["ok"]
+        if prev is None or bool(prev) != now_ok:
+            if not now_ok:
+                await _alert_admin("🚨 *NexMove — panne détectée*\n- " + "\n- ".join(res["problems"]))
+            elif prev is not None:
+                await _alert_admin("✅ *NexMove — service rétabli.* Tout est revenu à la normale.")
+        cache.set("_health_ok", 1 if now_ok else 0, ttl=6 * 3600)
+    return res
+
+
+@app.on_event("startup")
+async def _startup_alert():
+    """Prévient l'admin quand l'API (re)démarre — utile pour repérer les redémarrages/coupures."""
+    try:
+        if (_ADMIN_IDS or ADMIN_CHAT_ID) and TELEGRAM_TOKEN and not cache.get("_startup_ping"):
+            cache.set("_startup_ping", 1, ttl=90)   # évite le doublon entre les 2 workers uvicorn
+            await _alert_admin(f"✅ *NexMove en ligne* — v{VERSION} vient de démarrer.")
+    except Exception as e:
+        logger.warning(f"startup alert: {e}")
 
 @app.get("/")
 async def root():

@@ -1,14 +1,18 @@
-# NexMove — Spécifications techniques (v2.7)
+# NexMove — Spécifications techniques (v2.22)
 
-Agent IA de **mobilité internationale** (études, emploi, bourses, fellowships) sur messageries,
-avec grounding web réel, scoring LLM, génération de documents et veille proactive.
+Conseiller IA d'**orientation et d'opportunités** (études, emploi, bourses, fellowships), **local et
+international**, sur messageries, avec **langage naturel**, grounding web réel, matching sémantique,
+génération de documents et veille proactive.
 
 ---
 
 ## 1. Vision produit
-Aider un candidat (cible : francophones d'Afrique de l'Ouest, ex. Bénin) à préparer son **prochain départ** :
-1. analyser son profil (CV), 2. trouver de **vraies** opportunités adaptées, 3. préparer les **dossiers**
-(documents + CV + lettre/projet d'études), 4. suivre ses candidatures et **ne jamais rater une deadline**.
+Aider un candidat (cible : francophones d'Afrique de l'Ouest, ex. Bénin) à saisir sa **prochaine
+opportunité — chez lui ou à l'étranger** :
+1. analyser son profil (CV) + **bilan d'orientation**, 2. trouver de **vraies** opportunités adaptées
+(locales *et* internationales), 3. préparer les **dossiers** (documents + CV + lettre/projet), 4. suivre ses
+candidatures et **ne jamais rater une deadline**. On lui **parle en langage naturel** ; les commandes sont un
+raccourci.
 
 ## 2. Architecture
 
@@ -56,6 +60,7 @@ financement, certifs_langue, langues_opportunite, niveau, mots_cles`.
 | `/dossier <cible>` | liste des documents requis + CV + projet d'études (PDF) + suivi |
 | `/postuler <cible>` | CV adapté + lettre de motivation (PDF) |
 | `/formations <domaine>` | formations/certifs pour se distinguer (gratuites d'abord) |
+| `/rappels on\|off`, `/digest quotidien\|hebdo <jour>` | notifications proactives programmables |
 | `/profil`, `/status`, `/supprimer` | profil · dossiers/veille · effacement RGPD |
 
 Menu à boutons (tous canaux) : Trouver · Procédures · Candidater · Formations · Mon espace · Aide.
@@ -102,7 +107,7 @@ Le sous-menu « Procédures » liste Campus France + les candidatures en cours (
 ### Variables d'environnement
 `GROQ_API_KEY`, `FORGE_NEX_API_KEY` (= header X-Forge-Nex-Key), `TELEGRAM_TOKEN`, `GOOGLE_SHEET_ID`,
 `TAVILY_API_KEY`, `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `MESSENGER_TOKEN`,
-`MESSENGER_VERIFY_TOKEN`.
+`MESSENGER_VERIFY_TOKEN`, `CEREBRAS_API_KEY`, `GEMINI_API_KEY` (repli LLM), `OCR_LANG`/`OCR_MAX_PAGES`/`OCR_ZOOM` (OCR, optionnels).
 
 ## 10. Sécurité / RGPD
 - Auth API par header custom. Secrets en `.env` (à terme : hors image).
@@ -111,10 +116,13 @@ Le sous-menu « Procédures » liste Campus France + les candidatures en cours (
 ## 11. Roadmap / reste à faire
 - **WhatsApp & Messenger** : obtenir tokens permanents (System User WhatsApp), config webhooks Meta, App Review.
   Puis **templates** pour les notifs proactives hors 24 h.
-- **OCR** (CV scannés) : `tesseract-ocr` + `pytesseract` (ajout `requirements.txt` → rebuild).
-- **DOCX** : export modifiable (`python-docx`).
-- **Sources structurées +** : API emploi (Adzuna free), EURAXESS, RSS additionnels.
-- **Matching sémantique** (embeddings) + **routing de modèle** (petit modèle pour tâches simples).
+- ~~**OCR** (CV scannés) : `tesseract-ocr` + `pytesseract`~~ ✅ **fait (v2.9)** — repli OCR automatique
+  dans `extract_text_pdf` quand le PDF n'a pas de texte sélectionnable.
+- ~~**DOCX** : export modifiable (`python-docx`).~~ ✅ **fait (v2.12)** — CV + lettre en Word.
+- ~~**Sources structurées +** : API emploi (Adzuna free)~~ ✅ **fait (v2.13)** — arbeitnow + Adzuna.
+  Reste : EURAXESS, RSS additionnels.
+- ~~**Matching sémantique** (embeddings)~~ ✅ **fait (v2.12)** · ~~**routing de modèle**~~ ✅ **fait (v2.13)**.
+- ~~Rappels programmables · feedback 👍/👎~~ ✅ **fait (v2.13)**.
 - **Boutons inline avancés / sous-menus** enrichis, multilingue (EN).
 - **Sécurité** : sortir `.env` de l'image (env runtime uniquement).
 

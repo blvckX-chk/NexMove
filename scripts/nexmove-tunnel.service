@@ -1,0 +1,21 @@
+# Service systemd pour le tunnel Cloudflare + réenregistrement auto du webhook Telegram.
+# Installation (adapte le user et les chemins si besoin) :
+#   sudo cp scripts/nexmove-tunnel.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now nexmove-tunnel
+#   journalctl -u nexmove-tunnel -f        # suivre les logs (URL + setWebhook)
+[Unit]
+Description=NexMove — tunnel Cloudflare + webhook Telegram auto
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yalou
+Environment=ENV_FILE=/home/yalou/infra/forge-nex-api/.env
+ExecStart=/home/yalou/infra/nexmove/scripts/nexmove-tunnel.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

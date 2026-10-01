@@ -2,6 +2,513 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.50 — Identité validée + WhatsApp fiabilisé + attribution des sources
+- **Identité de marque appliquée** : baseline validée « *Études, emploi, ici ou ailleurs : l'assistant
+  pour ton prochain move.* » intégrée à l'accueil (`/start`) et au pitch d'ouverture. Doc de référence :
+  `docs/IDENTITE-NEXMOVE.md` (palette, logo, kit pub, personas).
+- **WhatsApp/Messenger fiabilisés pour la prod** : les webhooks Meta répondent **immédiatement** puis
+  traitent en **tâche de fond** (fini les timeouts/retries qui doublaient les réponses) ; **vérification de
+  signature** `X-Hub-Signature-256` activée dès que `META_APP_SECRET` est défini (bloque les faux messages
+  sur l'endpoint public). Guide à jour : `docs/GUIDE-WHATSAPP.md` (App NexMove déjà créée, ID 1590553112520815).
+- **Attribution des sources marketing** : les liens `t.me/<bot>?start=src_<persona>_<canal>` enregistrent
+  la **première** source de chaque utilisateur (sans collision avec le parrainage) ; **`/srcstats`** (admin)
+  affiche par source le nombre d'utilisateurs, le taux d'onboarding et les payants.
+- **+tests**. Suite verte.
+
+## v2.49 — Dépasser KaizenJob : score par compétence + pipeline de candidatures
+- **`/compatibilite <poste>`** (alias `/match`) : score de compatibilité **décomposé compétence par
+  compétence** (ex. Python 90 % ▓▓▓▓▓▓▓▓▓░, SQL 70 %…) + compétences manquantes + verdict — la fonction
+  phare du concurrent, en conversationnel. Limité (FREE_SCORE_DAILY) gratuit, illimité Premium.
+- **Pipeline de candidatures (mini-CRM)** : `/mescandidatures` liste tes dossiers avec leur statut
+  (📝 préparation · 📤 envoyée · 🔁 relancée · 🎤 entretien · 📨 réponse · ✅ acceptée · ❌ refusée · 🔒 clôturée) ;
+  `/candidature <statut> <cible>` met à jour (reconnaît les formulations naturelles).
+- **+5 tests**. **170/170 verts**.
+
+## v2.48 — Conversation vraiment intelligente + score d'admissibilité /chances
+- **Comprend N'IMPORTE QUELLE phrase avant l'onboarding** : plus de mots-clés imposés. À toute question
+  (RGPD/vie privée, prix, fiabilité, « c'est quoi », etc.) le bot répond par l'IA (`_preonboarding_reply`,
+  faits RGPD/gratuité inclus) puis invite doucement à envoyer le CV. Fini le « écris à quoi tu sers » et le
+  « envoie ton CV » hors sujet.
+- **`/chances <cible>`** — score d'admissibilité honnête (/100) + atouts, manques et **actions concrètes pour
+  augmenter ses chances** (visa, admission, bourse, emploi). Différenciation forte.
+- **Incitation à l'abonnement** : `/chances` limité à `FREE_SCORE_DAILY` (2/j) pour les gratuits, illimité en
+  Premium ; message de quota et compteur « restant » qui renvoient vers /offres.
+- **+4 tests**. **166/166 verts**.
+
+## v2.47 — Parrainage : invite tes amis, gagne du Premium
+- **`/parrainage`** : chaque utilisateur a un **code/lien** de parrainage. Quand **REFERRAL_GOAL** amis
+  (défaut 2) créent leur profil via son lien (`t.me/<bot>?start=<code>`), le parrain reçoit
+  **REFERRAL_REWARD_DAYS** (défaut 30) jours de Premium — à chaque palier — et est notifié.
+- `/start <code>` (deep-link Telegram) attribue automatiquement le filleul. Boucle virale d'acquisition.
+- `ReferralStore` (codes stables, filleul unique, comptage des validés). Config : `BOT_USERNAME`,
+  `REFERRAL_GOAL`, `REFERRAL_REWARD_DAYS`.
+- **+5 tests**. **163/163 verts**.
+
+## v2.46 — Notes vocales : le bot comprend les messages audio
+- **Vocaux transcrits puis traités comme du texte** (Telegram & WhatsApp) : l'utilisateur peut **parler**
+  au lieu d'écrire — transcription via Gemini (`transcribe_audio`), puis passage dans tout le pipeline normal
+  (onboarding, commandes, intentions…). Accessibilité majeure pour la cible.
+- Quota `FREE_VOICE_DAILY` (défaut 20/jour, admin & abonnés illimités) ; vidéos/stickers restent refusés
+  poliment ; vocal incompris → message clair.
+- **+3 tests** (parsing vocal Telegram/WhatsApp, vidéo toujours refusée). **159/159 verts**.
+
+## Sécurité & robustesse (config) — sept. 2026
+- **API en écoute localhost uniquement** (`docker-compose` : `127.0.0.1:8000:8000`) — plus exposée
+  directement à Internet ; jointe seulement via le tunnel Cloudflare (même machine).
+- **Recommandation forte** : définir `TELEGRAM_WEBHOOK_SECRET` dans `.env` — sans lui, le webhook natif
+  `/webhook/telegram` est falsifiable (usurpation admin possible → génération de codes). Le script
+  auto-tunnel transmet ce secret.
+- **`scripts/nexmove-tunnel.sh`** rendu **auto-relançant** (boucle interne + attente de l'API) → durable
+  **sans systemd/sudo** (via `nohup`/`setsid` + cron `@reboot`).
+
+## v2.45 — Activation premium par code collé + script auto-tunnel
+- **Activation ultra-simple pour les clients** : coller le code `PRM-XXXXXXXX` (même noyé dans une phrase)
+  suffit à activer l'abonnement — plus besoin de taper `/premium`. La commande `/premium <code>` reste valable.
+- **`scripts/nexmove-tunnel.sh` + `nexmove-tunnel.service`** : lance le tunnel Cloudflare rapide **et
+  réenregistre automatiquement le webhook Telegram** à chaque (re)démarrage (URL qui change → auto-réparé).
+  À installer en service systemd → plus de coupure « URL changée ».
+- **+2 tests**. **156/156 verts**.
+
+## v2.44 — Webhook Telegram NATIF (suppression de la dépendance n8n)
+- **`POST /webhook/telegram`** : l'API reçoit désormais Telegram **directement**, sans n8n. Elle lit
+  elle-même le `chat.id`/`from.id` (fin du bug « undefined »/« chat not found »), gère texte, **documents**,
+  **photos**, **boutons** (callback_query), et rejette poliment audio/vidéo/sticker.
+- **Réponse immédiate** (200) + traitement en **tâche de fond** → plus de timeout/retry Telegram sur les
+  appels LLM/CV.
+- **Secret** de webhook facultatif (`TELEGRAM_WEBHOOK_SECRET`) vérifié via l'en-tête Telegram.
+- **Commandes admin** `/setwebhook <url>` (bascule Telegram sur l'API) et `/webhookinfo` (état du webhook).
+- Helper `tg_get_file` (channels) pour télécharger les fichiers Telegram.
+- **Guide** `docs/WEBHOOK-TELEGRAM-DIRECT.md` (URL stable Cloudflare Tunnel + migration pas à pas).
+- **+5 tests** (parsing texte/document/photo/bouton/vocal). **154/154 verts**.
+- → Élimine la classe de pannes qu'on subissait (workflow n8n désactivé, webhook effacé, nœud fichier cassé).
+
+## v2.43 — Surveillance & alertes de disponibilité
+- **Alerte de (re)démarrage** : à chaque démarrage, l'API prévient l'admin sur Telegram
+  (« ✅ NexMove en ligne — vX »). Dédoublonnée entre les 2 workers.
+- **`/api/selfcheck`** : vérifie les dépendances critiques — surtout le **webhook Telegram**
+  (getWebhookInfo : url vide ? dernière erreur ? messages en attente ?) et la présence d'un fournisseur LLM.
+  **Alerte l'admin sur changement d'état** (panne → « 🚨 panne détectée » ; retour → « ✅ service rétabli »),
+  sans spam. À appeler par un cron toutes les 5 min.
+- L'alerte sortante passe par un appel direct à l'API Telegram → **fonctionne même quand le webhook entrant
+  est cassé** (le cas le plus fréquent de coupure).
+- **+2 tests**. **149/149 verts**.
+
+## v2.42.3 — Fix CV : « undefined » du nœud fichier n8n traité comme chat_id invalide
+
+## v2.42.1 — Fix : « chat not found » après envoi d'un CV
+- Le CV était bien analysé mais la réponse échouait (`sendMessage 400: chat not found`) : le nœud fichier
+  n8n postait `/api/chat-cv` avec un `chat_id` manquant/`"0"` qui **écrasait** le bon `chat_id` stocké.
+- **Fix défensif** dans `/api/chat-cv` **et** `/api/chat** : un `chat_id` invalide (`"0"`/vide) n'écrase plus
+  le `chat_id` connu ; repli sur `user_id` (en privé Telegram, `chat_id == user_id`). Idem pour `username`.
+- **+1 test**. **146/146 verts**.
+
+## v2.42 — Sources d'emploi locales enrichies (Bénin/UEMOA)
+- **Portails locaux réels vérifiés** intégrés à la veille locale (`LOCAL_JOB_SOURCES`) : Bénin
+  (emploibenin.com, jobbenin.com, offresdemplois.bj, talentsplusafrique.com, afriqueemplois.com, gouv.bj),
+  Côte d'Ivoire, Sénégal, Togo, Burkina, Cameroun, Mali, Niger + sources régionales (Jooble, Novojob,
+  Talent2Africa, AfricaWork, ReliefWeb).
+- Ces portails **orientent la recherche** (requête Tavily) **et** le prompt de veille → offres locales plus
+  concrètes, avec liens. **Pas de flux RSS deviné** = zéro lien mort.
+- **Extensible sans code** via env `LOCAL_SOURCES_EXTRA_<PAYS>` (ex. `LOCAL_SOURCES_EXTRA_BENIN=site.bj`).
+- **+3 tests**. **145/145 verts**.
+
+## v2.41 — Admins multiples + commande /id (setup admin)
+- **Admins multiples** : `_is_admin` accepte plusieurs identifiants — `ADMIN_CHAT_ID` (principal, utilisé
+  pour le forward /contact) **+** `ADMIN_IDS` (liste séparée par virgules). Permet d'être admin sur
+  **Telegram (chat_id) ET WhatsApp (numéro)** en même temps.
+- **`/id`** (`/monid`, `/whoami`) : affiche ton `chat_id` / `user_id` et ton statut admin — pour récupérer
+  facilement l'identifiant à mettre dans le `.env`.
+- **+2 tests**. **142/142 verts**.
+
+## v2.40 — Abonnements premium & codes d'activation (monétisation)
+- **Système de codes premium** (`db.PremiumStore`) : codes `PRM-XXXXXXXX` générés en lots (à vendre sur
+  Chariow), **usage unique**, chacun = un **tier** (premium/pro/vip) + une durée en jours.
+- **`/premium <code>`** active/prolonge l'abonnement ; **`/monabo`** affiche le statut ; **`/offres`**
+  présente les formules. `/status` indique désormais le tier et l'échéance.
+- **`/gencodes <tier> <jours> <nombre>`** (admin) : génère un lot (≤25 → affiché, sinon fichier `.txt`).
+- **Tiers appliqués aux quotas** : les abonnés (et l'admin) ont **CV, /guide, /simulation illimités** ;
+  gratuit = 1 simulation/jour (`FREE_SIM_DAILY`) et **1 alerte** (Premium 10, Pro/VIP illimité).
+- Abonnement **persistant** (`premium_tier` + `premium_until`), **prolongation** empilée sur le temps restant.
+- **+12 tests** (création/redeem/usage unique/stats des codes, tiers & expiration, quotas premium,
+  commandes `/premium`, `/monabo`, `/gencodes`, plafonds d'alertes). **140/140 verts**.
+
+## v2.39 — Accueil moins rigide + création de CV guidée (conversation)
+- **Début moins rigide** : à une question d'ouverture (« à quoi tu sers », « c'est quoi », salutation…),
+  le bot **explique ce qu'il fait** (pitch) au lieu de répondre seulement « envoie ton CV ». Le message
+  d'accueil propose désormais 3 chemins : envoyer un CV · en créer un · demander ce que fait NexMove.
+- **Parcours sans CV** : « je n'ai pas de CV » ou **`/creercv`** lance une **création guidée** — 5 questions
+  adaptatives (nom, formation, expériences, compétences, langues) → NexMove **structure le profil** (LLM),
+  **génère un CV PDF** et enchaîne sur les préférences. `/annuler` sort proprement.
+- **+8 tests** (détection pitch/no-CV, réponse avant CV, mention `/creercv`, flux `/creercv` complet mocké,
+  annulation). **127/127 verts**.
+
+## v2.38 — Feuille de route visuelle `/timeline` (PNG) (extra)
+- **`/timeline`** (alias `/planning`, `/feuille`) génère une **image PNG** de la feuille de route de
+  l'utilisateur : étapes Campus France ✅ faites / 🟠 en cours / ⚪ à venir, avec ses **échéances** de dossiers.
+- Rendu Pillow (`render_timeline_png`, fonction pure) avec repli propre si Pillow absent ; police DejaVu
+  (accents) avec repli. Généré hors boucle événementielle (`asyncio.to_thread`).
+- **+5 tests** (PNG valide, sans échéances, wrap de texte, garde onboarding, génération via commande).
+  **121/121 verts**.
+
+## v2.37 — Alertes mots-clés personnalisées `/alerte` (extra)
+- **`/alerte <mot-clé>`** : l'utilisateur enregistre ses mots-clés (max 10). `/alerte` liste, `/alerte off
+  <mot>` retire, `/alerte off` vide tout.
+- Dans `/veille`, `/mobilite` et le **digest quotidien**, les offres qui matchent une alerte **remontent en
+  tête** (+20 au score), sont **taguées 🔔** et un bandeau annonce le nombre d'offres correspondantes.
+- **+4 tests** (matching, ajout/liste/suppression, garde longueur, plafond 10). **116/116 verts**.
+
+## v2.36 — Coach d'entretien interactif `/simulation` (extra)
+- **`/simulation`** lance un **entretien blanc** adapté au profil : *Campus France / Études en France*,
+  *visa consulaire*, ou *emploi* (`/simulation visa`, `/simulation emploi`…). Le bot pose `SIM_MAX_Q`
+  questions (défaut 5), donne un **feedback** après chaque réponse, puis un **bilan** final (points forts,
+  axes, conseils actionnables).
+- Banque de questions de **repli** par type si le LLM est indisponible → la simulation marche toujours.
+- `/terminer` clôt avec le bilan ; `/annuler` quitte sans bilan. Mode isolé du CV/guide/outils PDF.
+- **+5 tests** (types, repli borné, garde onboarding, flux complet LLM mocké, /annuler). **112/112 verts**.
+
+## v2.35 — Entrée express Canada : rondes IRCC en TEMPS RÉEL (PR-D4c)
+- **`/canada`** s'appuie maintenant sur les **dernières rondes d'invitations réelles** d'IRCC (open data
+  officiel `ee_rounds_123`), au lieu d'une info figée. Les rondes sont **injectées comme données de
+  référence** dans le conseil ET affichées telles quelles (catégorie, CRS, nombre d'invitations, date).
+- **Cache 6 h** (`fetch_ircc_rounds`) pour éviter de refrapper l'API à chaque `/canada` ; parsing tolérant
+  (`_parse_ee_rounds`) ; URL surchargeable via `IRCC_ROUNDS_URL`.
+- **+5 tests** (parsing catégories, tolérance JSON vide/malformé, mise en forme, cache-hit sans réseau).
+  **107/107 verts**.
+
+## v2.34 — Catalogue de sources structuré + filtrage adaptatif au profil (PR-D2)
+- **`SOURCE_CATALOG`** : les flux de veille portent désormais un **`type`** (bourse/emploi/fellowship/ong)
+  et un **`scope`** (local/intl/both), et sont **activables par flag d'env** (`active_env`, ex.
+  `ENABLE_RELIEFWEB=1` pour ReliefWeb). `SOURCE_FEEDS` en est dérivé (rétro-compat).
+- **Type/scope hérités** à l'ingestion : chaque offre ingérée reçoit le bon type (fini le « bourse »
+  systématique) et son périmètre — stockés en base (colonne `scope`, `add_source`).
+- **Filtrage adaptatif** : `search_sources(prefer_scope=…)` fait remonter les sources du **bon périmètre** ;
+  un objectif purement **local** n'est plus inondé de sources 100 % internationales (et inversement).
+  `_sources_for_profile(prefs)` sélectionne les sources pertinentes selon le profil.
+- **+8 tests** (intégrité catalogue, flag d'activation, sélection locale/intl, scope en base,
+  `prefer_scope`, défaut `both`). **102/102 verts**.
+
+## v2.33 — Mode /guide : guidage par capture d'écran (vision) (PR-D4b)
+- **`/guide`** active un mode où l'utilisateur envoie une **capture d'écran** (Campus France / Études en
+  France, Parcoursup, Mon Master, eCandidat, formulaire, e-mail d'admission…) et reçoit un **guidage
+  concret étape par étape** — analyse par **vision Gemini** (`analyze_screenshot_vision`, `llm.py`).
+- `/guide <contexte>` (ex. `/guide campus france`) cible l'aide ; `/annuler` quitte le mode.
+- Branché sur les **quotas** (`FREE_GUIDE_DAILY`, défaut 12/jour ; admin illimité) : décompte uniquement
+  sur analyse réussie ; capture non-image → demande polie ; vision indisponible → message clair.
+- `/guide` n'est plus un alias de `/tuto` (le tuto reste sur `/tuto`).
+- **+5 tests** (activation, contexte, /annuler, non-image, vision mockée). **95/95 verts**.
+
+## v2.32 — Quotas gratuits + admin illimité (PR-D4a)
+- **`UsageStore`** (`db.py`) : compteurs d'usage **par jour et par fonctionnalité** (table `usage`).
+- **Quota d'analyse de CV** : `FREE_CV_DAILY` (défaut **8/jour**) pour les utilisateurs gratuits — l'op la
+  plus coûteuse (LLM/vision). Message poli quand la limite est atteinte, décompte **uniquement** sur analyse
+  réussie (un upload illisible ne consomme rien).
+- **Admin illimité** : `_is_admin` (via `ADMIN_CHAT_ID`) n'est jamais compté ni bloqué.
+- Helpers réutilisables `_quota_check` / `_quota_bump` / `_quota_exceeded_msg` + `FREE_GUIDE_DAILY` (défaut
+  **12/jour**) déjà prêts pour le futur mode **/guide** (captures d'écran → vision Gemini).
+- **+5 tests** (compteurs par jour/feature/user, admin illimité, sous-limite, limite 0 = désactivée).
+  **90/90 verts**.
+
+## v2.31 — Profils persistés par identifiant (code de récupération) (PR-D3)
+- **`ProfileStore`** (`db.py`) : chaque profil validé reçoit un **code de récupération stable** `NEX-XXXXX`.
+  Le profil est archivé en **versions** ; on ne restaure QUE la **plus complète** (`profile_quality`) — donc
+  « on garde les meilleures données » même si l'utilisateur change d'appareil ou de canal.
+- **`/moncode`** : affiche (et crée au besoin) le code de récupération.
+- **`/moi <code>`** : restaure le meilleur profil sur le compte courant → **portage Telegram ↔ WhatsApp**
+  et récupération après changement d'appareil. Le code est aussi affiché à la fin de l'onboarding.
+- **+8 tests** (code stable, restauration inter-utilisateurs, conservation de la meilleure version,
+  `profile_quality`, code inconnu, commandes `/moi`/`/moncode`). **85/85 verts**.
+
+## v2.30 — Onboarding ADAPTATIF + nom de secours + intention mémorisée (PR-D1)
+- **Onboarding adaptatif** : les questions s'adaptent aux réponses. Un **stage/job LOCAL** (objectif
+  « travailler » + son propre pays) ne demande plus la **nationalité/passeport**, ni le **financement
+  d'études**, ni les **certifs de langue** — ces questions restent réservées à la mobilité internationale
+  et aux parcours d'études/bourses. Plan de questions recalculé à chaque étape (`_build_pref_plan`).
+  → Corrige le retour testeur : « demander la nationalité pour un stage local, ce n'est pas logique ».
+- **Nom de secours depuis le fichier** : quand l'OCR/LLM ne détecte pas le nom sur le CV, on le devine
+  depuis le **nom du fichier** (`CV_Judicael.pdf` → « Judicael », `cv-jean-dupont.pdf` → « Jean Dupont »)
+  au lieu d'afficher « N/A ». Le nom deviné est persisté (utile pour lettres/dossiers).
+- **Intention mémorisée** : une demande forte tapée **avant la fin de l'onboarding** (ex. « je cherche une
+  bourse de master au Canada ») n'est plus perdue — elle est mémorisée puis **relancée** à la fin du profil
+  (message + bouton « ▶️ … »).
+- **+11 tests** (`_build_pref_plan`, `_vise_international`, `_name_from_filename`, flux d'onboarding local
+  bout en bout, capture d'intention). **77/77 verts**.
+
+## v2.29 — WhatsApp : photos directes + rejet poli audio/vidéo + guide de mise en service
+- **Photos WhatsApp directement** : le parseur gère maintenant `type: "image"` (JPG/PNG) — l'image part
+  vers **vision Gemini** comme pour Telegram. Fini l'obligation d'envoyer en « Document ».
+- **Rejet poli** des audios, vocaux, vidéos, stickers : « Écris-moi en texte ou envoie ton CV en
+  PDF/Word/image » au lieu du silence.
+- **`docs/GUIDE-WHATSAPP.md`** (nouveau) : procédure complète (Meta Business, App WhatsApp, tokens, webhook
+  ngrok, whitelist testeurs, coûts, dépannage). ~30 min de config côté Meta, le code est déjà prêt.
+- **`tests/test_whatsapp_incoming.py`** (+10 tests) : texte, document PDF, image JPG/PNG, boutons
+  interactive (button_reply / list_reply / template button), rejets audio/vidéo/sticker. **66/66 verts**.
+
+## v2.28 — Refactor PR-C : `channels.py` extrait + smoke test Docker en CI
+- **`api/channels.py`** (nouveau, ~200 lignes) : Telegram (`send_message`, `edit_message`, `answer_callback`,
+  `_send_telegram_document`, `_tg_keyboard`), WhatsApp Cloud API (`wa_text/menu/document/get_media`),
+  Messenger (`fb_text/menu/document`), + helper `_mime_for`. Comportement identique.
+- **~180 lignes retirées** de `main.py` (3 064 → 2 891).
+- **`tests/test_channels.py`** (+10 tests) : MIME, clavier inline, garde-fous sans token. **56/56 verts**.
+- **🛡️ Smoke test Docker en CI** : nouveau job `docker-smoke` qui build l'image, lance le container, et
+  vérifie que `/health` répond. **Aurait attrapé le bug v2.27.1** (`ModuleNotFoundError: http_client`)
+  avant qu'il n'arrive en prod.
+- Étape suivante prévue (PR-D) : extraire `tools.py` (PDF ops, compression, DOCX, vision).
+
+## v2.27.2 — Fix Dockerfile : les nouveaux modules manquaient dans l'image
+- `COPY main.py .` → `COPY main.py db.py llm.py http_client.py .` — sans ça, `ModuleNotFoundError` au
+  démarrage du container (PR-A/B cassées en prod). Le smoke test Docker (v2.28) verrouille cette classe de bugs.
+
+## v2.27.1 — Fix test CI trop strict
+- `test_compress_pdf_valid_output` : `kb == 0` est légitime pour un mini-PDF. On vérifie signature `%PDF-`
+  + taille en octets > 200. CI durcie : ruff/compile couvrent tout `api/` (pas juste `main.py`).
+
+## v2.27 — Refactor PR-B : `llm.py` + `http_client.py` extraits (IA isolée)
+- **`api/http_client.py`** (nouveau) : le pool `httpx.AsyncClient` partagé sort du monolithe. Utilisable
+  par tout module (`from http_client import http`).
+- **`api/llm.py`** (nouveau, ~230 lignes) : routeur multi-fournisseurs (Cerebras→Groq→Gemini), embeddings
+  (multi-modèles, cache 7 j via `db.cache`), vision Gemini pour l'analyse d'un CV image. Comportement
+  identique — mêmes défauts de modèles, même bascule, même parseur JSON tolérant.
+- **~210 lignes retirées** de `main.py` (3 260 → 3 064).
+- **`tests/test_llm.py`** (+10 tests) : parseur JSON (fences ```/```json), cosine, structure des providers,
+  garde-fous sans clé. **46/46 verts** (36 + 10). Zéro régression.
+- Étape suivante prévue (PR-C) : extraire `channels/` (Telegram/WhatsApp/Messenger).
+
+## v2.26 — Refactor PR-A : `db.py` extrait (persistance isolée)
+- **`api/db.py`** (nouveau) : les 3 stores SQLite (`SessionManager`, `OppStore`, `Cache`) sortis du monolithe,
+  comportement identique (méthodes, signatures, DDL, chemins). Chemin de base configurable via
+  `NEXMOVE_DB_PATH`. `main.py` ne fait plus qu'un `from db import …`.
+- **~230 lignes retirées** de `main.py` (fichier passe de ~3 490 à ~3 260 lignes).
+- **`tests/test_db.py`** (8 tests) : session roundtrip, dédup offres, user_stats, candidatures + rappels,
+  feedback borné à ±25, journal /contact, cache TTL. **36/36 verts en local et en CI.**
+- Étape suivante prévue (PR-B) : extraire `llm.py` (routeur multi-fournisseurs + embeddings).
+
+## v2.25 — Photos Telegram, journal /contact, tests + CI
+- **Photos Telegram directes** : WF1 parse désormais `message.photo` (prend la plus grande taille) et route
+  vers `/api/chat-cv` ; `process_cv` détecte l'image (`.jpg`) et l'analyse par **vision Gemini** (repli OCR).
+  Fini l'obligation d'envoyer en « Fichier ».
+- **Journal `/contact` en base** : chaque message est logué (table `contacts`), même si le forward Telegram
+  échoue. Nouvelle commande **`/contacts_log`** (réservée à `ADMIN_CHAT_ID`) : les 20 derniers messages.
+- **Filet de sécurité (risque n°1 de l'audit)** : ajout de `tests/test_units.py` (**28 tests unitaires**,
+  fonctions pures : validation onboarding, tri diplômes, routeur d'intention, nationalité→pays, feedback,
+  pages PDF, RSS tolérant, PDF ops, extraction DOCX, MIME…) + workflow **GitHub Actions** `ci.yml` (ruff
+  errors-only + compile + pytest à chaque push/PR). Régression = build rouge, plus jamais en prod.
+
+## v2.24 — Contact & version
+- **`/version`** (alias `/about`) — affiche la version du bot, les IA actives, les modules (OCR, Word, Vision,
+  Sémantique, Adzuna) et le nombre de sources. Utile pour le support et pour que tu voies l'état en un coup d'œil.
+- **`/contact <message>`** (alias `/support`, `/rencontrer`, `/rdv`) — transmet directement le message au chat
+  admin (Telegram) si `ADMIN_CHAT_ID` est configuré ; sinon affiche les canaux (WhatsApp, email, calendrier).
+  Route aussi les intentions en langage naturel (« parler à quelqu'un », « prendre rdv », « contacter »…).
+- Boutons `💬 Nous contacter` et `ℹ️ Version` dans le menu « Mon espace ». Env vars : `ADMIN_CHAT_ID`,
+  `CONTACT_EMAIL`, `CONTACT_WHATSAPP`, `CONTACT_CALENDAR`.
+
+## v2.23 — CV multi-formats & procédures françaises parallèles
+- **CV en tous formats** : PDF texte + PDF scanné (OCR) ✅ déjà, **+ DOCX** (python-docx) **+ image** (JPG/PNG/WEBP/HEIC).
+  Images analysées d'abord par **vision Gemini** (robuste sur photos), repli **OCR tesseract**. Endpoint et
+  process_cv routent par extension/MIME. Messages d'erreur adaptés au format.
+- **Procédures françaises parallèles à Campus France** (le gros gap face aux prestataires payants) :
+  `/parcoursup`, `/monmaster`, `/ecandidat`, `/dap` (L1 hors UE), `/visa` (phase consulaire Capago/VFS),
+  `/recours` (refus CF ou refus de visa). Grounded, adaptés au profil.
+- Menu **Procédures & accompagnement** enrichi. Routeur d'intention en langage naturel étendu (« parcoursup »,
+  « monmaster », « visa », « capago », « recours », « refus »…).
+
+## v2.22.1 — 🔴 Correctif critique : modèles LLM dépréciés (bot bloqué)
+- **Bug bloquant en prod** : les 3 modèles LLM renvoyaient 404 (Gemini `gemini-2.0-flash` **déprécié**,
+  Groq/Cerebras 70B « no access ») → `call_groq` échouait → **les CV n'étaient plus analysés** (`/api/chat-cv`
+  503), personne ne pouvait s'onboarder.
+- **Fix** : modèles **configurables par env** (`GROQ_MODEL`, `GROQ_MODEL_FAST`, `CEREBRAS_MODEL`,
+  `CEREBRAS_MODEL_FAST`, `GEMINI_MODEL`, `GEMINI_MODEL_FAST`) → on corrige un modèle déprécié sans toucher au
+  code. Défaut Gemini passé à **`gemini-2.5-flash`**. URL Gemini construite depuis `GEMINI_MODEL`.
+- **Robustesse** : `process_cv` n'échoue plus **en silence** — si le service IA est indisponible, l'utilisateur
+  reçoit un message clair (« renvoie ton CV dans une minute »).
+
+## v2.22 — Langage 100 % naturel & offres locales
+- **Parler normalement suffit** : n'importe quelle phrase est comprise. Mots-clés en priorité (instantané),
+  sinon le LLM décide en **un seul appel** s'il faut lancer une **action** (n'importe quelle commande, avec
+  son argument) ou **répondre en conversation**. Les commandes restent utilisables. Repli mots-clés si le
+  LLM est indisponible (pas de régression).
+- **Champ élargi au LOCAL** : le système ne cherche plus seulement à l'étranger. Si les pays visés sont
+  vides / « tous » / le propre pays de l'utilisateur, la veille inclut les opportunités **locales** (emplois,
+  formations comme l'ASIN, bourses nationales). Détection nationalité→pays, prompts et requêtes adaptés.
+  Question d'onboarding « pays visés » mentionne désormais le local.
+
+## v2.21 — Boutons de confirmation & choix cliquables (rapport testeur, point 3)
+- **Validation du CV** avec boutons : `✅ C'est correct` / `🔄 Recommencer` (au lieu de taper « Oui »).
+- **Questions d'onboarding fermées** en boutons cliquables : objectif, financement, langue, niveau, type de
+  poste — plus besoin de taper, et fini les réponses incohérentes sur ces champs.
+- **Récapitulatif** validé par boutons : `✅ Oui, c'est bon` / `🔄 Recommencer`.
+- Mécanique : clavier par tour (`_kb_options`) attaché au message, callbacks `onb:`/`pref:` rejoués comme une
+  réponse tapée (la saisie texte reste possible). `deliver_text(..., options=…)` sur les 3 canaux.
+
+## v2.20.2 — Affichage des formations (rapport testeur)
+- Le message d'analyse du CV affiche désormais **toutes les formations** (jusqu'à 3, diplôme le plus élevé
+  en tête, + « +N autres ») au lieu d'une seule — les données étaient déjà complètes, seul l'affichage
+  induisait en erreur.
+- **CV sans section Formation** : message explicite « Aucune formation détectée » (l'analyse continue, pas
+  de blocage).
+
+## v2.20.1 — Conversation libre corrigée (retour prod)
+- **Avant onboarding** : un message libre reçoit une réponse *déterministe* (« envoie ton CV ») au lieu d'un
+  LLM bavard qui disait « Bonjour », vouvoyait et redemandait le CV.
+- **Utilisateur actif** : les messages libres sont *routés vers la vraie commande* selon l'intention
+  (formations, école, logement, budget, Campus France, Canada, opportunités) — ex. « formations proposées
+  par l'ASIN » lance une vraie recherche au lieu d'une réponse approximative.
+- **Conversation** repassée sur le modèle 70B (le 8B ignorait le tutoiement / ne-pas-resaluer), consignes
+  durcies (jamais « Bonjour »/« vous », ne jamais redemander le CV).
+
+## v2.20 — Boîte à outils & procédures multi-pays
+- **Outils PDF** : `/fusionner` (assembler des PDF), `/enpdf` (images→PDF, images envoyées en fichier),
+  `/decouper <pages>` (extraire des pages), en plus de `/compresser`. Tampon de fichiers sur disque
+  (volume persistant), `/terminer` / `/annuler`. Le endpoint accepte les images en mode img2pdf.
+- **Outils conseil** : `/budget <ville>` (coût de la vie + preuve de ressources), `/eligibilite <cible>`
+  (compare honnêtement le profil aux exigences), `/traduire <texte>` (traduction informative + rappel :
+  dossier officiel = traducteur assermenté).
+- **Procédures multi-pays** : `/procedure <pays>` générique (Belgique, Allemagne, Suisse, Luxembourg,
+  Pays-Bas… routé par profil), en plus de `/campusfrance` (France) et `/canada`. Menu enrichi.
+- **Fix** : f-string sans placeholder.
+
+## v2.19 — Motivation & outils
+- **Première veille automatique** dès le profil validé : 3 pistes tout de suite (valeur immédiate) + promesse
+  d'un digest quotidien lié au profil.
+- **Gamification** : `/status` affiche la progression (opportunités trouvées, +N cette semaine, dossiers,
+  barre Campus France ▓▓▓░░). Digest quotidien enrichi (preuve sociale : « N nouvelles cette semaine »).
+- **Outil compression PDF** : `/compresser [Ko]` puis envoi d'un PDF → version allégée pour les soumissions
+  en ligne (Campus France, visa…). Reconstruction lossless puis, si besoin, ré-encodage image à DPI
+  décroissant (testé : 20 Mo → <200 Ko). Bouton « 🗜️ Compresser un PDF » dans *Mon espace*.
+- **Fix** : Pillow importé indépendamment de tesseract (l'OCR manquant ne désactive plus la compression).
+
+## v2.18 — Mode « conseiller d'orientation senior » & accompagnement des procédures
+- **Bilan d'orientation au CV** : à l'analyse, le bot rend un mini-bilan personnalisé (atouts, axes à
+  renforcer, 2-3 pistes réalistes de destinations/programmes) — l'onboarding devient un vrai conseil, pas
+  une simple extraction. Persona `CONSEILLER_PERSONA` partagée (aussi appliquée à la conversation libre).
+- **Campus France vraiment accompagné** : `/campusfrance` présente la procédure + oriente vers l'aide ;
+  `/parcours` affiche, pour l'étape en cours, l'action concrète + la commande qui aide.
+- **Nouvelles commandes d'accompagnement** (ancrées web, adaptées au profil) :
+  `/ecoles <domaine>` (trouver les bonnes écoles), `/logement <ville>` (se loger sans arnaque : CROUS,
+  Visale…), `/entretien [type]` (prépa entretien Campus France / Institut Français / visa Capago-VFS avec
+  questions types + pistes de réponse), `/canada` (voies d'immigration routées par profil : permis d'études,
+  PGWP, Entrée express, PEQ/Arrima Québec).
+- Menu **Procédures & accompagnement** enrichi (Campus France · Parcours · École · Logement · Entretien ·
+  Canada). Helper réutilisable `conseil_grounded`.
+
+## v2.17.2 — RSS tolérant (feeds mal formés)
+- `fetch_rss` : si le XML strict échoue (afterschoolafrica, youthop… : `&` nus, CDATA), repli sur une
+  extraction **régex tolérante** (gère CDATA + entités) ; page HTML → `[]` en silence. Log en warning au
+  lieu d'error.
+
+## v2.17.1 — EURAXESS opérationnel + RSS anti-bot
+- **User-Agent navigateur** pour EURAXESS, les flux RSS et arbeitnow : certains sites (EURAXESS,
+  afterschoolafrica, youthop) renvoyaient une page de blocage aux bots → plus d'offres/flux récupérés.
+- **Extraction EURAXESS fiabilisée** : offres = liens `/jobs/<id>` ; comme une carte lie l'offre deux fois
+  (image + titre), on garde l'intitulé le plus long (le vrai titre) au lieu de rater l'offre.
+
+## v2.17 — Correctifs quotas & embeddings (logs de prod)
+- **Embeddings réparés** : `text-embedding-004` était refusé (404) par la clé → le matching sémantique
+  était KO. On essaie maintenant plusieurs modèles (`gemini-embedding-001`, `text-embedding-004`,
+  `embedding-001`) et on retient le premier disponible ; si aucun, repli lexical **sans spam de logs**.
+- **Fin des 429 en cascade sur la veille** : la collecte ne lance plus un appel LLM (osint Tavily) **par
+  utilisateur** (16 users = 16 appels simultanés → quotas explosés). Le digest s'appuie sur le **pool de
+  sources** (RSS + Adzuna + EURAXESS + arbeitnow) matché par profil ; l'osint complet reste à la demande via
+  `/mobilite`. Réactivable avec `COLLECT_OSINT_PER_USER=1`. Concurrence collecte réduite (5→3).
+
+## v2.16 — Fetcher EURAXESS (API adaptative)
+- **EURAXESS par API** au lieu du RSS : `fetch_euraxess(query)` interroge EURAXESS avec les **mots-clés
+  réels des utilisateurs** (comme Adzuna). Endpoint **auto-sondé** parmi des candidats, ou fixé via
+  `EURAXESS_API` (`{q}` = requête). Parseur **générique** (JSON de formes variées : results/hits/_embedded…,
+  ou XML/RSS) → titre/url/description quels que soient les noms de champs. Découverte à la 1ʳᵉ requête puis
+  arrêt si l'endpoint ne répond pas (pas de requêtes inutiles). Échec **silencieux et sûr** (n'ajoute rien,
+  ne casse pas la veille). Offres taguées `fellowship`. Le flux `EURAXESS_RSS` reste possible en complément.
+
+## v2.15 — Adzuna adaptatif & multi-pays
+- **Requêtes Adzuna adaptatives** : au lieu d'une liste figée, les requêtes sont construites à partir des
+  **mots-clés réels des utilisateurs actifs** (les plus fréquents d'abord) + compétences ; repli sur
+  `ADZUNA_QUERIES` si aucun. Les offres collectées collent donc à ce que les testeurs recherchent vraiment.
+- **Multi-pays** : `ADZUNA_COUNTRY` accepte plusieurs pays (ex. `fr,ca,be`). `/health` : `adzuna_countries`.
+
+## v2.14 — EURAXESS + RSS élargis & correctifs testeurs (rapport Carmelle)
+- **Sources élargies** : 4 flux RSS supplémentaires (afterschoolafrica, opportunitiesforyouth, youthop,
+  mladiinfo) + **EURAXESS** (recherche/PhD/postdoc EU) via `EURAXESS_RSS`, + `SOURCE_FEEDS_EXTRA` pour
+  ajouter des flux sans toucher au code. `/health` : `euraxess_configured`, `rss_feeds`.
+- **Correctifs retours testeurs :**
+  - *Diplôme principal* : le profil retient désormais le diplôme le **plus élevé/récent** (master avant
+    licence) — tri déterministe par niveau + année.
+  - *Objectif « travailler »* : nouvelle question **type de poste** (temps plein / partiel / télétravail /
+    alternance), injectée dans la recherche d'offres.
+  - *Doublons /mobilite* : anti-doublons entre deux `/mobilite` successifs (mémoire des URLs déjà vues).
+  - *Mots-clés multiples* : la recherche couvre désormais **tous** les mots-clés (requête OR + consigne de
+    diversité) au lieu d'un seul.
+  - *Faux assistant de dossier* : le mode conversationnel **ne simule plus** de formulaire multi-étapes ni
+    ne prétend créer un dossier — il renvoie vers la commande unique `/dossier <cible>` / `/postuler <cible>`.
+
+## v2.13 — Routing de modèle · sources emploi · rappels programmables · feedback 👍/👎
+- **Routing de modèle** : les tâches simples (conversation libre en mode actif) partent sur un **petit
+  modèle rapide** (llama-3.1-8b / gemini-flash) ; l'analyse CV, la sélection d'offres et la rédaction de
+  documents gardent le **70B**. Moins de latence, quotas mieux préservés. (`call_groq(..., tier="fast")`).
+- **Sources d'emploi structurées** : ingestion d'**arbeitnow** (sans clé) et **Adzuna** (clés gratuites
+  optionnelles) dans le pool d'offres, en plus des flux RSS bourses. Les offres portent leur vrai **type**
+  (emploi/bourse) et passent par le scoring sémantique par profil.
+- **Rappels & digest programmables** : `/rappels on|off` et `/digest quotidien | hebdo <jour>`. La veille
+  proactive respecte le choix de chaque utilisateur (fréquence, jour). Les rappels de deadline des dossiers
+  restent toujours actifs.
+- **Feedback 👍/👎 sur les offres** : boutons sous les résultats `/mobilite` et `/veille`. Les votes sont
+  **appris par signature d'offre** (type + domaine) et **réinjectés dans le score** (±25) — le bot propose
+  moins ce que l'utilisateur rejette, plus ce qu'il valide. `/health` : `adzuna_configured`.
+
+## v2.12 — Export Word & matching sémantique
+- **Export Word (.docx)** : `/postuler` et `/dossier` envoient désormais, en plus des PDF, des versions
+  **Word modifiables** du CV et de la lettre/projet (demande des testeurs : « pouvoir modifier direct »).
+  `python-docx` (pur Python, zéro dépendance système). Le type MIME des envois est déduit de l'extension
+  (Telegram/WhatsApp/Messenger).
+- **Matching sémantique des offres (embeddings)** : la pertinence ne repose plus seulement sur les mots-clés.
+  On calcule la **similarité de sens** entre le profil et chaque offre (embeddings `text-embedding-004`,
+  multilingue, via la clé Gemini déjà en place). Utilisé pour (a) re-trier les résultats web avant sélection
+  LLM dans `/mobilite`, (b) mélanger score LLM + similarité (60/40), (c) filtrer/scorer les sources RSS de la
+  veille (fini le score fixe à 62). Vecteurs mis en cache 7 j (quotas préservés). **Repli gracieux** : sans
+  clé Gemini, on garde le classement mots-clés + LLM. `/health` expose `docx_configured` et
+  `semantic_matching`.
+
+## v2.11 — Performance & robustesse (passe senior)
+- **Client HTTP partagé** : un seul `httpx.AsyncClient` avec pool keep-alive pour *tous* les appels
+  sortants (LLM, Tavily, Telegram, WhatsApp, Messenger) au lieu d'un nouveau client (handshake TCP/TLS) à
+  chaque requête. Gain de latence et de sockets sous forte charge (100+ testeurs), fermé proprement au
+  shutdown.
+- **Travail bloquant hors boucle asyncio** : l'OCR (tesseract), l'extraction PDF et la génération des PDF
+  (reportlab) passent par `asyncio.to_thread`. Un CV scanné lourd ne gèle plus les autres utilisateurs du
+  worker pendant plusieurs secondes.
+- **Anti-message perdu (Telegram)** : si un `*`/`_`/`[` déséquilibré (texte LLM ou utilisateur) fait
+  échouer l'envoi Markdown (400 « can't parse entities »), on renvoie automatiquement en texte brut — le
+  message arrive toujours.
+
+## v2.10.1 — Menu à la demande (moins de bruit)
+- Le **menu à boutons ne se ré-affiche plus à chaque réponse** (onboarding comme mode actif). Il apparaît
+  seulement quand c'est utile : **une fois** à la validation du profil, et sur demande via **`/menu`**
+  (ou `/aide`). Discussions plus courtes et lisibles.
+
+## v2.10 — Corrections retours testeurs
+- **Rejet des fichiers non-CV** : à l'analyse, le LLM juge d'abord si le document est bien un CV
+  (`est_cv`) ; sinon (facture, article, capture, texte quelconque) il est refusé au lieu de valider un
+  profil vide. Double garde-fou heuristique (nom + formation/expérience/compétences présents).
+- **Onboarding cohérent** : chaque réponse est validée (`valider_pref`). Les commandes tapées par erreur
+  (`/hej`…) et les réponses incohérentes (ex. « Taf » comme certification de langue) sont refusées avec un
+  indice, sans avancer — fini les profils validés avec une syntaxe fausse.
+- **Documents PDF** : en-tête du CV corrigé (nom + titre plus aérés, interlignage explicite, échappement
+  XML) — plus de chevauchement en haut. Génération CV/lettre **ancrée sur les expériences et formations
+  réelles** du candidat, avec interdiction explicite des tournures d'IA et clichés (« je suis convaincu
+  que », « correspond parfaitement »…).
+
+## v2.9 — OCR des CV scannés
+- **OCR automatique** (`tesseract-ocr` + `pytesseract`) : quand un PDF ne contient pas de texte
+  sélectionnable (CV scanné / photographié), `extract_text_pdf` bascule sur un rendu image page par page
+  (`fitz` pixmap, zoom ≈216 dpi) puis reconnaissance `image_to_string` en **fra+eng**. Garde-fous
+  `OCR_MAX_PAGES` / `OCR_ZOOM`. Import **tolérant** : sans le binaire tesseract, l'app démarre quand même
+  (OCR désactivé, message d'erreur adapté). `/health` expose `ocr_configured`.
+- Ajout de `api/requirements.txt` et `api/Dockerfile` au dépôt (paquets système
+  `tesseract-ocr-fra`/`tesseract-ocr-eng` + `pytesseract`/`Pillow`).
+
+## v2.8 — Résilience LLM multi-fournisseurs
+- Routeur de repli **Cerebras → Groq → Gemini** (mêmes appels, bascule auto sur quota/erreur) pour tenir
+  la charge de 100+ testeurs sur quotas gratuits. `/health` expose `llm_providers`.
+
 ## Infrastructure & fiabilité
 - **Webhook Telegram stabilisé** : URL publique fixe via **ngrok domaine statique** (fin de la boucle
   `{"message":"Provided secret is not valid"}` causée par le tunnel trycloudflare éphémère). Règle d'or :
