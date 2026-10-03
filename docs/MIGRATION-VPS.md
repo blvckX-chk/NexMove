@@ -1,7 +1,7 @@
 # NexMove — Migration vers ton propre VPS (avec droits root)
 
 Objectif : déplacer le bot vers un VPS où tu es **root**, **sans perdre de données** et **sans changer les
-webhooks** (l'URL `api.nexmove.blvckunlimited.space` reste identique grâce au tunnel nommé).
+webhooks** (l'URL `api-nexmove.blvckunlimited.space` reste identique grâce au tunnel nommé).
 
 > 🔑 Idée clé : tout l'état tient dans **un seul dossier `data/`** (SQLite : profils, sessions, codes
 > premium, parrainages, quotas, sources) + le fichier **`.env`** (secrets). Sauvegarde ces deux-là et tu as
@@ -80,7 +80,7 @@ Deux cas :
   (`~/.cloudflared/<TUNNEL_ID>.json`) vers `/root/.cloudflared/` sur le nouveau. L'ID et la route DNS
   restent valables.
 - **Tu recrées le tunnel** : `cloudflared tunnel create nexmove` puis
-  `cloudflared tunnel route dns nexmove api.nexmove.blvckunlimited.space` (si l'ancienne route gêne,
+  `cloudflared tunnel route dns nexmove api-nexmove.blvckunlimited.space` (si l'ancienne route gêne,
   supprime-la d'abord côté Cloudflare DNS).
 
 Crée `/root/.cloudflared/config.yml` :
@@ -88,7 +88,7 @@ Crée `/root/.cloudflared/config.yml` :
 tunnel: nexmove
 credentials-file: /root/.cloudflared/<TUNNEL_ID>.json
 ingress:
-  - hostname: api.nexmove.blvckunlimited.space
+  - hostname: api-nexmove.blvckunlimited.space
     service: http://localhost:8000
   - service: http_status:404
 ```
@@ -104,19 +104,19 @@ systemctl status cloudflared --no-pager
 2. Sur l'**ancien** VPS : **arrête tout** → `docker compose down` et stoppe le tunnel
    (`pkill -f cloudflared` ou le cron/systemd correspondant).
 3. Sur le **nouveau** VPS : démarre le tunnel (`systemctl start cloudflared`).
-4. Vérifie l'URL publique : `curl -s https://api.nexmove.blvckunlimited.space/health`.
+4. Vérifie l'URL publique : `curl -s https://api-nexmove.blvckunlimited.space/health`.
 
 ## 7. Webhooks (URL inchangée → quasi rien à faire)
 - **Telegram** : re-enregistre une fois pour être sûr (le secret reste le même) :
   ```bash
   source ~/infra/forge-nex-api/.env
   curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
-    -d url="https://api.nexmove.blvckunlimited.space/webhook/telegram" \
+    -d url="https://api-nexmove.blvckunlimited.space/webhook/telegram" \
     -d secret_token="${TELEGRAM_WEBHOOK_SECRET}" \
     -d allowed_updates='["message","edited_message","callback_query"]'
   ```
 - **WhatsApp / Messenger** : **rien à changer** côté Meta tant que l'URL reste
-  `api.nexmove.blvckunlimited.space/webhook/whatsapp`.
+  `api-nexmove.blvckunlimited.space/webhook/whatsapp`.
 
 ## 8. Vérification finale
 - Envoie un message au bot sur Telegram → il répond.

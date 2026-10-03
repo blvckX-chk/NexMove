@@ -8,10 +8,15 @@ Objectif : une **URL fixe** pour l'API (webhooks Telegram + WhatsApp qui ne cass
 | Usage | Sous-domaine | Sert |
 |---|---|---|
 | **Vitrine** (site statique) | `nexmove.blvckunlimited.space` | Cloudflare Pages (dossier `web/`) |
-| **API / webhooks** (bot) | `api.nexmove.blvckunlimited.space` | Tunnel nommé Cloudflare → VPS `127.0.0.1:8000` |
+| **API / webhooks** (bot) | `api-nexmove.blvckunlimited.space` | Tunnel nommé Cloudflare → VPS `127.0.0.1:8000` |
 
 > ✅ Un **sous-domaine de blvckunlimited.space suffit** — pas besoin d'un domaine séparé pour NexMove.
 > Le domaine est chez **Namecheap** : il faut le **rattacher à Cloudflare** (changer les nameservers), voir §0.
+>
+> ⚠️ **Pourquoi `api-nexmove` et pas `api.nexmove` ?** Le projet Pages de la vitrine possède un domaine
+> wildcard de preview **`*.nexmove.blvckunlimited.space`**, qui **capterait** `api.nexmove.blvckunlimited.space`
+> (Pages répondrait « nothing here » à la place du tunnel). En mettant l'API sur **`api-nexmove`** (frère de
+> `nexmove`, pas enfant), on évite toute collision. Ne remets pas l'API sous `*.nexmove.*`.
 
 ---
 
@@ -32,7 +37,7 @@ Ton domaine est acheté chez **Namecheap**, mais pour utiliser le tunnel nommé 
 > Si tu as déjà des enregistrements (mail, etc.), recopie-les dans Cloudflare avant de basculer.
 
 ### Les sous-domaines : tu n'as (presque) rien à créer à la main
-- `api.nexmove.blvckunlimited.space` → **créé automatiquement** par la commande
+- `api-nexmove.blvckunlimited.space` → **créé automatiquement** par la commande
   `cloudflared tunnel route dns` (Partie A, étape 4). Ne le crée pas toi-même.
 - `nexmove.blvckunlimited.space` → **créé automatiquement** quand tu ajoutes le *Custom domain* dans
   Cloudflare Pages (Partie C, étape 5).
@@ -67,7 +72,7 @@ tunnel: nexmove
 credentials-file: /home/TON_USER/.cloudflared/<TUNNEL_ID>.json
 
 ingress:
-  - hostname: api.nexmove.blvckunlimited.space
+  - hostname: api-nexmove.blvckunlimited.space
     service: http://localhost:8000
   - service: http_status:404
 ```
@@ -75,7 +80,7 @@ ingress:
 
 ### 4. Router le DNS (une fois)
 ```bash
-cloudflared tunnel route dns nexmove api.nexmove.blvckunlimited.space
+cloudflared tunnel route dns nexmove api-nexmove.blvckunlimited.space
 ```
 Ça crée automatiquement l'enregistrement DNS (CNAME proxifié) dans Cloudflare.
 
@@ -88,7 +93,7 @@ setsid nohup ~/infra/nexmove-src/scripts/nexmove-named-tunnel.sh >/tmp/nexmove-t
 
 ### 6. Vérifier
 ```bash
-curl -s https://api.nexmove.blvckunlimited.space/health
+curl -s https://api-nexmove.blvckunlimited.space/health
 # doit renvoyer le JSON de version de l'API
 ```
 
@@ -102,19 +107,19 @@ curl -s https://api.nexmove.blvckunlimited.space/health
 Comme l'URL est fixe, ces commandes ne sont à passer **qu'une fois**.
 
 ### Telegram
-Depuis le bot en admin : `/setwebhook https://api.nexmove.blvckunlimited.space/webhook/telegram`
+Depuis le bot en admin : `/setwebhook https://api-nexmove.blvckunlimited.space/webhook/telegram`
 (ou en curl) :
 ```bash
 source ~/infra/forge-nex-api/.env
 curl -s "https://api.telegram.org/bot${TELEGRAM_TOKEN}/setWebhook" \
-  -d url="https://api.nexmove.blvckunlimited.space/webhook/telegram" \
+  -d url="https://api-nexmove.blvckunlimited.space/webhook/telegram" \
   -d secret_token="${TELEGRAM_WEBHOOK_SECRET}" \
   -d allowed_updates='["message","edited_message","callback_query"]'
 ```
 
 ### WhatsApp
 Se fait côté **Meta** (voir docs/GUIDE-WHATSAPP.md §6) :
-- Callback URL : `https://api.nexmove.blvckunlimited.space/webhook/whatsapp`
+- Callback URL : `https://api-nexmove.blvckunlimited.space/webhook/whatsapp`
 - Verify token : la valeur de `WHATSAPP_VERIFY_TOKEN` (défaut `nexmove_verify`)
 - Cocher le champ **messages**.
 
@@ -138,7 +143,7 @@ La vitrine pointe déjà vers le bot (`t.me/nex_move_bot`) et vers les pages lé
 
 ## Récap de l'ordre à suivre
 0. Partie 0 → rattacher `blvckunlimited.space` (Namecheap) à Cloudflare (changer les nameservers).
-1. Partie A (tunnel nommé) → `api.nexmove.blvckunlimited.space` répond.
+1. Partie A (tunnel nommé) → `api-nexmove.blvckunlimited.space` répond.
 2. Partie B Telegram → le bot est stable.
 3. Partie C (Pages) → `nexmove.blvckunlimited.space` en ligne.
 4. Meta WhatsApp (GUIDE-WHATSAPP.md) → webhook + numéro.
