@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.54 — Conversation plus fine + relances intelligentes
+- **B3 — Désambiguïsation** : face à une demande vague (« je veux partir », « aide-moi »), le bot pose
+  UNE question de clarification ciblée au lieu de supposer.
+- **B2 — Relances intelligentes** : 1 seule relance après **72 h** d'inactivité aux utilisateurs décrochés
+  (CV envoyé mais onboarding non fini) ou inactifs (profil fini). Endpoint `POST /api/relances` à appeler
+  ~1x/jour (cron). **Opt-out** via **/stop** (coupe relances + digest) ; réactivation via /rappels on.
+
 ## v2.53 — Onboarding plus court (profil pré-rempli depuis le CV)
 - **B1 — Moins de questions** : après l'analyse du CV, NexMove **déduit automatiquement** tes
   domaines/compétences (mots-clés) et ta langue de travail → il **saute** ces questions à l'onboarding

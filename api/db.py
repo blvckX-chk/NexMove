@@ -104,6 +104,19 @@ class SessionManager:
                     pass
         return sorted(({"source": k, **v} for k, v in agg.items()), key=lambda x: -x["total"])
 
+    def list_all(self) -> list:
+        """Toutes les sessions (y compris onboarding non terminé) — pour les relances."""
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT data FROM sessions").fetchall()
+        con.close()
+        out = []
+        for (d,) in rows:
+            try:
+                out.append(json.loads(d))
+            except Exception:
+                pass
+        return out
+
     def create_default(self, user_id: str, chat_id: str, username: str) -> dict:
         return {"user_id": str(user_id), "chat_id": str(chat_id), "username": username, "etape": "WELCOME",
                 "profil": {}, "historique": [], "cv_parsed": False, "cv_file_id": None,

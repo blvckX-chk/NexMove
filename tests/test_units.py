@@ -997,3 +997,42 @@ def test_prefill_prefs_langue_fr_seule():
     s = {"profil": {"identite": {"langues": ["français courant"]}, "competences": {"techniques": ["Vente"]}}}
     main._prefill_prefs_from_cv(s)
     assert s["profil"]["preferences"]["langues_opportunite"] == "français"
+
+# ------------------ B2 : opt-out /stop + relances ------------------
+def test_cmd_stop_opt_out():
+    s = {"user_id": "st1", "chat_id": "1", "etape": "ACTIF", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/stop"))
+    assert s.get("relances_off") is True and s["notif"]["enabled"] is False
+    assert "plus" in msg.lower()
+
+def test_relances_cible_les_bons(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    vieux = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
+    recent = datetime.now(timezone.utc).isoformat()
+    sess = [
+        {"user_id": "a", "chat_id": "1", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux},
+        {"user_id": "b", "chat_id": "2", "onboarding_complete": True, "derniere_activite": vieux},
+        {"user_id": "c", "chat_id": "3", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux, "relances_off": True},
+        {"user_id": "d", "chat_id": "4", "etape": "WELCOME", "onboarding_complete": False, "derniere_activite": vieux},
+        {"user_id": "e", "chat_id": "5", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": recent},
+    ]
+    sent = []
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    async def _fake_deliver(s, text, **k):
+        sent.append(s["user_id"]); return True
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    res = _run(main.relances(_auth=True))
+    assert set(sent) == {"a", "b"} and res["relances_envoyees"] == 2
+
+def test_relances_une_seule_fois(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    vieux = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
+    sess = [{"user_id": "a", "chat_id": "1", "cv_parsed": True, "onboarding_complete": False,
+             "derniere_activite": vieux, "relance_sent": vieux}]
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
+    async def _fake_deliver(s, text, **k):
+        return True
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    res = _run(main.relances(_auth=True))
+    assert res["relances_envoyees"] == 0

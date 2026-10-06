@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.53.0"
+VERSION         = "2.54.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -708,6 +708,9 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "- Confidentialité/RGPD : ses données restent confidentielles, servent uniquement à l'accompagner, "
         "ne sont pas revendues ; il peut TOUT effacer quand il veut avec /supprimer (droit à l'effacement).\n"
         "- Pour démarrer : envoyer son CV (PDF, Word ou image), ou /creercv s'il n'en a pas.\n"
+        "DÉSAMBIGUÏSATION : si son intention est VAGUE (ex. « je veux partir », « aide-moi », « je cherche "
+        "quelque chose »), ne suppose pas — pose UNE seule question de clarification précise et utile "
+        "(études ou travail ? quel pays ou objectif ?) avant d'aller plus loin.\n"
         "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
         "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON)."
     )
@@ -2101,8 +2104,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/stop") or low in ("stop", "stop relances", "arreter", "arrêter", "unsubscribe"):
+        # Opt-out global des messages proactifs (relances + digest) — conformité.
+        session["relances_off"] = True
+        n = _get_notif(session); n["enabled"] = False; session["notif"] = n
+        msg = ("🔕 *C'est noté.* Je ne t'enverrai plus de rappels ni de messages automatiques.\n"
+               "Tu peux toujours m'écrire quand tu veux. Pour réactiver les offres du jour : /rappels on.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/rappels") or low.startswith("/notifications"):
         n = _get_notif(session)
+        # Réactiver les notifications lève aussi l'opt-out global des relances.
+        if session.get("relances_off") and len(t.split(maxsplit=1)) > 1 and t.split(maxsplit=1)[1].strip().lower() in ("on", "oui", "activer", "active", "1"):
+            session["relances_off"] = False
         sp = t.split(maxsplit=1)
         arg = sp[1].strip().lower() if len(sp) > 1 else ""
         if arg in ("on", "oui", "activer", "active", "1"):
@@ -4292,6 +4307,42 @@ async def notify(_auth: bool = Depends(verify_api_key)):
             rappels += 1
     logger.info(f"[notify] users_notifies={notified} rappels={rappels}")
     return {"ok": True, "users_notifies": notified, "rappels_deadline": rappels}
+
+@app.post("/api/relances")
+async def relances(_auth: bool = Depends(verify_api_key)):
+    """B2 — Relance UNIQUE des utilisateurs décrochés/inactifs depuis >72 h.
+    Opt-out via /stop (session['relances_off']). À appeler ~1x/jour (cron)."""
+    now = datetime.now(timezone.utc)
+    seuil = now - timedelta(hours=72)
+    sent = 0
+    for s in session_manager.list_all():
+        if s.get("relances_off") or s.get("relance_sent"):
+            continue
+        if not _valid_id(s.get("chat_id")):
+            continue
+        da = s.get("derniere_activite") or s.get("created_at")
+        try:
+            last = datetime.fromisoformat(da) if da else None
+        except Exception:
+            last = None
+        if not last or last > seuil:
+            continue  # encore actif récemment
+        complete = s.get("onboarding_complete")
+        started = bool(s.get("cv_parsed") or s.get("etape") in ("CV_RECU", "PREFERENCES", "PREF_TYPE_EMPLOI", "CONFIRMATION"))
+        if complete:
+            msg = ("👋 *Ça fait un moment !* De nouvelles opportunités correspondent peut-être à ton profil.\n"
+                   "Tape /veille pour voir les dernières, ou /menu pour explorer.\n\n_/stop pour ne plus recevoir de rappels._")
+        elif started:
+            msg = ("👋 Tu avais commencé ton profil sur *NexMove* mais on ne l'a pas terminé.\n"
+                   "Reprends en 1 min : envoie ton *CV* (PDF, Word ou image) ou tape /creercv.\n\n_/stop pour ne plus recevoir de rappels._")
+        else:
+            continue  # juste un /start sans engagement -> pas de relance
+        if await deliver_text(s, msg):
+            s["relance_sent"] = now.isoformat()
+            session_manager.set(s.get("user_id"), s)
+            sent += 1
+    logger.info(f"[relances] envoyees={sent}")
+    return {"ok": True, "relances_envoyees": sent}
 
 @app.get("/api/session/{user_id}")
 async def get_session(user_id: str, _auth: bool = Depends(verify_api_key)):
