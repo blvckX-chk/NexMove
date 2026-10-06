@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.51 — Sources d'offres enrichies (télétravail international + Adzuna élargi)
+- **3 nouvelles sources d'emploi sans clé API** ajoutées à la veille : **RemoteOK**, **Remotive**,
+  **Jobicy** → de vraies offres **100 % télétravail international**, idéales pour un candidat local qui
+  veut travailler pour l'étranger sans partir (scope `both`, matché par profil).
+- **Adzuna élargi** : pays par défaut `fr,ca,be,gb,de` (au lieu de `fr,ca,be`), plafond porté à 8 pays.
+- Exposé dans `/version` et `/health` (`remote_sources`). Ingestion robuste (une source en échec ne bloque
+  plus les autres).
+
 ## v2.50 — Identité validée + WhatsApp fiabilisé + attribution des sources
 - **Identité de marque appliquée** : baseline validée « *Études, emploi, ici ou ailleurs : l'assistant
   pour ton prochain move.* » intégrée à l'accueil (`/start`) et au pitch d'ouverture. Doc de référence :

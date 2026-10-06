@@ -901,3 +901,53 @@ def test_cmd_compatibilite_calcule(monkeypatch):
     main._apply_premium(s, "premium", 30)
     msg, s = _run(main.process_text_message(s, "/compatibilite Dev Python"))
     assert "84/100" in msg and "python" in msg.lower()
+
+# ------------------ Sources d'offres : fetchers télétravail (A1) ------------------
+class _FakeResp:
+    def __init__(self, status=200, data=None):
+        self.status_code = status; self._data = data; self.text = ""
+    def json(self):
+        return self._data
+
+class _FakeClient:
+    def __init__(self, data, status=200):
+        self._data = data; self._status = status
+    async def get(self, *a, **k):
+        return _FakeResp(self._status, self._data)
+
+def _patch_http(monkeypatch, data, status=200):
+    monkeypatch.setattr(main, "http", lambda: _FakeClient(data, status))
+
+def test_fetch_remoteok_parse(monkeypatch):
+    data = [{"legal": "notice, pas une offre"},
+            {"position": "Dev Python", "company": "Acme", "url": "https://x/1",
+             "description": "<p>Great job</p>", "tags": ["python"], "date": "2026-10-01"}]
+    _patch_http(monkeypatch, data)
+    out = _run(main.fetch_remoteok())
+    assert len(out) == 1
+    assert out[0]["url"] == "https://x/1" and out[0]["type"] == "emploi" and out[0]["scope"] == "both"
+    assert "Dev Python" in out[0]["titre"] and "<" not in out[0]["resume"]
+
+def test_fetch_remotive_parse(monkeypatch):
+    data = {"jobs": [{"title": "Data Analyst", "company_name": "Beta", "url": "https://y/2",
+                      "description": "<b>Nice</b>", "publication_date": "2026-09-30"}]}
+    _patch_http(monkeypatch, data)
+    out = _run(main.fetch_remotive())
+    assert len(out) == 1 and out[0]["url"] == "https://y/2" and "Data Analyst" in out[0]["titre"]
+
+def test_fetch_jobicy_parse(monkeypatch):
+    data = {"jobs": [{"jobTitle": "Product Manager", "companyName": "Gamma", "url": "https://z/3",
+                      "jobExcerpt": "Lead the roadmap", "pubDate": "2026-09-29"}]}
+    _patch_http(monkeypatch, data)
+    out = _run(main.fetch_jobicy())
+    assert len(out) == 1 and out[0]["url"] == "https://z/3" and "Product Manager" in out[0]["titre"]
+
+def test_fetch_remote_http_error_renvoie_vide(monkeypatch):
+    _patch_http(monkeypatch, None, status=500)
+    assert _run(main.fetch_remoteok()) == []
+    assert _run(main.fetch_remotive()) == []
+    assert _run(main.fetch_jobicy()) == []
+
+def test_adzuna_countries_elargi():
+    # Le plafond est désormais 8 pays (au lieu de 4).
+    assert len(main.ADZUNA_COUNTRIES) >= 3 and len(main.ADZUNA_COUNTRIES) <= 8

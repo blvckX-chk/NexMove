@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.50.0"
+VERSION         = "2.51.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -161,7 +161,7 @@ CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / pr
 ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
 # Plusieurs pays possibles (séparés par des virgules) : ex "fr,ca,be". Doivent être supportés par Adzuna.
-ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr").split(",") if c.strip()][:4]
+ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr,ca,be,gb,de").split(",") if c.strip()][:8]
 # Requêtes de secours si aucun mot-clé utilisateur n'est disponible.
 ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
 # Veille : par défaut, la collecte NE lance PAS un appel LLM (osint Tavily) par utilisateur — sinon les
@@ -1502,6 +1502,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         if _embeddings_available(): flags.append("Sémantique")
         if GEMINI_API_KEY: flags.append("Vision")
         if ADZUNA_APP_ID and ADZUNA_APP_KEY: flags.append("Adzuna")
+        flags.append("Remote (RemoteOK/Remotive/Jobicy)")
         msg = (f"🧭 *NexMove — version {VERSION}*\n"
                f"🤖 IA : {prov}\n"
                f"🧩 Modules : {' · '.join(flags) or 'base'}\n"
@@ -3602,6 +3603,80 @@ async def fetch_arbeitnow() -> list:
         logger.error(f"arbeitnow: {e}")
         return []
 
+async def fetch_remoteok() -> list:
+    """RemoteOK — offres 100% télétravail, international, sans clé API. https://remoteok.com/api
+    Pertinent pour un candidat local qui veut travailler pour l'étranger sans partir (scope=both)."""
+    try:
+        r = await http().get("https://remoteok.com/api", headers={"User-Agent": _BROWSER_UA},
+                             timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        out = []
+        for j in (data if isinstance(data, list) else [])[:60]:
+            if not isinstance(j, dict) or not j.get("position"):
+                continue  # le 1er élément est une mention légale, pas une offre
+            titre = (j.get("position") or "").strip()
+            comp = (j.get("company") or "").strip()
+            url = (j.get("url") or j.get("apply_url") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            tags = ", ".join((j.get("tags") or [])[:5])
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": (desc or tags)[:300], "type": "emploi", "scope": "both",
+                            "date": (j.get("date") or "")[:10]})
+        return out[:30]
+    except Exception as e:
+        logger.error(f"remoteok: {e}")
+        return []
+
+async def fetch_remotive() -> list:
+    """Remotive — offres télétravail (tech & non-tech), sans clé API. https://remotive.com/api/remote-jobs"""
+    try:
+        r = await http().get("https://remotive.com/api/remote-jobs", params={"limit": 40},
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("jobs") or [])[:40]:
+            titre = (j.get("title") or "").strip()
+            comp = (j.get("company_name") or "").strip()
+            url = (j.get("url") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": desc, "type": "emploi", "scope": "both",
+                            "date": (j.get("publication_date") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"remotive: {e}")
+        return []
+
+async def fetch_jobicy() -> list:
+    """Jobicy — offres télétravail internationales, sans clé API. https://jobicy.com/api/v2/remote-jobs"""
+    try:
+        r = await http().get("https://jobicy.com/api/v2/remote-jobs", params={"count": 40},
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("jobs") or [])[:40]:
+            titre = (j.get("jobTitle") or "").strip()
+            comp = (j.get("companyName") or "").strip()
+            url = (j.get("url") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("jobExcerpt") or j.get("jobDescription") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": desc, "type": "emploi", "scope": "both",
+                            "date": (j.get("pubDate") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"jobicy: {e}")
+        return []
+
 async def fetch_adzuna(query: str, country: str = "fr") -> list:
     """API emploi Adzuna (clés gratuites). Ne fait rien si non configurée."""
     if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
@@ -3758,11 +3833,16 @@ def _collect_user_queries(limit: int = 8) -> list:
     return qs or ADZUNA_QUERIES
 
 async def ingest_structured() -> int:
-    """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré + EURAXESS) dans le pool."""
+    """Ingère les offres d'emploi structurées (arbeitnow + RemoteOK + Remotive + Jobicy
+    + Adzuna si configuré + EURAXESS) dans le pool."""
     total = 0
-    for it in await fetch_arbeitnow():
-        if opp_store.add_source(it):
-            total += 1
+    for fetch in (fetch_arbeitnow, fetch_remoteok, fetch_remotive, fetch_jobicy):
+        try:
+            for it in await fetch():
+                if opp_store.add_source(it):
+                    total += 1
+        except Exception as e:
+            logger.error(f"ingest {getattr(fetch, '__name__', '?')}: {e}")
     if ADZUNA_APP_ID and ADZUNA_APP_KEY:
         queries = _collect_user_queries()          # requêtes adaptées aux mots-clés réels
         for country in (ADZUNA_COUNTRIES or ["fr"]):
@@ -4268,7 +4348,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "remote_sources": ["remoteok", "remotive", "jobicy"], "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 async def _check_health() -> dict:
