@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.51.0"
+VERSION         = "2.52.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3431,6 +3431,10 @@ SOURCE_CATALOG = [
     {"url": "https://www.opportunitiesforyouth.org/feed/",     "type": "fellowship", "scope": "both"},
     {"url": "https://youthop.com/feed/",                       "type": "fellowship", "scope": "both"},
     {"url": "https://mladiinfo.eu/feed/",                      "type": "bourse",     "scope": "intl"},
+    # Bourses & mobilité internationales (études France/Europe/Canada) — A3
+    {"url": "https://scholarship-positions.com/feed/",         "type": "bourse",     "scope": "intl"},
+    {"url": "https://www.opportunitiescircle.com/feed/",       "type": "bourse",     "scope": "both"},
+    {"url": "https://www.scholarshipsads.com/feed/",           "type": "bourse",     "scope": "both"},
     # Humanitaire / ONG (emplois & consultances) — activable via ENABLE_RELIEFWEB=1
     {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
      "active_env": "ENABLE_RELIEFWEB"},
@@ -3888,10 +3892,14 @@ LOCAL_JOB_SOURCES = {
     "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com"],
     "Mali": ["malipages.com", "novojob.com"],
     "Niger": ["nigeremploi.com"],
+    # Voisins (diaspora / mobilité régionale)
+    "Ghana": ["jobberman.com.gh", "ghanajob.com"],
+    "Nigéria": ["jobberman.com", "myjobmag.com", "hotnigerianjobs.com"],
 }
-# Sources régionales / panafricaines (servent tous les pays d'Afrique de l'Ouest).
+# Sources régionales / panafricaines + grandes plateformes (servent tous les pays d'Afrique de l'Ouest).
 _REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "AfricaWork",
-                         "ReliefWeb (ONG/humanitaire)", "Emploi.org"]
+                         "ReliefWeb (ONG/humanitaire)", "Emploi.org",
+                         "Indeed (fr.indeed.com)", "LinkedIn (linkedin.com/jobs)", "Jobberman", "Glassdoor"]
 
 _ACCENTS = str.maketrans("àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ", "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
 

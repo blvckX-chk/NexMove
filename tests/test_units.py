@@ -951,3 +951,25 @@ def test_fetch_remote_http_error_renvoie_vide(monkeypatch):
 def test_adzuna_countries_elargi():
     # Le plafond est désormais 8 pays (au lieu de 4).
     assert len(main.ADZUNA_COUNTRIES) >= 3 and len(main.ADZUNA_COUNTRIES) <= 8
+
+# ------------------ A3 : flux bourses/mobilité ------------------
+def test_feeds_bourses_mobilite_presents():
+    feeds = " ".join(main.SOURCE_FEEDS)
+    assert "scholarship-positions.com" in feeds
+    assert "opportunitiescircle.com" in feeds
+    assert "scholarshipsads.com" in feeds
+
+# ------------------ A4 : sources locales / régionales ------------------
+def test_sources_locales_voisins_ajoutes():
+    assert "Ghana" in main.LOCAL_JOB_SOURCES and "Nigéria" in main.LOCAL_JOB_SOURCES
+    reg = " ".join(main._REGIONAL_JOB_SOURCES).lower()
+    assert "indeed" in reg and "linkedin" in reg and "jobberman" in reg
+
+def test_local_sources_txt_benin_inclut_regional():
+    txt = main._local_sources_txt("Bénin")
+    assert "emploibenin.com" in txt and "Indeed" in txt
+
+def test_local_sources_extra_env(monkeypatch):
+    monkeypatch.setenv("LOCAL_SOURCES_EXTRA_BENIN", "monportail.bj,autre.bj")
+    txt = main._local_sources_txt("Bénin")
+    assert "monportail.bj" in txt and "autre.bj" in txt

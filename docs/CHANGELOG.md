@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.52 — Bourses & mobilité + sources locales/régionales enrichies
+- **A3 — Flux bourses/mobilité** ajoutés à la veille (RSS) : scholarship-positions, OpportunitiesCircle,
+  ScholarshipsAds → plus de bourses d'études (France/Europe/Canada) pour le persona Campus France.
+- **A4 — Sources locales/régionales** : grandes plateformes réelles ajoutées (Indeed fr, LinkedIn,
+  Jobberman, Glassdoor) + voisins **Ghana** et **Nigéria** (diaspora/mobilité régionale). Nouveau réglage
+  `LOCAL_SOURCES_EXTRA_<PAYS>` dans `.env` pour ajouter tes portails locaux exacts (ex. Bénin) sans toucher
+  au code.
+
 ## v2.51 — Sources d'offres enrichies (télétravail international + Adzuna élargi)
 - **3 nouvelles sources d'emploi sans clé API** ajoutées à la veille : **RemoteOK**, **Remotive**,
   **Jobicy** → de vraies offres **100 % télétravail international**, idéales pour un candidat local qui
