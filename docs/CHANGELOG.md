@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.53 — Onboarding plus court (profil pré-rempli depuis le CV)
+- **B1 — Moins de questions** : après l'analyse du CV, NexMove **déduit automatiquement** tes
+  domaines/compétences (mots-clés) et ta langue de travail → il **saute** ces questions à l'onboarding
+  (friction réduite = meilleure conversion). Les valeurs restent **modifiables** à l'étape de confirmation.
+
 ## v2.52 — Bourses & mobilité + sources locales/régionales enrichies
 - **A3 — Flux bourses/mobilité** ajoutés à la veille (RSS) : scholarship-positions, OpportunitiesCircle,
   ScholarshipsAds → plus de bourses d'études (France/Europe/Canada) pour le persona Campus France.

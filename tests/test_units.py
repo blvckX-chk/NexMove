@@ -973,3 +973,27 @@ def test_local_sources_extra_env(monkeypatch):
     monkeypatch.setenv("LOCAL_SOURCES_EXTRA_BENIN", "monportail.bj,autre.bj")
     txt = main._local_sources_txt("Bénin")
     assert "monportail.bj" in txt and "autre.bj" in txt
+
+# ------------------ B1 : pré-remplissage des préférences depuis le CV ------------------
+def test_prefill_prefs_from_cv():
+    s = {"profil": {"identite": {"langues": ["français natif", "anglais B2"]},
+                    "formation": [{"domaine": "Informatique"}],
+                    "competences": {"techniques": ["Python", "SQL"], "outils": ["Git"]}}}
+    filled = main._prefill_prefs_from_cv(s)
+    prefs = s["profil"]["preferences"]
+    assert "mots_cles" in filled and "langues_opportunite" in filled
+    assert "Python" in prefs["mots_cles"] and "Informatique" in prefs["mots_cles"]
+    assert prefs["langues_opportunite"] == "les deux"
+    # le plan d'onboarding saute les champs déjà pré-remplis
+    plan = main._build_pref_plan(prefs)
+    nxt = next((f for f in plan if not prefs.get(f)), None)
+    assert nxt not in ("mots_cles", "langues_opportunite")
+
+def test_prefill_prefs_cv_vide_ne_remplit_rien():
+    s = {"profil": {"identite": {}, "formation": [], "competences": {}}}
+    assert main._prefill_prefs_from_cv(s) == []
+
+def test_prefill_prefs_langue_fr_seule():
+    s = {"profil": {"identite": {"langues": ["français courant"]}, "competences": {"techniques": ["Vente"]}}}
+    main._prefill_prefs_from_cv(s)
+    assert s["profil"]["preferences"]["langues_opportunite"] == "français"

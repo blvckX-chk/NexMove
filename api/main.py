@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.52.0"
+VERSION         = "2.53.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -498,6 +498,46 @@ def _build_pref_plan(prefs: dict) -> list[str]:
         plan.append("certifs_langue")
     plan += ["langues_opportunite", "niveau", "mots_cles"]
     return plan
+
+# B1 — pré-remplissage des préférences à partir du CV (réduit le nombre de questions).
+_PREF_LABELS = {"mots_cles": "tes domaines/compétences", "langues_opportunite": "ta langue de travail"}
+
+def _prefill_prefs_from_cv(session: dict) -> list[str]:
+    """Déduit certaines préférences du CV analysé (compétences, domaine, langues) pour SAUTER les
+    questions correspondantes à l'onboarding. Renvoie la liste des champs pré-remplis."""
+    profil = session.get("profil", {}) or {}
+    comp = profil.get("competences", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    filled = []
+    # mots_cles <- compétences techniques/outils + domaine de la formation la plus récente
+    if not prefs.get("mots_cles"):
+        kws = []
+        for k in ("techniques", "outils"):
+            kws += [c for c in (comp.get(k) or []) if isinstance(c, str) and c.strip()]
+        form = profil.get("formation") or []
+        dom = (form[0].get("domaine") if form and isinstance(form[0], dict) else "") or ""
+        if dom:
+            kws.append(dom)
+        kws = [k.strip() for k in kws if k and len(k.strip()) > 1][:5]
+        if kws:
+            prefs["mots_cles"] = ", ".join(dict.fromkeys(kws))   # dédup, ordre conservé
+            filled.append("mots_cles")
+    # langues_opportunite <- langues déclarées dans le CV
+    if not prefs.get("langues_opportunite"):
+        langs = " ".join(str(l) for l in ((profil.get("identite") or {}).get("langues") or [])).lower()
+        if langs:
+            has_en = any(x in langs for x in ("angl", "english"))
+            has_fr = any(x in langs for x in ("franç", "franc", "french"))
+            if has_en and has_fr:
+                prefs["langues_opportunite"] = "les deux"; filled.append("langues_opportunite")
+            elif has_en:
+                prefs["langues_opportunite"] = "anglais"; filled.append("langues_opportunite")
+            elif has_fr:
+                prefs["langues_opportunite"] = "français"; filled.append("langues_opportunite")
+    if filled:
+        profil["preferences"] = prefs
+        session["profil"] = profil
+    return filled
 
 def _ask_pref(session: dict, field: str) -> str:
     """Renvoie l'intitulé de la question `field` et arme les boutons de choix (si fermée)."""
@@ -2120,7 +2160,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"
+        filled = _prefill_prefs_from_cv(session)   # B1 : moins de questions grâce au CV
         q = _ask_pref(session, "objectif")
+        if filled:
+            q = ("📎 J'ai déjà repéré *" + "* et *".join(_PREF_LABELS.get(f, f) for f in filled) +
+                 "* dans ton CV (tu pourras corriger à la fin).\n\n") + q
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
 
