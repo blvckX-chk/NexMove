@@ -1007,6 +1007,7 @@ def test_cmd_stop_opt_out():
 
 def test_relances_cible_les_bons(monkeypatch):
     from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
     vieux = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
     recent = datetime.now(timezone.utc).isoformat()
     sess = [
@@ -1015,6 +1016,7 @@ def test_relances_cible_les_bons(monkeypatch):
         {"user_id": "c", "chat_id": "3", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux, "relances_off": True},
         {"user_id": "d", "chat_id": "4", "etape": "WELCOME", "onboarding_complete": False, "derniere_activite": vieux},
         {"user_id": "e", "chat_id": "5", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": recent},
+        {"user_id": "f", "chat_id": "6", "channel": "whatsapp", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux},
     ]
     sent = []
     monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
@@ -1023,16 +1025,40 @@ def test_relances_cible_les_bons(monkeypatch):
         sent.append(s["user_id"]); return True
     monkeypatch.setattr(main, "deliver_text", _fake_deliver)
     res = _run(main.relances(_auth=True))
+    # a,b éligibles (free 72h, inactif 100h) ; c opt-out ; d non engagé ; e actif ; f WhatsApp exclu
     assert set(sent) == {"a", "b"} and res["relances_envoyees"] == 2
 
-def test_relances_une_seule_fois(monkeypatch):
+def test_relances_respecte_la_fenetre(monkeypatch):
     from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
     vieux = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
+    recent_relance = (datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()
     sess = [{"user_id": "a", "chat_id": "1", "cv_parsed": True, "onboarding_complete": False,
-             "derniere_activite": vieux, "relance_sent": vieux}]
+             "derniere_activite": vieux, "relance_sent": recent_relance}]   # relancé il y a 10h < 72h
     monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
     async def _fake_deliver(s, text, **k):
         return True
     monkeypatch.setattr(main, "deliver_text", _fake_deliver)
     res = _run(main.relances(_auth=True))
     assert res["relances_envoyees"] == 0
+
+def test_relances_cadence_par_palier(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
+    inactif_30h = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    futur = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+    sess = [
+        # premium (24h) inactif 30h -> éligible
+        {"user_id": "prem", "chat_id": "1", "onboarding_complete": True, "derniere_activite": inactif_30h,
+         "premium_tier": "premium", "premium_until": futur},
+        # gratuit (72h) inactif 30h -> PAS encore éligible
+        {"user_id": "free", "chat_id": "2", "onboarding_complete": True, "derniere_activite": inactif_30h},
+    ]
+    sent = []
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    async def _fake_deliver(s, text, **k):
+        sent.append(s["user_id"]); return True
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    _run(main.relances(_auth=True))
+    assert sent == ["prem"]

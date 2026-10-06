@@ -5,9 +5,11 @@ Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'
 ## v2.54 — Conversation plus fine + relances intelligentes
 - **B3 — Désambiguïsation** : face à une demande vague (« je veux partir », « aide-moi »), le bot pose
   UNE question de clarification ciblée au lieu de supposer.
-- **B2 — Relances intelligentes** : 1 seule relance après **72 h** d'inactivité aux utilisateurs décrochés
-  (CV envoyé mais onboarding non fini) ou inactifs (profil fini). Endpoint `POST /api/relances` à appeler
-  ~1x/jour (cron). **Opt-out** via **/stop** (coupe relances + digest) ; réactivation via /rappels on.
+- **B2 — Relances intelligentes** : relance les utilisateurs décrochés (CV envoyé mais onboarding non fini)
+  ou inactifs, **cadence par palier** (Premium/Pro 24 h · VIP 48 h · Gratuit 72 h · Admin jamais).
+  **Telegram uniquement** (gratuit ; WhatsApp exclu car messages proactifs >24 h = templates payants).
+  Endpoint `POST /api/relances` (cron ~1x/jour) ; **opt-out /stop** (coupe relances + digest).
+  Script `scripts/nex-cron.sh` + lignes crontab (collect/notify/relances).
 
 ## v2.53 — Onboarding plus court (profil pré-rempli depuis le CV)
 - **B1 — Moins de questions** : après l'analyse du CV, NexMove **déduit automatiquement** tes

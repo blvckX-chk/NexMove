@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.54.0"
+VERSION         = "2.54.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4308,25 +4308,42 @@ async def notify(_auth: bool = Depends(verify_api_key)):
     logger.info(f"[notify] users_notifies={notified} rappels={rappels}")
     return {"ok": True, "users_notifies": notified, "rappels_deadline": rappels}
 
+# B2 — cadence des relances par palier (heures d'inactivité avant une relance). Admin : jamais.
+_RELANCE_HOURS = {"premium": 24, "pro": 24, "vip": 48, "free": 72}
+
 @app.post("/api/relances")
 async def relances(_auth: bool = Depends(verify_api_key)):
-    """B2 — Relance UNIQUE des utilisateurs décrochés/inactifs depuis >72 h.
-    Opt-out via /stop (session['relances_off']). À appeler ~1x/jour (cron)."""
+    """B2 — Relances des utilisateurs décrochés/inactifs, cadence selon le palier (_RELANCE_HOURS).
+    Telegram UNIQUEMENT (gratuit) ; WhatsApp exclu (coûts/templates). Opt-out via /stop.
+    À appeler ~1x/jour (cron) — la fenêtre par palier évite le spam."""
     now = datetime.now(timezone.utc)
-    seuil = now - timedelta(hours=72)
     sent = 0
     for s in session_manager.list_all():
-        if s.get("relances_off") or s.get("relance_sent"):
+        if s.get("relances_off"):
             continue
+        if (s.get("channel") or "telegram") != "telegram":
+            continue  # proactif payant hors Telegram -> on n'envoie pas
         if not _valid_id(s.get("chat_id")):
             continue
+        tier = _user_tier(s)
+        if tier == "admin":
+            continue
+        interval = _RELANCE_HOURS.get(tier, 72)
+        seuil = now - timedelta(hours=interval)
         da = s.get("derniere_activite") or s.get("created_at")
         try:
             last = datetime.fromisoformat(da) if da else None
         except Exception:
             last = None
         if not last or last > seuil:
-            continue  # encore actif récemment
+            continue  # actif dans la fenêtre du palier
+        rs = s.get("relance_sent")
+        try:
+            rsdt = datetime.fromisoformat(rs) if rs else None
+        except Exception:
+            rsdt = None
+        if rsdt and rsdt > seuil:
+            continue  # déjà relancé dans la fenêtre du palier
         complete = s.get("onboarding_complete")
         started = bool(s.get("cv_parsed") or s.get("etape") in ("CV_RECU", "PREFERENCES", "PREF_TYPE_EMPLOI", "CONFIRMATION"))
         if complete:
