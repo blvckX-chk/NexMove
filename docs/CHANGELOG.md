@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.56 — Nouveaux outils + upsell personnalisé selon le profil
+- **5 nouveaux outils** (sans dépendance) : **/extraire** (texte d'un PDF/scan/photo, OCR),
+  **/compresserimage** (alléger une photo), **/enimages** (PDF → PNG en .zip),
+  et deux **perks Premium** : **/cv1page** (CV synthétique) et **/anonymiser** (CV à l'aveugle).
+- **Upsell personnalisé** : les nudges s'adaptent désormais à l'**objectif du profil** (études →
+  dossier Campus France / score ; emploi → compatibilité / candidatures), en plus du palier.
+- /outils enrichi avec les nouveaux outils.
+
 ## v2.55 — Boîte à outils mise en avant + moteur d'upsell
 - **/outils** : hub qui met en avant tous les outils intégrés (postuler, dossier, compresser, fusionner,
   images→PDF, découper, traduire, créer CV, timeline) avec boutons + astuces. Ajouté à l'aide.

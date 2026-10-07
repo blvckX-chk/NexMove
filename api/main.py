@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.55.0"
+VERSION         = "2.56.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -371,8 +371,18 @@ def _quota_exceeded_msg(feature_label: str) -> str:
             "🎁 _Tarif de lancement : -40% (durée limitée)._\n"
             "_Ou réessaie demain : la limite se recharge chaque jour._")
 
-# ── Upsell / nudges marketing (éthiques, contextuels, sensibles au palier) ──
+# ── Upsell / nudges marketing (éthiques, contextuels, sensibles au palier ET au profil) ──
 _LAUNCH_OFFER = "🎁 Tarif de lancement : *-40%* sur le Premium (durée limitée)."
+
+def _profile_perk(session: dict) -> str:
+    """Bénéfice Premium formulé selon l'OBJECTIF du profil (upsell personnalisé)."""
+    prefs = ((session.get("profil") or {}).get("preferences") or {})
+    obj = str(prefs.get("objectif", "")).lower()
+    if any(k in obj for k in ("étud", "etud", "bourse", "master", "licence", "doctorat", "fellowship")):
+        return "ton dossier Campus France complet, le score d'admissibilité illimité et des lettres sur mesure"
+    if _is_travail(obj):
+        return "la compatibilité par compétence illimitée, des offres priorisées et le suivi de tes candidatures"
+    return "les offres illimitées, les dossiers complets et un accompagnement prioritaire"
 
 def _upsell_line(session: dict, moment: str = "generic") -> str:
     """Renvoie UNE phrase d'incitation adaptée au moment et au palier (vide pour admin/pro/vip).
@@ -390,6 +400,7 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
                 "💎 Membre Premium : besoin d'un accompagnement renforcé ? Découvre le *Pro* — /offres.",
             ])
         return ""  # pro / vip : on ne sollicite pas
+    perk = _profile_perk(session)   # bénéfice personnalisé selon l'objectif du profil
     nudges = {
         "quota": [
             "💎 Les membres *Premium* n'ont *aucune limite*. Passe au niveau supérieur — /offres. " + _LAUNCH_OFFER,
@@ -400,11 +411,11 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
             "🚀 Tu aimes la boîte à outils ? *Premium* débloque tout, sans limite — /offres.",
         ],
         "success": [
-            "🎯 Beau travail ! Les membres *Premium* vont plus loin : offres illimitées, dossiers complets — /offres.",
+            f"🎯 Beau travail ! *Premium* débloque {perk} — /offres.",
             "🔓 Ce n'est qu'un aperçu — *Premium* ouvre tout le potentiel de NexMove — /offres. " + _LAUNCH_OFFER,
         ],
         "generic": [
-            "💎 Débloque tout NexMove avec *Premium* — /offres. " + _LAUNCH_OFFER,
+            f"💎 Avec *Premium* : {perk} — /offres. " + _LAUNCH_OFFER,
             "⭐ De plus en plus de candidats préparent leur avenir avec NexMove. *Premium* pour aller plus vite — /offres.",
         ],
     }
@@ -1028,14 +1039,16 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         msg = ("🧰 *Ta boîte à outils NexMove* — pour des dossiers nickel, sans quitter la messagerie :\n\n"
                "📄 */postuler* <cible> — CV + lettre + projet adaptés (PDF & Word)\n"
                "🗂️ */dossier* <cible> — ton dossier de candidature complet\n"
-               "🗜️ */compresser* <Ko> — alléger un PDF trop lourd (soumissions en ligne)\n"
+               "🔎 */extraire* — récupérer le *texte* d'un PDF/scan/photo (OCR)\n"
+               "🗜️ */compresser* <Ko> — alléger un *PDF* trop lourd\n"
+               "🖼️🗜️ */compresserimage* <Ko> — alléger une *photo/image*\n"
                "🔗 */fusionner* — regrouper plusieurs PDF en un seul\n"
-               "🖼️ */enpdf* — transformer des images/photos en PDF\n"
+               "🖼️ */enpdf* — images/photos → PDF · 📄➡️🖼️ */enimages* — PDF → images PNG\n"
                "✂️ */decouper* <pages> — extraire des pages (ex : /decouper 1-3)\n"
                "🌍 */traduire* <texte> — traduire un texte (FR/EN)\n"
-               "📝 */creercv* — créer un CV si tu n'en as pas\n"
-               "🗓️ */timeline* — ta feuille de route en image\n\n"
-               "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser est ton ami._")
+               "📝 */creercv* — créer un CV · 🗓️ */timeline* — ta feuille de route en image\n"
+               "💎 *Premium* : 📄 */cv1page* (CV synthétique) · 🕶️ */anonymiser* (CV à l'aveugle)\n\n"
+               "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser & /compresserimage sont tes amis._")
         up = _upsell_line(session, "tool")
         if up:
             msg += "\n\n" + up
@@ -1382,6 +1395,73 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         else:
             _tool_clear(session.get("user_id")); session["tool_mode"] = "split"; session["split_spec"] = spec
             msg = f"✂️ *Découpe.* Envoie maintenant le *PDF* — je garde les pages *{spec}*."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/extraire") or low.startswith("/ocr") or low.startswith("/extraire-texte"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "extract"
+        msg = ("🔎 *Extraire le texte.*\nEnvoie un *PDF* ou une *image/photo* (même scannée) — "
+               "je t'en ressors le *texte copiable*.\n_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/compresserimage") or low.startswith("/compressimage") or low.startswith("/allegerimage"):
+        target = 0
+        for p in t.split()[1:]:
+            d = re.sub(r"[^0-9]", "", p)
+            if d:
+                target = max(30, min(5000, int(d)))
+        session["imgcompress_target"] = target or 300
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "imgcompress"
+        msg = (f"🖼️🗜️ *Alléger une image* — cible ≈ {session['imgcompress_target']} Ko.\n\n"
+               "Envoie la *photo/image* (photo d'identité, justificatif scanné…) — je te la renvoie plus légère.\n"
+               "_Astuce : /compresserimage 200 pour viser 200 Ko._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/enimages") or low.startswith("/pdfimages") or low.startswith("/pdf2img"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "pdf2img"
+        msg = ("📄➡️🖼️ *PDF en images.*\nEnvoie le *PDF* — je te renvoie chaque page en *PNG* (dans un .zip).\n"
+               "_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/cv1page") or low.startswith("/cvcondense") or low.startswith("/cvcondensé"):
+        if not _is_premium(session):
+            msg = "💎 *CV sur 1 page* est un outil *Premium*.\n" + _upsell_line(session, "tool")
+        else:
+            profil = session.get("profil") or {}
+            if not profil.get("identite"):
+                msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
+            else:
+                try:
+                    cp = _condense_profil(profil)
+                    comps = (cp.get("competences", {}).get("techniques", []) + cp.get("competences", {}).get("outils", []))[:8]
+                    buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps)
+                    nom = (profil.get("identite") or {}).get("nom") or "Candidat"
+                    await deliver_file(session, f"CV_1page_{_slug(nom)}.pdf", buf.getvalue(), "📄 Ton CV condensé (1 page)")
+                    msg = "✅ Voici ton *CV condensé* — parfait quand un recruteur veut du synthétique."
+                except Exception as e:
+                    logger.error(f"[cv1page] {e}"); msg = "😕 Génération impossible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/anonymiser") or low.startswith("/cvanonyme") or low.startswith("/anonyme"):
+        if not _is_premium(session):
+            msg = "💎 *CV anonymisé* est un outil *Premium*.\n" + _upsell_line(session, "tool")
+        else:
+            profil = session.get("profil") or {}
+            if not profil.get("identite"):
+                msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
+            else:
+                try:
+                    ap = _anonymize_profil(profil)
+                    comps = (ap.get("competences", {}).get("techniques", []) + ap.get("competences", {}).get("outils", []))[:14]
+                    buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps)
+                    await deliver_file(session, "CV_anonyme.pdf", buf.getvalue(), "🕶️ Ton CV anonymisé")
+                    msg = "✅ *CV anonymisé* (nom et coordonnées masqués) — idéal pour une candidature à l'aveugle ou une CVthèque."
+                except Exception as e:
+                    logger.error(f"[anonymiser] {e}"); msg = "😕 Génération impossible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -2620,6 +2700,70 @@ def compress_pdf(pdf_bytes: bytes, target_kb: int = 2000) -> tuple:
     doc.close()
     return best, len(best) // 1024
 
+def compress_image(data: bytes, target_kb: int = 300) -> tuple:
+    """Allège une image (qualité JPEG + redimensionnement) pour viser ~target_kb. Renvoie (bytes, kb)."""
+    if Image is None:
+        return data, len(data) // 1024
+    img = Image.open(io.BytesIO(data))
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    target = max(30, target_kb) * 1024
+    w, h = img.size
+    best = data
+    for scale, q in ((1.0, 80), (1.0, 65), (0.8, 65), (0.65, 60), (0.5, 55), (0.4, 50)):
+        im2 = img if scale == 1.0 else img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        b = io.BytesIO(); im2.save(b, format="JPEG", quality=q, optimize=True)
+        cand = b.getvalue()
+        if len(cand) < len(best):
+            best = cand
+        if len(best) <= target:
+            break
+    return best, len(best) // 1024
+
+def pdf_to_images_zip(pdf_bytes: bytes, dpi: int = 150, max_pages: int = 30) -> bytes:
+    """Rend chaque page d'un PDF en PNG et renvoie un ZIP (1 PNG par page)."""
+    import zipfile
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    buf = io.BytesIO()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for i, page in enumerate(doc):
+                if i >= max_pages:
+                    break
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                z.writestr(f"page_{i+1:02d}.png", pix.tobytes("png"))
+    finally:
+        doc.close()
+    return buf.getvalue()
+
+def _anonymize_profil(profil: dict) -> dict:
+    """Copie du profil avec nom + coordonnées masqués (candidature à l'aveugle / CVthèque)."""
+    import copy
+    p = copy.deepcopy(profil or {})
+    idt = p.get("identite") or {}
+    idt.update({"nom": "Candidat", "email": "", "telephone": "", "localisation": ""})
+    p["identite"] = idt
+    return p
+
+def _condense_profil(profil: dict) -> dict:
+    """Copie allégée du profil pour un CV synthétique (≈1 page)."""
+    import copy
+    p = copy.deepcopy(profil or {})
+    p["formation"] = (p.get("formation") or [])[:2]
+    exps = (p.get("experience") or [])[:3]
+    for e in exps:
+        if isinstance(e, dict) and isinstance(e.get("missions"), list):
+            e["missions"] = e["missions"][:2]
+    p["experience"] = exps
+    comp = p.get("competences") or {}
+    for k in ("techniques", "outils", "soft_skills"):
+        if isinstance(comp.get(k), list):
+            comp[k] = comp[k][:8]
+    p["competences"] = comp
+    if p.get("resume_profil"):
+        p["resume_profil"] = str(p["resume_profil"])[:300]
+    return p
+
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
 
@@ -3053,6 +3197,45 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
             await deliver_file(session, f"{_slug((filename or 'document').rsplit('.',1)[0])}_pages_{spec.replace(',', '_')}.pdf", data, f"✂️ Pages {spec}")
         else:
             await deliver_text(session, "😕 Découpe impossible (vérifie les numéros de pages).")
+        return
+    if mode == "extract":
+        session["tool_mode"] = None; session_manager.set(uid, session)
+        fn = (filename or "").lower()
+        try:
+            if fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF":
+                txt = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
+            else:
+                txt = await asyncio.to_thread(extract_text_image, pdf_bytes)
+        except Exception as e:
+            logger.error(f"[extract] {e}"); txt = ""
+        txt = (txt or "").strip()
+        if not txt:
+            await deliver_text(session, "😕 Je n'ai pas réussi à extraire de texte (document vide ou illisible).")
+        elif len(txt) <= 3000:
+            await deliver_text(session, "🔎 *Texte extrait :*\n\n" + txt)
+        else:
+            await deliver_file(session, "texte_extrait.txt", txt.encode("utf-8"), "🔎 Texte extrait (fichier)")
+        return
+    if mode == "imgcompress":
+        target = session.pop("imgcompress_target", 300); session["tool_mode"] = None; session_manager.set(uid, session)
+        try:
+            data, kb = await asyncio.to_thread(compress_image, pdf_bytes, target)
+            await deliver_file(session, "image_compressee.jpg", data, f"🖼️ {len(pdf_bytes)//1024} Ko → {kb} Ko")
+        except Exception as e:
+            logger.error(f"[imgcompress] {e}")
+            await deliver_text(session, "😕 Compression d'image impossible sur ce fichier.")
+        return
+    if mode == "pdf2img":
+        session["tool_mode"] = None; session_manager.set(uid, session)
+        if not (pdf_bytes[:4] == b"%PDF" or (filename or "").lower().endswith(".pdf")):
+            await deliver_text(session, "❌ Envoie un *PDF* pour la conversion en images.")
+            return
+        try:
+            z = await asyncio.to_thread(pdf_to_images_zip, pdf_bytes)
+            await deliver_file(session, "pages_png.zip", z, "🖼️ Chaque page du PDF en PNG (zip)")
+        except Exception as e:
+            logger.error(f"[pdf2img] {e}")
+            await deliver_text(session, "😕 Conversion impossible sur ce fichier.")
         return
     # Mode compression : l'utilisateur a demandé /compresser puis envoie un PDF
     target_kb = session.pop("compress_target", 0)
