@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.58 — Langage naturel étendu (ne plus se perdre dans les commandes)
+- Le routeur en langage naturel (utilisateurs onboardés) reconnaît désormais **toutes les commandes
+  récentes** : écrire « quelles sont mes chances pour ce master », « entraîne-moi à l'entretien »,
+  « crée-moi un CV », « mes candidatures », « la boîte à outils », « combien de crédits »… déclenche la
+  bonne action **sans connaître le nom de la commande**. `_VALID_INTENTS` + prompt du routeur enrichis
+  (chances, compatibilite, simulation, creercv, outils, extraire, mescandidatures, parrainage, offres, credits…).
+
 ## v2.57 — Crédits fongibles (monétisation flexible) + upsell branché partout
 - **Packs de crédits fongibles** : 1 crédit = 1 action (CV, score, simulation…) quand la limite gratuite
   du jour est atteinte. Codes **CRD-XXXXXXXX** à usage unique (vendus sur Chariow), activés via

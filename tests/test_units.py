@@ -1170,3 +1170,9 @@ def test_cmd_gencredits_admin_gate(monkeypatch):
     s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
     msg, s = _run(main.process_text_message(s, "/gencredits 10 5"))
     assert "administrateur" in msg.lower()
+
+# ------------------ Routeur langage naturel : nouvelles commandes ------------------
+def test_valid_intents_inclut_nouvelles_commandes():
+    for c in ("chances", "compatibilite", "simulation", "creercv", "outils",
+              "credits", "mescandidatures", "offres", "extraire"):
+        assert c in main._VALID_INTENTS
