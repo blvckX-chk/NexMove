@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.55 — Boîte à outils mise en avant + moteur d'upsell
+- **/outils** : hub qui met en avant tous les outils intégrés (postuler, dossier, compresser, fusionner,
+  images→PDF, découper, traduire, créer CV, timeline) avec boutons + astuces. Ajouté à l'aide.
+- **Moteur d'upsell** (`_upsell_line`) : nudges marketing/psychologiques **éthiques et sensibles au palier**
+  (jamais pour admin/pro/vip ; montée en gamme douce pour premium ; incitation pour les gratuits).
+  Leviers : accès illimité, offre de lancement (-40%), preuve sociale. Branché sur les **limites de quota**
+  (CTA /offres renforcé) et la **fin d'un outil**.
+
 ## v2.54 — Conversation plus fine + relances intelligentes
 - **B3 — Désambiguïsation** : face à une demande vague (« je veux partir », « aide-moi »), le bot pose
   UNE question de clarification ciblée au lieu de supposer.
