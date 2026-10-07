@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.58.0"
+VERSION         = "2.59.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -369,6 +369,35 @@ def _quota_or_credit(session: dict, feature: str, limit: int) -> tuple[bool, boo
 def _credit_note(session: dict, used_credit: bool) -> str:
     return (f"\n\n🎟️ _1 crédit utilisé — il te reste {_credit_balance(session)} crédit·s._"
             if used_credit else "")
+
+def _admin_stats() -> dict:
+    """Agrégats pour le pilotage (commande /stats + panel web). Aucune donnée personnelle."""
+    try:
+        users = session_manager.count()
+    except Exception:
+        users = 0
+    try:
+        active = session_manager.list_active()
+    except Exception:
+        active = []
+    onboarded = len(active)
+    paid = sum(1 for s in active if _user_tier(s) in _PREMIUM_TIERS)
+    credits_actifs = sum(1 for s in active if _credit_balance(s) > 0)
+    try:
+        srcs = session_manager.sources_stats()
+    except Exception:
+        srcs = []
+    return {
+        "version": VERSION,
+        "users_total": users,
+        "onboarded": onboarded,
+        "payants_actifs": paid,
+        "users_avec_credits": credits_actifs,
+        "premium_codes": premium_store.stats(),
+        "credit_codes": credit_store.stats(),
+        "sources_marketing": srcs[:15],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
 
 def _apply_premium(session: dict, tier: str, days: int) -> str:
     """Active/prolonge un abonnement. Empile sur le temps restant si encore actif. Renvoie l'échéance ISO."""
@@ -757,6 +786,46 @@ def _resume_prefs(prefs):
             + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
 
+# ── Récap de profil ÉDITABLE : l'utilisateur corrige un champ en écrivant "champ: valeur" ──
+_PROFIL_EDIT_FIELDS = {
+    "objectif": ("pref", "objectif"),
+    "pays": ("pref", "pays_cibles"), "pays cibles": ("pref", "pays_cibles"), "pays-cibles": ("pref", "pays_cibles"),
+    "langue": ("pref", "langues_opportunite"), "langues": ("pref", "langues_opportunite"),
+    "niveau": ("pref", "niveau"),
+    "mots-cles": ("pref", "mots_cles"), "mots cles": ("pref", "mots_cles"),
+    "mots-clés": ("pref", "mots_cles"), "mots clés": ("pref", "mots_cles"), "motscles": ("pref", "mots_cles"),
+    "nationalite": ("pref", "nationalite"), "nationalité": ("pref", "nationalite"),
+    "type de poste": ("pref", "type_emploi"), "type_emploi": ("pref", "type_emploi"),
+    "nom": ("ident", "nom"),
+}
+
+def _try_profil_edit(session: dict, t: str):
+    """Détecte 'champ: valeur' et corrige le profil (utilisateur onboardé). Renvoie un message ou None."""
+    m = re.match(r"^\s*([A-Za-zÀ-ÿ'’\- ]{3,20})\s*[:=]\s*(.{1,120})$", (t or "").strip())
+    if not m:
+        return None
+    champ = re.sub(r"\s+", " ", m.group(1).strip().lower())
+    val = m.group(2).strip()
+    target = _PROFIL_EDIT_FIELDS.get(champ)
+    if not target:
+        return None
+    profil = session.get("profil", {}) or {}
+    kind, key = target
+    if kind == "pref":
+        prefs = profil.get("preferences", {}) or {}
+        prefs[key] = val
+        profil["preferences"] = prefs
+    else:
+        ident = profil.get("identite", {}) or {}
+        ident[key] = val
+        profil["identite"] = ident
+    session["profil"] = profil
+    try:
+        profile_store.save(session.get("user_id"), session)
+    except Exception:
+        pass
+    return f"✅ Mis à jour : *{champ}* → {_md_clean(val)}.\n_Tape /profil pour voir ton récap complet._"
+
 # ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
 _WELCOME_PITCH = (
     "🧭 *NexMove, c'est quoi ?*\n"
@@ -1010,6 +1079,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
+    profil = session.get("profil", {}) or {}   # disponible pour TOUS les handlers (évite UnboundLocalError)
 
     # Mode /simulation (coach d'entretien) : capte les réponses libres (les commandes passent normalement).
     if session.get("sim_mode") and not low.startswith("/"):
@@ -1843,7 +1913,11 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         profil = session.get("profil", {}) or {}
         if profil:
             ident = profil.get("identite", {})
-            msg = f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\nÉtape : {session.get('etape','—')}\n\n" + _resume_prefs(profil.get("preferences", {}) or {})
+            recap = _resume_prefs(profil.get("preferences", {}) or {}).replace(
+                "\n\nTout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.", "")
+            msg = (f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\n\n" + recap +
+                   "\n\n✏️ *Pour corriger*, écris `champ: valeur` — ex. `objectif: travailler`, "
+                   "`pays: Canada`, `langue: anglais`, `mots-clés: data, python`.")
         else:
             msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV (PDF, Word ou image)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -1983,6 +2057,27 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"credits_{credits}_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {credit_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/stats") or low.startswith("/dashboard") or low.startswith("/panel"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        d = _admin_stats()
+        pc = d["premium_codes"]; cc = d["credit_codes"]
+        lignes = [f"📊 *NexMove — tableau de bord* (v{d['version']})",
+                  f"👥 Utilisateurs : *{d['users_total']}* · onboardés : *{d['onboarded']}* · payants actifs : *{d['payants_actifs']}*",
+                  f"🎟️ Avec crédits : *{d['users_avec_credits']}*",
+                  f"💎 Codes Premium — non utilisés : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
+                  f"🎟️ Codes crédits — non utilisés : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
+        if d["sources_marketing"]:
+            lignes.append("\n*Top sources :*")
+            for r in d["sources_marketing"][:8]:
+                lignes.append(f"• `{r['source']}` — {r['total']} users · {r['paid']} payants")
+        lignes.append("\n_Détail attribution : /srcstats · Panel web : nexmove.blvckunlimited.space/admin.html_")
+        msg = "\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -2550,6 +2645,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         msg = await _preonboarding_reply(session, t)
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
+
+    # Onboardé : correction rapide du profil "champ: valeur" AVANT tout routage (sinon "pays: canada"
+    # serait capté comme l'intention /canada).
+    edited = _try_profil_edit(session, t)
+    if edited:
+        _push(session, "user", t); _push(session, "assistant", edited); session["derniere_activite"] = now
+        return edited, session
 
     # Utilisateur actif — langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
     # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.
@@ -4842,6 +4944,12 @@ async def _alert_admin(text: str) -> None:
                 await send_message(str(aid), text)
             except Exception as e:
                 logger.warning(f"alert admin {aid}: {e}")
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(_auth: bool = Depends(verify_api_key)):
+    """Agrégats de pilotage pour le panel web (protégé par X-API-Key). Pas de données personnelles."""
+    return _admin_stats()
 
 
 @app.get("/api/selfcheck")

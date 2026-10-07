@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.59 — Panel admin + récap de profil éditable + fix cron & /canada
+- **Panel web admin** : `web/admin.html` (hébergé sur la vitrine) interroge **`GET /api/admin/stats`**
+  (protégé par la clé admin) → KPIs (users, onboardés, payants, crédits), codes Premium/crédits,
+  attribution par source. Commande Telegram équivalente : **/stats** (admin).
+- **Récap de profil éditable** : /profil affiche un récap + l'utilisateur corrige en écrivant
+  `champ: valeur` (ex. `objectif: travailler`, `pays: Canada`, `mots-clés: data, python`).
+- **Fix** : le script `scripts/nex-cron.sh` utilisait le mauvais en-tête (`X-API-Key` → `X-Forge-Nex-Key`)
+  → les crons échouaient silencieusement. Corrigé + rapporte désormais le code HTTP.
+- **Fix bug** : `/canada` (et autres handlers) plantaient (UnboundLocalError `profil`) — `profil` est
+  maintenant disponible pour tous les handlers.
+
 ## v2.58 — Langage naturel étendu (ne plus se perdre dans les commandes)
 - Le routeur en langage naturel (utilisateurs onboardés) reconnaît désormais **toutes les commandes
   récentes** : écrire « quelles sont mes chances pour ce master », « entraîne-moi à l'entretien »,

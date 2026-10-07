@@ -1176,3 +1176,44 @@ def test_valid_intents_inclut_nouvelles_commandes():
     for c in ("chances", "compatibilite", "simulation", "creercv", "outils",
               "credits", "mescandidatures", "offres", "extraire"):
         assert c in main._VALID_INTENTS
+
+# ------------------ Panel / stats admin ------------------
+def test_admin_stats_structure():
+    d = main._admin_stats()
+    for k in ("version", "users_total", "onboarded", "payants_actifs",
+              "premium_codes", "credit_codes", "sources_marketing"):
+        assert k in d
+
+def test_cmd_stats_admin_gate(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/stats"))
+    assert "administrateur" in msg.lower()
+
+def test_cmd_stats_admin_ok(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"7"})
+    s = {"user_id": "7", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/stats"))
+    assert "tableau de bord" in msg.lower()
+
+def test_api_admin_stats_endpoint():
+    d = _run(main.admin_stats(_auth=True))
+    assert d.get("version") and "users_total" in d
+
+# ------------------ Récap de profil éditable ------------------
+def test_try_profil_edit(monkeypatch):
+    monkeypatch.setattr(main.profile_store, "save", lambda uid, s: "NEX-XXXXX")
+    s = {"user_id": "p", "profil": {"preferences": {"objectif": "etudier"}}}
+    r = main._try_profil_edit(s, "objectif: travailler")
+    assert r and s["profil"]["preferences"]["objectif"] == "travailler"
+
+def test_try_profil_edit_champ_inconnu():
+    assert main._try_profil_edit({"profil": {}}, "message: coucou") is None
+    assert main._try_profil_edit({"profil": {}}, "juste une phrase sans deux points") is None
+
+def test_profil_edit_via_message(monkeypatch):
+    monkeypatch.setattr(main.profile_store, "save", lambda uid, s: "NEX-XXXXX")
+    s = {"user_id": "pe", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "profil": {"preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "pays: Canada"))
+    assert s["profil"]["preferences"]["pays_cibles"] == "Canada" and "mis à jour" in msg.lower()
