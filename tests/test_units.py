@@ -1138,3 +1138,35 @@ def test_cmd_extraire_arme_le_mode():
     s = {"user_id": "e1", "chat_id": "1", "historique": [], "onboarding_complete": True}
     msg, s = _run(main.process_text_message(s, "/extraire"))
     assert s.get("tool_mode") == "extract" and "texte" in msg.lower()
+
+# ------------------ Crédits fongibles ------------------
+def test_credit_balance_et_quota_or_credit(monkeypatch):
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (False, 0))
+    s = {"user_id": "c", "credits": 2}
+    ok, used, _ = main._quota_or_credit(s, "cv", 8)
+    assert ok and used and s["credits"] == 1
+
+def test_quota_or_credit_sans_credit(monkeypatch):
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (False, 0))
+    s = {"user_id": "c", "credits": 0}
+    ok, used, _ = main._quota_or_credit(s, "cv", 8)
+    assert not ok and not used
+
+def test_quota_or_credit_dans_le_quota(monkeypatch):
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (True, 3))
+    s = {"user_id": "c", "credits": 5}
+    ok, used, r = main._quota_or_credit(s, "cv", 8)
+    assert ok and not used and s["credits"] == 5 and r == 3
+
+def test_cmd_credits_redeem(monkeypatch):
+    monkeypatch.setattr(main.credit_store, "redeem", lambda code, uid: {"ok": True, "credits": 10})
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    s = {"user_id": "cr", "chat_id": "1", "historique": [], "onboarding_complete": True, "credits": 2}
+    msg, s = _run(main.process_text_message(s, "/credits CRD-ABCDEFGH"))
+    assert s["credits"] == 12 and "12" in msg
+
+def test_cmd_gencredits_admin_gate(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/gencredits 10 5"))
+    assert "administrateur" in msg.lower()

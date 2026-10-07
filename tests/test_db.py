@@ -276,3 +276,15 @@ def test_candidature_update_statut(tmp_path, monkeypatch):
     rows = st.list_candidatures("u1")
     assert rows and rows[0][2] == "entretien"
     assert st.update_statut("u1", "inexistant", "envoyee") == 0
+
+
+def test_credit_codes_create_redeem(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    cs = db.CreditStore()
+    codes = cs.create_codes(10, 3)
+    assert len(codes) == 3 and all(c.startswith("CRD-") for c in codes)
+    r = cs.redeem(codes[0], "u1")
+    assert r["ok"] and r["credits"] == 10
+    assert cs.redeem(codes[0], "u2")["ok"] is False   # usage unique
+    assert cs.redeem("CRD-UNKNOWN", "u1")["ok"] is False
+    assert cs.stats().get("used") == 1

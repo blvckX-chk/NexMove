@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.56.0"
+VERSION         = "2.57.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -237,7 +237,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
-                profile_store, profile_quality, usage_store, premium_store, referral_store)
+                profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store)
 
 
 # (Embeddings/vision : voir llm.py — PR-B)
@@ -347,6 +347,28 @@ def _quota_bump(session: dict, feature: str) -> None:
             usage_store.bump(session.get("user_id"), feature)
         except Exception as e:
             logger.error(f"quota bump {feature}: {e}")
+
+# ── Crédits fongibles : 1 crédit = 1 action quand la limite gratuite est atteinte ──
+def _credit_balance(session: dict) -> int:
+    try:
+        return max(0, int(session.get("credits", 0) or 0))
+    except Exception:
+        return 0
+
+def _quota_or_credit(session: dict, feature: str, limit: int) -> tuple[bool, bool, int]:
+    """(autorisé, crédit_utilisé, restant_gratuit). Si la limite gratuite est atteinte mais que
+    l'utilisateur a des crédits fongibles, on en consomme 1 pour autoriser l'action."""
+    ok, restant = _quota_check(session, feature, limit)
+    if ok:
+        return True, False, restant
+    if _credit_balance(session) > 0:
+        session["credits"] = _credit_balance(session) - 1
+        return True, True, 0
+    return False, False, 0
+
+def _credit_note(session: dict, used_credit: bool) -> str:
+    return (f"\n\n🎟️ _1 crédit utilisé — il te reste {_credit_balance(session)} crédit·s._"
+            if used_credit else "")
 
 def _apply_premium(session: dict, tier: str, days: int) -> str:
     """Active/prolonge un abonnement. Empile sur le temps restant si encore actif. Renvoie l'échéance ISO."""
@@ -652,7 +674,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
-            "💎 /offres (abonnements) · /premium <code> (activer) · /monabo (mon statut)\n"
+            "💎 /offres · /premium <code> (abonnement) · 🎟️ /credits <code> (pack de crédits) · /monabo\n"
             "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
             "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
@@ -1081,10 +1103,10 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             msg = "📄 Fais d'abord /start et envoie ton CV — la simulation s'adapte à ton profil."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        ok, _ = _quota_check(session, "sim", FREE_SIM_DAILY)
+        ok, used_credit, _ = _quota_or_credit(session, "sim", FREE_SIM_DAILY)
         if not ok:
             msg = (_quota_exceeded_msg("les simulations d'entretien")
-                   + "\n\n💎 Les abonnés ont les simulations *illimitées* — tape /offres.")
+                   + "\n🎟️ Ou utilise des *crédits* : /credits.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         _quota_bump(session, "sim")
@@ -1236,9 +1258,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                    "Ex : `/compatibilite Développeur Python junior` · `/match Data analyst Cotonou`.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        ok, used_credit, reste = _quota_or_credit(session, "score", FREE_SCORE_DAILY)
         if not ok:
-            msg = _quota_exceeded_msg("les analyses de compatibilité") + "\n\n💎 Illimité en Premium — tape /offres."
+            msg = _quota_exceeded_msg("les analyses de compatibilité") + "\n🎟️ Ou utilise des *crédits* : /credits."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         try:
@@ -1268,7 +1290,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if r.get("conseil"):
                 msg += f"💡 {_md_clean(r['conseil'])}\n"
             msg += "\n▶️ /postuler <cible> (CV + lettre adaptés) · /formations <domaine> (combler les manques)."
-            if not _is_premium(session):
+            if used_credit:
+                msg += _credit_note(session, True)
+            elif not _is_premium(session):
                 msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui — illimité en Premium : /offres.)_"
         except Exception as e:
             logger.error(f"compatibilite: {e}"); msg = "😕 Analyse indisponible, réessaie."
@@ -1288,10 +1312,10 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                    "`/chances bourse Eiffel` · `/chances emploi data analyst Cotonou`.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        ok, used_credit, reste = _quota_or_credit(session, "score", FREE_SCORE_DAILY)
         if not ok:
             msg = (_quota_exceeded_msg("le score d'admissibilité")
-                   + "\n\n💎 Les abonnés ont le score *illimité* + le détail complet — tape /offres.")
+                   + "\n🎟️ Ou utilise des *crédits* : /credits.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         try:
@@ -1320,7 +1344,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if r.get("conseil"):
                 msg += f"\n💡 {_md_clean(r['conseil'])}\n"
             msg += "\n▶️ Prépare : /dossier <cible> · /postuler <cible> · /formations <domaine>."
-            if not _is_premium(session):
+            if used_credit:
+                msg += _credit_note(session, True)
+            elif not _is_premium(session):
                 msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui — illimité en Premium : /offres.)_"
         except Exception as e:
             logger.error(f"chances: {e}"); msg = "😕 Estimation indisponible, réessaie."
@@ -1819,6 +1845,31 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/credits") or low.startswith("/credit") or low.startswith("/mescredits"):
+        parts = t.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else ""
+        if not code:
+            bal = _credit_balance(session)
+            msg = (f"🎟️ *Tes crédits : {bal}*\n"
+                   "1 crédit = 1 action (analyse CV, score, simulation…) quand ta *limite gratuite du jour* est "
+                   "atteinte. Les crédits *ne périment pas*.\n\n"
+                   "➕ *Pour en obtenir* : achète un pack → tu reçois un code → tape */credits TON-CODE*.\n"
+                   "💡 Tape /offres pour voir les *packs de crédits* (ou l'abonnement illimité).")
+        else:
+            r = credit_store.redeem(code, session.get("user_id"))
+            if not r.get("ok"):
+                raison = {"introuvable": "ce code n'existe pas", "déjà utilisé": "ce code a déjà été utilisé"}.get(
+                    r.get("reason"), r.get("reason", "code invalide"))
+                msg = f"❌ Activation impossible : {raison}. Vérifie le code (format CRD-XXXXXXXX) ou /contact."
+            else:
+                n = int(r.get("credits", 0))
+                session["credits"] = _credit_balance(session) + n
+                session_manager.set(session.get("user_id"), session)
+                msg = (f"✅ *+{n} crédits* ajoutés ! 🎟️\nNouveau solde : *{_credit_balance(session)}* crédits.\n"
+                       "Ils se déclenchent automatiquement dès que tu dépasses une limite gratuite.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/premium") or low.startswith("/activer") or low.startswith("/code"):
         parts = t.split(maxsplit=1)
         code = parts[1].strip() if len(parts) > 1 else ""
@@ -1855,6 +1906,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         else:
             msg = ("🆓 *Statut : Gratuit.*\nTu profites des bases (1 CV/jour, veille à la demande, 1 alerte…).\n\n"
                    "💎 Passe en Premium pour l'illimité : tape /offres, puis active ton code avec /premium.")
+        msg += f"\n🎟️ Crédits : *{_credit_balance(session)}* (1 crédit = 1 action hors quota — /credits)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1862,8 +1914,10 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         msg = ("💎 *Passe au niveau supérieur*\n\n"
                "*Premium* — CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
                "*Pro* — tout Premium + sources premium, alertes illimitées, relecture.\n\n"
-               "👉 Récupère ton code d'activation, puis tape */premium TON-CODE*.\n"
-               "Besoin d'aide pour t'abonner ? Tape /contact.")
+               "🎟️ *Pas envie d'abonnement ?* Prends un *pack de crédits* : 1 crédit = 1 action (CV, score, "
+               "simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas → /credits.\n\n"
+               "👉 Récupère ton code, puis tape */premium TON-CODE* (abonnement) ou */credits TON-CODE* (pack).\n"
+               "Besoin d'aide ? Tape /contact.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1901,6 +1955,30 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/gencredits"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split()
+        credits = int(re.sub(r"[^0-9]", "", parts[1]) or 0) if len(parts) > 1 else 0
+        count = int(re.sub(r"[^0-9]", "", parts[2]) or 0) if len(parts) > 2 else 0
+        if credits <= 0 or not (1 <= count <= 500):
+            msg = ("🎟️ *Génération de codes de crédits* (admin)\n`/gencredits <crédits_par_code> <nombre>`\n"
+                   "Ex : `/gencredits 10 50` → 50 codes de 10 crédits.\n"
+                   f"État actuel : {credit_store.stats()}")
+        else:
+            codes = credit_store.create_codes(credits, count, batch=now[:10])
+            entete = f"{len(codes)} codes de {credits} crédits :"
+            if len(codes) <= 25:
+                msg = f"✅ {entete}\n" + "\n".join(f"`{c}`" for c in codes)
+            else:
+                data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
+                await deliver_file(session, f"credits_{credits}_{now[:10]}.txt", data, f"🧾 {entete}")
+                msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {credit_store.stats()}"
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -2093,6 +2171,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""), r.get("deadline_iso", ""))
                 msg += ("📄 CV + lettre/projet d'études envoyés (PDF + 📝 Word modifiable). Dossier ajouté à ton suivi (/status).\n"
                         "⚠️ _Vérifie les exigences exactes sur le site officiel._")
+                up = _upsell_line(session, "success")
+                if up:
+                    msg += "\n\n" + up
             except Exception as e:
                 logger.error(f"dossier: {e}")
                 msg = "😕 La préparation du dossier a échoué, réessaie."
@@ -2437,6 +2518,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                         "_Garde-le : tape /moi <code> depuis WhatsApp ou un autre appareil pour retrouver ton profil._")
             msg += ("\n\n▶️ *La suite :* /veille (plus d'offres) · /campusfrance (études en France) · "
                     "/ecoles · /canada · /menu.\n_Je t'enverrai chaque jour les meilleures offres liées à ton profil._")
+            up = _upsell_line(session, "success")
+            if up:
+                msg += "\n\n" + up
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
         else:
             session["etape"] = "PREFERENCES"
@@ -3261,10 +3345,13 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         await deliver_text(session, "❌ Fichier illisible ou trop lourd (max 20 Mo).")
         return
     # Quota gratuit : l'analyse de CV (LLM/vision) est coûteuse ; l'admin est illimité.
-    ok, _ = _quota_check(session, "cv", FREE_CV_DAILY)
+    ok, used_credit, _ = _quota_or_credit(session, "cv", FREE_CV_DAILY)
     if not ok:
-        await deliver_text(session, _quota_exceeded_msg("l'analyse de CV"))
+        await deliver_text(session, _quota_exceeded_msg("l'analyse de CV") + "\n🎟️ Ou utilise des *crédits* : /credits.")
         return
+    if used_credit:
+        session_manager.set(uid, session)   # persiste le débit du crédit
+        await deliver_text(session, "🎟️ Limite gratuite atteinte — j'utilise *1 crédit* pour analyser ton CV.")
     fn = (filename or "cv").lower()
     is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
     is_docx = fn.endswith((".docx", ".dotx"))
@@ -4526,6 +4613,9 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         msg = (entete + "━━━━━━━━━━━━━━━━━━\n\n"
                + "\n\n".join(lignes)
                + "\n\n_/postuler <titre> pour ton CV + lettre · 👍/👎 pour affiner._")
+        up = _upsell_line(s, "generic")
+        if up:
+            msg += "\n\n" + up
         if await deliver_text(s, msg):
             opp_store.mark_notified(ids)
             notified += 1

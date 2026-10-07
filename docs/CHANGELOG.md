@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.57 — Crédits fongibles (monétisation flexible) + upsell branché partout
+- **Packs de crédits fongibles** : 1 crédit = 1 action (CV, score, simulation…) quand la limite gratuite
+  du jour est atteinte. Codes **CRD-XXXXXXXX** à usage unique (vendus sur Chariow), activés via
+  **/credits <code>** ; solde via **/credits**. Génération admin : **/gencredits <crédits> <nombre>**.
+  Les crédits se déclenchent automatiquement (CV, /compatibilite, /chances, /simulation) et ne périment pas.
+- **Upsell branché** aussi sur : fin d'onboarding, dossier généré (/postuler), pied du digest quotidien.
+- /offres et /monabo exposent les crédits ; CreditStore (table credit_codes).
+
 ## v2.56 — Nouveaux outils + upsell personnalisé selon le profil
 - **5 nouveaux outils** (sans dépendance) : **/extraire** (texte d'un PDF/scan/photo, OCR),
   **/compresserimage** (alléger une photo), **/enimages** (PDF → PNG en .zip),
