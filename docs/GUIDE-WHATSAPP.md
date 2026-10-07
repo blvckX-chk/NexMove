@@ -104,12 +104,12 @@ Meta va **appeler ton API** à chaque message reçu. Il faut lui donner ton URL 
 tunnel nommé — voir `docs/DOMAINE-ET-TUNNEL.md`).
 
 - Menu gauche → **WhatsApp** → **Configuration** → **Webhook** → **Edit**.
-- **Callback URL** : `https://api.nexmove.blvckunlimited.space/webhook/whatsapp`
+- **Callback URL** : `https://api-nexmove.blvckunlimited.space/webhook/whatsapp`
 - **Verify token** : `nexmove_verify` (exactement la même valeur que `WHATSAPP_VERIFY_TOKEN` dans `.env`)
 - Clique **Verify and save**.
 
 Si tu vois « Verified ✓ » → parfait. Sinon → **check `docker logs forge-nex-api | tail`** et vérifie que
-`https://api.nexmove.blvckunlimited.space/health` répond bien de l'extérieur.
+`https://api-nexmove.blvckunlimited.space/health` répond bien de l'extérieur.
 
 Puis, juste en dessous, **Webhook fields** → clique **Manage** et **coche** :
 - `messages` ✅ (obligatoire — c'est là que passent les vrais messages)

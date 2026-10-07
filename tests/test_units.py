@@ -901,3 +901,164 @@ def test_cmd_compatibilite_calcule(monkeypatch):
     main._apply_premium(s, "premium", 30)
     msg, s = _run(main.process_text_message(s, "/compatibilite Dev Python"))
     assert "84/100" in msg and "python" in msg.lower()
+
+# ------------------ Sources d'offres : fetchers télétravail (A1) ------------------
+class _FakeResp:
+    def __init__(self, status=200, data=None):
+        self.status_code = status; self._data = data; self.text = ""
+    def json(self):
+        return self._data
+
+class _FakeClient:
+    def __init__(self, data, status=200):
+        self._data = data; self._status = status
+    async def get(self, *a, **k):
+        return _FakeResp(self._status, self._data)
+
+def _patch_http(monkeypatch, data, status=200):
+    monkeypatch.setattr(main, "http", lambda: _FakeClient(data, status))
+
+def test_fetch_remoteok_parse(monkeypatch):
+    data = [{"legal": "notice, pas une offre"},
+            {"position": "Dev Python", "company": "Acme", "url": "https://x/1",
+             "description": "<p>Great job</p>", "tags": ["python"], "date": "2026-10-01"}]
+    _patch_http(monkeypatch, data)
+    out = _run(main.fetch_remoteok())
+    assert len(out) == 1
+    assert out[0]["url"] == "https://x/1" and out[0]["type"] == "emploi" and out[0]["scope"] == "both"
+    assert "Dev Python" in out[0]["titre"] and "<" not in out[0]["resume"]
+
+def test_fetch_remotive_parse(monkeypatch):
+    data = {"jobs": [{"title": "Data Analyst", "company_name": "Beta", "url": "https://y/2",
+                      "description": "<b>Nice</b>", "publication_date": "2026-09-30"}]}
+    _patch_http(monkeypatch, data)
+    out = _run(main.fetch_remotive())
+    assert len(out) == 1 and out[0]["url"] == "https://y/2" and "Data Analyst" in out[0]["titre"]
+
+def test_fetch_jobicy_parse(monkeypatch):
+    data = {"jobs": [{"jobTitle": "Product Manager", "companyName": "Gamma", "url": "https://z/3",
+                      "jobExcerpt": "Lead the roadmap", "pubDate": "2026-09-29"}]}
+    _patch_http(monkeypatch, data)
+    out = _run(main.fetch_jobicy())
+    assert len(out) == 1 and out[0]["url"] == "https://z/3" and "Product Manager" in out[0]["titre"]
+
+def test_fetch_remote_http_error_renvoie_vide(monkeypatch):
+    _patch_http(monkeypatch, None, status=500)
+    assert _run(main.fetch_remoteok()) == []
+    assert _run(main.fetch_remotive()) == []
+    assert _run(main.fetch_jobicy()) == []
+
+def test_adzuna_countries_elargi():
+    # Le plafond est désormais 8 pays (au lieu de 4).
+    assert len(main.ADZUNA_COUNTRIES) >= 3 and len(main.ADZUNA_COUNTRIES) <= 8
+
+# ------------------ A3 : flux bourses/mobilité ------------------
+def test_feeds_bourses_mobilite_presents():
+    feeds = " ".join(main.SOURCE_FEEDS)
+    assert "scholarship-positions.com" in feeds
+    assert "opportunitiescircle.com" in feeds
+    assert "scholarshipsads.com" in feeds
+
+# ------------------ A4 : sources locales / régionales ------------------
+def test_sources_locales_voisins_ajoutes():
+    assert "Ghana" in main.LOCAL_JOB_SOURCES and "Nigéria" in main.LOCAL_JOB_SOURCES
+    reg = " ".join(main._REGIONAL_JOB_SOURCES).lower()
+    assert "indeed" in reg and "linkedin" in reg and "jobberman" in reg
+
+def test_local_sources_txt_benin_inclut_regional():
+    txt = main._local_sources_txt("Bénin")
+    assert "emploibenin.com" in txt and "Indeed" in txt
+
+def test_local_sources_extra_env(monkeypatch):
+    monkeypatch.setenv("LOCAL_SOURCES_EXTRA_BENIN", "monportail.bj,autre.bj")
+    txt = main._local_sources_txt("Bénin")
+    assert "monportail.bj" in txt and "autre.bj" in txt
+
+# ------------------ B1 : pré-remplissage des préférences depuis le CV ------------------
+def test_prefill_prefs_from_cv():
+    s = {"profil": {"identite": {"langues": ["français natif", "anglais B2"]},
+                    "formation": [{"domaine": "Informatique"}],
+                    "competences": {"techniques": ["Python", "SQL"], "outils": ["Git"]}}}
+    filled = main._prefill_prefs_from_cv(s)
+    prefs = s["profil"]["preferences"]
+    assert "mots_cles" in filled and "langues_opportunite" in filled
+    assert "Python" in prefs["mots_cles"] and "Informatique" in prefs["mots_cles"]
+    assert prefs["langues_opportunite"] == "les deux"
+    # le plan d'onboarding saute les champs déjà pré-remplis
+    plan = main._build_pref_plan(prefs)
+    nxt = next((f for f in plan if not prefs.get(f)), None)
+    assert nxt not in ("mots_cles", "langues_opportunite")
+
+def test_prefill_prefs_cv_vide_ne_remplit_rien():
+    s = {"profil": {"identite": {}, "formation": [], "competences": {}}}
+    assert main._prefill_prefs_from_cv(s) == []
+
+def test_prefill_prefs_langue_fr_seule():
+    s = {"profil": {"identite": {"langues": ["français courant"]}, "competences": {"techniques": ["Vente"]}}}
+    main._prefill_prefs_from_cv(s)
+    assert s["profil"]["preferences"]["langues_opportunite"] == "français"
+
+# ------------------ B2 : opt-out /stop + relances ------------------
+def test_cmd_stop_opt_out():
+    s = {"user_id": "st1", "chat_id": "1", "etape": "ACTIF", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/stop"))
+    assert s.get("relances_off") is True and s["notif"]["enabled"] is False
+    assert "plus" in msg.lower()
+
+def test_relances_cible_les_bons(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
+    vieux = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
+    recent = datetime.now(timezone.utc).isoformat()
+    sess = [
+        {"user_id": "a", "chat_id": "1", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux},
+        {"user_id": "b", "chat_id": "2", "onboarding_complete": True, "derniere_activite": vieux},
+        {"user_id": "c", "chat_id": "3", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux, "relances_off": True},
+        {"user_id": "d", "chat_id": "4", "etape": "WELCOME", "onboarding_complete": False, "derniere_activite": vieux},
+        {"user_id": "e", "chat_id": "5", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": recent},
+        {"user_id": "f", "chat_id": "6", "channel": "whatsapp", "cv_parsed": True, "onboarding_complete": False, "derniere_activite": vieux},
+    ]
+    sent = []
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    async def _fake_deliver(s, text, **k):
+        sent.append(s["user_id"]); return True
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    res = _run(main.relances(_auth=True))
+    # a,b éligibles (free 72h, inactif 100h) ; c opt-out ; d non engagé ; e actif ; f WhatsApp exclu
+    assert set(sent) == {"a", "b"} and res["relances_envoyees"] == 2
+
+def test_relances_respecte_la_fenetre(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
+    vieux = (datetime.now(timezone.utc) - timedelta(hours=100)).isoformat()
+    recent_relance = (datetime.now(timezone.utc) - timedelta(hours=10)).isoformat()
+    sess = [{"user_id": "a", "chat_id": "1", "cv_parsed": True, "onboarding_complete": False,
+             "derniere_activite": vieux, "relance_sent": recent_relance}]   # relancé il y a 10h < 72h
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
+    async def _fake_deliver(s, text, **k):
+        return True
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    res = _run(main.relances(_auth=True))
+    assert res["relances_envoyees"] == 0
+
+def test_relances_cadence_par_palier(monkeypatch):
+    from datetime import datetime, timezone, timedelta
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
+    inactif_30h = (datetime.now(timezone.utc) - timedelta(hours=30)).isoformat()
+    futur = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+    sess = [
+        # premium (24h) inactif 30h -> éligible
+        {"user_id": "prem", "chat_id": "1", "onboarding_complete": True, "derniere_activite": inactif_30h,
+         "premium_tier": "premium", "premium_until": futur},
+        # gratuit (72h) inactif 30h -> PAS encore éligible
+        {"user_id": "free", "chat_id": "2", "onboarding_complete": True, "derniere_activite": inactif_30h},
+    ]
+    sent = []
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [dict(x) for x in sess])
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    async def _fake_deliver(s, text, **k):
+        sent.append(s["user_id"]); return True
+    monkeypatch.setattr(main, "deliver_text", _fake_deliver)
+    _run(main.relances(_auth=True))
+    assert sent == ["prem"]

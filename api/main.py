@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.50.0"
+VERSION         = "2.54.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -161,7 +161,7 @@ CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / pr
 ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
 # Plusieurs pays possibles (séparés par des virgules) : ex "fr,ca,be". Doivent être supportés par Adzuna.
-ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr").split(",") if c.strip()][:4]
+ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr,ca,be,gb,de").split(",") if c.strip()][:8]
 # Requêtes de secours si aucun mot-clé utilisateur n'est disponible.
 ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
 # Veille : par défaut, la collecte NE lance PAS un appel LLM (osint Tavily) par utilisateur — sinon les
@@ -499,6 +499,46 @@ def _build_pref_plan(prefs: dict) -> list[str]:
     plan += ["langues_opportunite", "niveau", "mots_cles"]
     return plan
 
+# B1 — pré-remplissage des préférences à partir du CV (réduit le nombre de questions).
+_PREF_LABELS = {"mots_cles": "tes domaines/compétences", "langues_opportunite": "ta langue de travail"}
+
+def _prefill_prefs_from_cv(session: dict) -> list[str]:
+    """Déduit certaines préférences du CV analysé (compétences, domaine, langues) pour SAUTER les
+    questions correspondantes à l'onboarding. Renvoie la liste des champs pré-remplis."""
+    profil = session.get("profil", {}) or {}
+    comp = profil.get("competences", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    filled = []
+    # mots_cles <- compétences techniques/outils + domaine de la formation la plus récente
+    if not prefs.get("mots_cles"):
+        kws = []
+        for k in ("techniques", "outils"):
+            kws += [c for c in (comp.get(k) or []) if isinstance(c, str) and c.strip()]
+        form = profil.get("formation") or []
+        dom = (form[0].get("domaine") if form and isinstance(form[0], dict) else "") or ""
+        if dom:
+            kws.append(dom)
+        kws = [k.strip() for k in kws if k and len(k.strip()) > 1][:5]
+        if kws:
+            prefs["mots_cles"] = ", ".join(dict.fromkeys(kws))   # dédup, ordre conservé
+            filled.append("mots_cles")
+    # langues_opportunite <- langues déclarées dans le CV
+    if not prefs.get("langues_opportunite"):
+        langs = " ".join(str(l) for l in ((profil.get("identite") or {}).get("langues") or [])).lower()
+        if langs:
+            has_en = any(x in langs for x in ("angl", "english"))
+            has_fr = any(x in langs for x in ("franç", "franc", "french"))
+            if has_en and has_fr:
+                prefs["langues_opportunite"] = "les deux"; filled.append("langues_opportunite")
+            elif has_en:
+                prefs["langues_opportunite"] = "anglais"; filled.append("langues_opportunite")
+            elif has_fr:
+                prefs["langues_opportunite"] = "français"; filled.append("langues_opportunite")
+    if filled:
+        profil["preferences"] = prefs
+        session["profil"] = profil
+    return filled
+
 def _ask_pref(session: dict, field: str) -> str:
     """Renvoie l'intitulé de la question `field` et arme les boutons de choix (si fermée)."""
     q, choix = PREF_FIELDS[field]
@@ -668,6 +708,9 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "- Confidentialité/RGPD : ses données restent confidentielles, servent uniquement à l'accompagner, "
         "ne sont pas revendues ; il peut TOUT effacer quand il veut avec /supprimer (droit à l'effacement).\n"
         "- Pour démarrer : envoyer son CV (PDF, Word ou image), ou /creercv s'il n'en a pas.\n"
+        "DÉSAMBIGUÏSATION : si son intention est VAGUE (ex. « je veux partir », « aide-moi », « je cherche "
+        "quelque chose »), ne suppose pas — pose UNE seule question de clarification précise et utile "
+        "(études ou travail ? quel pays ou objectif ?) avant d'aller plus loin.\n"
         "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
         "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON)."
     )
@@ -1502,6 +1545,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         if _embeddings_available(): flags.append("Sémantique")
         if GEMINI_API_KEY: flags.append("Vision")
         if ADZUNA_APP_ID and ADZUNA_APP_KEY: flags.append("Adzuna")
+        flags.append("Remote (RemoteOK/Remotive/Jobicy)")
         msg = (f"🧭 *NexMove — version {VERSION}*\n"
                f"🤖 IA : {prov}\n"
                f"🧩 Modules : {' · '.join(flags) or 'base'}\n"
@@ -2060,8 +2104,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/stop") or low in ("stop", "stop relances", "arreter", "arrêter", "unsubscribe"):
+        # Opt-out global des messages proactifs (relances + digest) — conformité.
+        session["relances_off"] = True
+        n = _get_notif(session); n["enabled"] = False; session["notif"] = n
+        msg = ("🔕 *C'est noté.* Je ne t'enverrai plus de rappels ni de messages automatiques.\n"
+               "Tu peux toujours m'écrire quand tu veux. Pour réactiver les offres du jour : /rappels on.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/rappels") or low.startswith("/notifications"):
         n = _get_notif(session)
+        # Réactiver les notifications lève aussi l'opt-out global des relances.
+        if session.get("relances_off") and len(t.split(maxsplit=1)) > 1 and t.split(maxsplit=1)[1].strip().lower() in ("on", "oui", "activer", "active", "1"):
+            session["relances_off"] = False
         sp = t.split(maxsplit=1)
         arg = sp[1].strip().lower() if len(sp) > 1 else ""
         if arg in ("on", "oui", "activer", "active", "1"):
@@ -2119,7 +2175,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"
+        filled = _prefill_prefs_from_cv(session)   # B1 : moins de questions grâce au CV
         q = _ask_pref(session, "objectif")
+        if filled:
+            q = ("📎 J'ai déjà repéré *" + "* et *".join(_PREF_LABELS.get(f, f) for f in filled) +
+                 "* dans ton CV (tu pourras corriger à la fin).\n\n") + q
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
 
@@ -3430,6 +3490,10 @@ SOURCE_CATALOG = [
     {"url": "https://www.opportunitiesforyouth.org/feed/",     "type": "fellowship", "scope": "both"},
     {"url": "https://youthop.com/feed/",                       "type": "fellowship", "scope": "both"},
     {"url": "https://mladiinfo.eu/feed/",                      "type": "bourse",     "scope": "intl"},
+    # Bourses & mobilité internationales (études France/Europe/Canada) — A3
+    {"url": "https://scholarship-positions.com/feed/",         "type": "bourse",     "scope": "intl"},
+    {"url": "https://www.opportunitiescircle.com/feed/",       "type": "bourse",     "scope": "both"},
+    {"url": "https://www.scholarshipsads.com/feed/",           "type": "bourse",     "scope": "both"},
     # Humanitaire / ONG (emplois & consultances) — activable via ENABLE_RELIEFWEB=1
     {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
      "active_env": "ENABLE_RELIEFWEB"},
@@ -3602,6 +3666,80 @@ async def fetch_arbeitnow() -> list:
         logger.error(f"arbeitnow: {e}")
         return []
 
+async def fetch_remoteok() -> list:
+    """RemoteOK — offres 100% télétravail, international, sans clé API. https://remoteok.com/api
+    Pertinent pour un candidat local qui veut travailler pour l'étranger sans partir (scope=both)."""
+    try:
+        r = await http().get("https://remoteok.com/api", headers={"User-Agent": _BROWSER_UA},
+                             timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        out = []
+        for j in (data if isinstance(data, list) else [])[:60]:
+            if not isinstance(j, dict) or not j.get("position"):
+                continue  # le 1er élément est une mention légale, pas une offre
+            titre = (j.get("position") or "").strip()
+            comp = (j.get("company") or "").strip()
+            url = (j.get("url") or j.get("apply_url") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            tags = ", ".join((j.get("tags") or [])[:5])
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": (desc or tags)[:300], "type": "emploi", "scope": "both",
+                            "date": (j.get("date") or "")[:10]})
+        return out[:30]
+    except Exception as e:
+        logger.error(f"remoteok: {e}")
+        return []
+
+async def fetch_remotive() -> list:
+    """Remotive — offres télétravail (tech & non-tech), sans clé API. https://remotive.com/api/remote-jobs"""
+    try:
+        r = await http().get("https://remotive.com/api/remote-jobs", params={"limit": 40},
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("jobs") or [])[:40]:
+            titre = (j.get("title") or "").strip()
+            comp = (j.get("company_name") or "").strip()
+            url = (j.get("url") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": desc, "type": "emploi", "scope": "both",
+                            "date": (j.get("publication_date") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"remotive: {e}")
+        return []
+
+async def fetch_jobicy() -> list:
+    """Jobicy — offres télétravail internationales, sans clé API. https://jobicy.com/api/v2/remote-jobs"""
+    try:
+        r = await http().get("https://jobicy.com/api/v2/remote-jobs", params={"count": 40},
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("jobs") or [])[:40]:
+            titre = (j.get("jobTitle") or "").strip()
+            comp = (j.get("companyName") or "").strip()
+            url = (j.get("url") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("jobExcerpt") or j.get("jobDescription") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": desc, "type": "emploi", "scope": "both",
+                            "date": (j.get("pubDate") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"jobicy: {e}")
+        return []
+
 async def fetch_adzuna(query: str, country: str = "fr") -> list:
     """API emploi Adzuna (clés gratuites). Ne fait rien si non configurée."""
     if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
@@ -3758,11 +3896,16 @@ def _collect_user_queries(limit: int = 8) -> list:
     return qs or ADZUNA_QUERIES
 
 async def ingest_structured() -> int:
-    """Ingère les offres d'emploi structurées (arbeitnow + Adzuna si configuré + EURAXESS) dans le pool."""
+    """Ingère les offres d'emploi structurées (arbeitnow + RemoteOK + Remotive + Jobicy
+    + Adzuna si configuré + EURAXESS) dans le pool."""
     total = 0
-    for it in await fetch_arbeitnow():
-        if opp_store.add_source(it):
-            total += 1
+    for fetch in (fetch_arbeitnow, fetch_remoteok, fetch_remotive, fetch_jobicy):
+        try:
+            for it in await fetch():
+                if opp_store.add_source(it):
+                    total += 1
+        except Exception as e:
+            logger.error(f"ingest {getattr(fetch, '__name__', '?')}: {e}")
     if ADZUNA_APP_ID and ADZUNA_APP_KEY:
         queries = _collect_user_queries()          # requêtes adaptées aux mots-clés réels
         for country in (ADZUNA_COUNTRIES or ["fr"]):
@@ -3808,10 +3951,14 @@ LOCAL_JOB_SOURCES = {
     "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com"],
     "Mali": ["malipages.com", "novojob.com"],
     "Niger": ["nigeremploi.com"],
+    # Voisins (diaspora / mobilité régionale)
+    "Ghana": ["jobberman.com.gh", "ghanajob.com"],
+    "Nigéria": ["jobberman.com", "myjobmag.com", "hotnigerianjobs.com"],
 }
-# Sources régionales / panafricaines (servent tous les pays d'Afrique de l'Ouest).
+# Sources régionales / panafricaines + grandes plateformes (servent tous les pays d'Afrique de l'Ouest).
 _REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "AfricaWork",
-                         "ReliefWeb (ONG/humanitaire)", "Emploi.org"]
+                         "ReliefWeb (ONG/humanitaire)", "Emploi.org",
+                         "Indeed (fr.indeed.com)", "LinkedIn (linkedin.com/jobs)", "Jobberman", "Glassdoor"]
 
 _ACCENTS = str.maketrans("àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ", "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
 
@@ -4161,6 +4308,59 @@ async def notify(_auth: bool = Depends(verify_api_key)):
     logger.info(f"[notify] users_notifies={notified} rappels={rappels}")
     return {"ok": True, "users_notifies": notified, "rappels_deadline": rappels}
 
+# B2 — cadence des relances par palier (heures d'inactivité avant une relance). Admin : jamais.
+_RELANCE_HOURS = {"premium": 24, "pro": 24, "vip": 48, "free": 72}
+
+@app.post("/api/relances")
+async def relances(_auth: bool = Depends(verify_api_key)):
+    """B2 — Relances des utilisateurs décrochés/inactifs, cadence selon le palier (_RELANCE_HOURS).
+    Telegram UNIQUEMENT (gratuit) ; WhatsApp exclu (coûts/templates). Opt-out via /stop.
+    À appeler ~1x/jour (cron) — la fenêtre par palier évite le spam."""
+    now = datetime.now(timezone.utc)
+    sent = 0
+    for s in session_manager.list_all():
+        if s.get("relances_off"):
+            continue
+        if (s.get("channel") or "telegram") != "telegram":
+            continue  # proactif payant hors Telegram -> on n'envoie pas
+        if not _valid_id(s.get("chat_id")):
+            continue
+        tier = _user_tier(s)
+        if tier == "admin":
+            continue
+        interval = _RELANCE_HOURS.get(tier, 72)
+        seuil = now - timedelta(hours=interval)
+        da = s.get("derniere_activite") or s.get("created_at")
+        try:
+            last = datetime.fromisoformat(da) if da else None
+        except Exception:
+            last = None
+        if not last or last > seuil:
+            continue  # actif dans la fenêtre du palier
+        rs = s.get("relance_sent")
+        try:
+            rsdt = datetime.fromisoformat(rs) if rs else None
+        except Exception:
+            rsdt = None
+        if rsdt and rsdt > seuil:
+            continue  # déjà relancé dans la fenêtre du palier
+        complete = s.get("onboarding_complete")
+        started = bool(s.get("cv_parsed") or s.get("etape") in ("CV_RECU", "PREFERENCES", "PREF_TYPE_EMPLOI", "CONFIRMATION"))
+        if complete:
+            msg = ("👋 *Ça fait un moment !* De nouvelles opportunités correspondent peut-être à ton profil.\n"
+                   "Tape /veille pour voir les dernières, ou /menu pour explorer.\n\n_/stop pour ne plus recevoir de rappels._")
+        elif started:
+            msg = ("👋 Tu avais commencé ton profil sur *NexMove* mais on ne l'a pas terminé.\n"
+                   "Reprends en 1 min : envoie ton *CV* (PDF, Word ou image) ou tape /creercv.\n\n_/stop pour ne plus recevoir de rappels._")
+        else:
+            continue  # juste un /start sans engagement -> pas de relance
+        if await deliver_text(s, msg):
+            s["relance_sent"] = now.isoformat()
+            session_manager.set(s.get("user_id"), s)
+            sent += 1
+    logger.info(f"[relances] envoyees={sent}")
+    return {"ok": True, "relances_envoyees": sent}
+
 @app.get("/api/session/{user_id}")
 async def get_session(user_id: str, _auth: bool = Depends(verify_api_key)):
     session = session_manager.get(user_id)
@@ -4268,7 +4468,7 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "remote_sources": ["remoteok", "remotive", "jobicy"], "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 async def _check_health() -> dict:

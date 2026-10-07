@@ -2,6 +2,36 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.54 — Conversation plus fine + relances intelligentes
+- **B3 — Désambiguïsation** : face à une demande vague (« je veux partir », « aide-moi »), le bot pose
+  UNE question de clarification ciblée au lieu de supposer.
+- **B2 — Relances intelligentes** : relance les utilisateurs décrochés (CV envoyé mais onboarding non fini)
+  ou inactifs, **cadence par palier** (Premium/Pro 24 h · VIP 48 h · Gratuit 72 h · Admin jamais).
+  **Telegram uniquement** (gratuit ; WhatsApp exclu car messages proactifs >24 h = templates payants).
+  Endpoint `POST /api/relances` (cron ~1x/jour) ; **opt-out /stop** (coupe relances + digest).
+  Script `scripts/nex-cron.sh` + lignes crontab (collect/notify/relances).
+
+## v2.53 — Onboarding plus court (profil pré-rempli depuis le CV)
+- **B1 — Moins de questions** : après l'analyse du CV, NexMove **déduit automatiquement** tes
+  domaines/compétences (mots-clés) et ta langue de travail → il **saute** ces questions à l'onboarding
+  (friction réduite = meilleure conversion). Les valeurs restent **modifiables** à l'étape de confirmation.
+
+## v2.52 — Bourses & mobilité + sources locales/régionales enrichies
+- **A3 — Flux bourses/mobilité** ajoutés à la veille (RSS) : scholarship-positions, OpportunitiesCircle,
+  ScholarshipsAds → plus de bourses d'études (France/Europe/Canada) pour le persona Campus France.
+- **A4 — Sources locales/régionales** : grandes plateformes réelles ajoutées (Indeed fr, LinkedIn,
+  Jobberman, Glassdoor) + voisins **Ghana** et **Nigéria** (diaspora/mobilité régionale). Nouveau réglage
+  `LOCAL_SOURCES_EXTRA_<PAYS>` dans `.env` pour ajouter tes portails locaux exacts (ex. Bénin) sans toucher
+  au code.
+
+## v2.51 — Sources d'offres enrichies (télétravail international + Adzuna élargi)
+- **3 nouvelles sources d'emploi sans clé API** ajoutées à la veille : **RemoteOK**, **Remotive**,
+  **Jobicy** → de vraies offres **100 % télétravail international**, idéales pour un candidat local qui
+  veut travailler pour l'étranger sans partir (scope `both`, matché par profil).
+- **Adzuna élargi** : pays par défaut `fr,ca,be,gb,de` (au lieu de `fr,ca,be`), plafond porté à 8 pays.
+- Exposé dans `/version` et `/health` (`remote_sources`). Ingestion robuste (une source en échec ne bloque
+  plus les autres).
+
 ## v2.50 — Identité validée + WhatsApp fiabilisé + attribution des sources
 - **Identité de marque appliquée** : baseline validée « *Études, emploi, ici ou ailleurs : l'assistant
   pour ton prochain move.* » intégrée à l'accueil (`/start`) et au pitch d'ouverture. Doc de référence :
