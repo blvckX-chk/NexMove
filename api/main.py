@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.54.1"
+VERSION         = "2.55.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -367,8 +367,48 @@ def _apply_premium(session: dict, tier: str, days: int) -> str:
 
 def _quota_exceeded_msg(feature_label: str) -> str:
     return (f"🚦 Tu as atteint ta *limite gratuite du jour* pour {feature_label}.\n\n"
-            "Réessaie demain, ou tape /contact pour un accès étendu. "
-            "_Cette limite protège le service et reste généreuse pour un usage normal._")
+            "💎 *Passe en Premium* pour un accès *illimité* tout de suite — tape /offres.\n"
+            "🎁 _Tarif de lancement : -40% (durée limitée)._\n"
+            "_Ou réessaie demain : la limite se recharge chaque jour._")
+
+# ── Upsell / nudges marketing (éthiques, contextuels, sensibles au palier) ──
+_LAUNCH_OFFER = "🎁 Tarif de lancement : *-40%* sur le Premium (durée limitée)."
+
+def _upsell_line(session: dict, moment: str = "generic") -> str:
+    """Renvoie UNE phrase d'incitation adaptée au moment et au palier (vide pour admin/pro/vip).
+    Leviers : valeur gratuite offerte, accès illimité, rareté (offre de lancement), preuve sociale."""
+    try:
+        tier = _user_tier(session)
+    except Exception:
+        tier = "free"
+    if tier == "admin":
+        return ""
+    if tier in _PREMIUM_TIERS:
+        if tier == "premium":
+            return secrets.choice([
+                "⭐ Tu profites du Premium. Le pack *Pro* débloque encore plus de volume et de priorité — /offres.",
+                "💎 Membre Premium : besoin d'un accompagnement renforcé ? Découvre le *Pro* — /offres.",
+            ])
+        return ""  # pro / vip : on ne sollicite pas
+    nudges = {
+        "quota": [
+            "💎 Les membres *Premium* n'ont *aucune limite*. Passe au niveau supérieur — /offres. " + _LAUNCH_OFFER,
+            "⛔ Ne t'arrête pas en si bon chemin : *Premium* = illimité, tout de suite — /offres.",
+        ],
+        "tool": [
+            "💡 En *Premium*, tes documents et outils sont *illimités* et prioritaires — /offres.",
+            "🚀 Tu aimes la boîte à outils ? *Premium* débloque tout, sans limite — /offres.",
+        ],
+        "success": [
+            "🎯 Beau travail ! Les membres *Premium* vont plus loin : offres illimitées, dossiers complets — /offres.",
+            "🔓 Ce n'est qu'un aperçu — *Premium* ouvre tout le potentiel de NexMove — /offres. " + _LAUNCH_OFFER,
+        ],
+        "generic": [
+            "💎 Débloque tout NexMove avec *Premium* — /offres. " + _LAUNCH_OFFER,
+            "⭐ De plus en plus de candidats préparent leur avenir avec NexMove. *Premium* pour aller plus vite — /offres.",
+        ],
+    }
+    return secrets.choice(nudges.get(moment, nudges["generic"]))
 
 # Mots parasites d'un nom de fichier de CV (à ignorer pour deviner le nom du candidat).
 _CV_FILENAME_NOISE = {"cv", "resume", "résumé", "resumé", "curriculum", "vitae", "final", "finale",
@@ -597,7 +637,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n"
             "🎯 /chances <cible> (tes chances d'admission/visa/bourse + comment les augmenter)\n"
             "🧩 /compatibilite <poste> (score par compétence) · 🗂️ /mescandidatures (suivi)\n\n"
-            "🛠️ *Outils PDF & docs*\n"
+            "🧰 *Outils PDF & docs* → tape /outils pour tout voir\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
@@ -984,6 +1024,26 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         _push(session, "user", t); _push(session, "assistant", TUTO_TXT); session["derniere_activite"] = now
         return TUTO_TXT, session
 
+    if low.startswith("/outils") or low.startswith("/boiteaoutils") or low.startswith("/tools"):
+        msg = ("🧰 *Ta boîte à outils NexMove* — pour des dossiers nickel, sans quitter la messagerie :\n\n"
+               "📄 */postuler* <cible> — CV + lettre + projet adaptés (PDF & Word)\n"
+               "🗂️ */dossier* <cible> — ton dossier de candidature complet\n"
+               "🗜️ */compresser* <Ko> — alléger un PDF trop lourd (soumissions en ligne)\n"
+               "🔗 */fusionner* — regrouper plusieurs PDF en un seul\n"
+               "🖼️ */enpdf* — transformer des images/photos en PDF\n"
+               "✂️ */decouper* <pages> — extraire des pages (ex : /decouper 1-3)\n"
+               "🌍 */traduire* <texte> — traduire un texte (FR/EN)\n"
+               "📝 */creercv* — créer un CV si tu n'en as pas\n"
+               "🗓️ */timeline* — ta feuille de route en image\n\n"
+               "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser est ton ami._")
+        up = _upsell_line(session, "tool")
+        if up:
+            msg += "\n\n" + up
+        session["_kb_options"] = [("📄 Postuler", "act:postuler_help"), ("🗜️ Compresser", "act:compresser"),
+                                  ("🔗 Fusionner", "act:fusionner"), ("🖼️ Images→PDF", "act:enpdf")]
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/guide"):
         # Mode guidage par capture d'écran (vision) : l'utilisateur envoie des captures, on l'oriente.
         session["guide_mode"] = True
@@ -1348,6 +1408,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     data = await asyncio.to_thread(images_to_pdf, files); cap = "📄 PDF créé depuis tes images"
                 await deliver_file(session, "NexMove_document.pdf", data, f"{cap} ({len(files)} fichier·s)")
                 msg = "✅ C'est prêt ! Trop lourd pour une soumission ? Tape /compresser."
+                up = _upsell_line(session, "tool")
+                if up:
+                    msg += "\n\n" + up
             except Exception as e:
                 logger.error(f"[tool {mode}] {e}"); msg = "😕 Génération impossible, réessaie."
             _tool_clear(session.get("user_id")); session["tool_mode"] = None
@@ -2787,7 +2850,8 @@ _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "pr
             "status": "/status", "campusfrance": "/campusfrance", "aide": "/aide",
             "formations": "/formations", "supprimer": "/supprimer",
             "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
-            "compresser": "/compresser", "procedure": "/procedure", "budget": "/budget",
+            "compresser": "/compresser", "fusionner": "/fusionner", "enpdf": "/enpdf",
+            "outils": "/outils", "procedure": "/procedure", "budget": "/budget",
             "parcoursup": "/parcoursup", "monmaster": "/monmaster", "ecandidat": "/ecandidat",
             "dap": "/dap", "visa": "/visa", "recours": "/recours",
             "contact": "/contact", "version": "/version", "rencontrer": "/rencontrer"}

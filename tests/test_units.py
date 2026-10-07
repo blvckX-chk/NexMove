@@ -1062,3 +1062,28 @@ def test_relances_cadence_par_palier(monkeypatch):
     monkeypatch.setattr(main, "deliver_text", _fake_deliver)
     _run(main.relances(_auth=True))
     assert sent == ["prem"]
+
+# ------------------ Upsell / nudges + boîte à outils ------------------
+def test_upsell_gratuit_quota_incite():
+    line = main._upsell_line({"user_id": "u", "chat_id": "1"}, "quota")
+    assert "Premium" in line and "/offres" in line
+
+def test_upsell_admin_vide(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    assert main._upsell_line({"user_id": "42", "chat_id": "42"}, "quota") == ""
+
+def test_upsell_vip_pas_de_sollicitation():
+    from datetime import datetime, timezone, timedelta
+    futur = (datetime.now(timezone.utc) + timedelta(days=5)).isoformat()
+    s = {"user_id": "v", "chat_id": "1", "premium_tier": "vip", "premium_until": futur}
+    assert main._upsell_line(s, "tool") == ""
+
+def test_quota_exceeded_msg_contient_offre():
+    m = main._quota_exceeded_msg("les simulations")
+    assert "Premium" in m and "/offres" in m
+
+def test_cmd_outils_liste_et_boutons():
+    s = {"user_id": "o", "chat_id": "1", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/outils"))
+    assert "/compresser" in msg and "/fusionner" in msg
+    assert s.get("_kb_options")
