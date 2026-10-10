@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.61 — Guide « comment postuler » (e-mail/formulaire prêt à copier)
+- Nouvelle commande **/commentpostuler <offre>** : le bot explique **comment candidater**
+  (e-mail / formulaire / plateforme), rédige l'**objet** + le **message** prêts à copier-coller,
+  personnalisés depuis le profil, liste les **pièces à joindre** et les **étapes**.
+- Sélection rapide : **/commentpostuler 1** reprend une offre récemment affichée.
+- Accessible en **langage naturel** (« comment postuler à … », « comment candidater pour … »).
+- Quota gratuit **FREE_APPLY_DAILY** (3/j) + crédits ; relié au menu /outils. Tests ajoutés.
+
 ## v2.60 — Recherche auto après le CV (offres notées immédiates)
 - **Valeur immédiate** : dès que l'utilisateur valide son CV, le bot lance une **recherche
   automatique** et affiche **3 offres notées** (compatibilité %, niveau, raison, lien) — sans attendre

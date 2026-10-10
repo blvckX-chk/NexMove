@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.60.0"
+VERSION         = "2.61.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -119,6 +119,7 @@ FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guid
 FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
 FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
 FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (score d'admissibilité) / jour (gratuit)
+FREE_APPLY_DAILY    = int(os.getenv("FREE_APPLY_DAILY", "3"))    # /commentpostuler (guide de candidature) / jour (gratuit)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -492,6 +493,11 @@ def _name_from_filename(filename: str) -> str:
 
 def _free_text_to_command(low: str, t: str) -> str:
     """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
+    if any(k in low for k in ("comment postuler", "comment candidater", "comment je postule",
+                              "comment envoyer ma candidature", "comment faire la candidature", "comment déposer ma candidature")):
+        cible = re.sub(r".*?(comment\s+(postuler|candidater|je\s+postule|envoyer\s+ma\s+candidature|faire\s+la\s+candidature|déposer\s+ma\s+candidature))\s*(à|a|au|aux|pour|chez|sur|en)?\s*",
+                       "", t, flags=re.I).strip(" ?.")
+        return "/commentpostuler " + cible
     if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
         return "/formations " + t
     if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")):
@@ -533,7 +539,7 @@ _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "ent
                   # Commandes plus récentes : accessibles aussi en langage naturel.
                   "chances", "compatibilite", "simulation", "creercv", "outils", "extraire",
                   "compresserimage", "enimages", "cv1page", "anonymiser", "mescandidatures",
-                  "timeline", "parrainage", "offres", "credits"}
+                  "timeline", "parrainage", "offres", "credits", "commentpostuler"}
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -1162,6 +1168,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if low.startswith("/outils") or low.startswith("/boiteaoutils") or low.startswith("/tools"):
         msg = ("🧰 *Ta boîte à outils NexMove* — pour des dossiers nickel, sans quitter la messagerie :\n\n"
                "📄 */postuler* <cible> — CV + lettre + projet adaptés (PDF & Word)\n"
+               "🧭 */commentpostuler* <cible> — *comment candidater* (e-mail/formulaire prêt à copier)\n"
                "🗂️ */dossier* <cible> — ton dossier de candidature complet\n"
                "🔎 */extraire* — récupérer le *texte* d'un PDF/scan/photo (OCR)\n"
                "🗜️ */compresser* <Ko> — alléger un *PDF* trop lourd\n"
@@ -2239,6 +2246,84 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/commentpostuler") or low.startswith("/comment-postuler") or low.startswith("/howto"):
+        parts = t.split(maxsplit=1)
+        cible = parts[1].strip() if len(parts) > 1 else ""
+        # Sélection par numéro depuis les dernières offres affichées : "/commentpostuler 2"
+        if cible.isdigit():
+            idx = int(cible) - 1
+            lo = session.get("last_offers") or []
+            if 0 <= idx < len(lo):
+                cible = (lo[idx].get("titre") or "").strip() or cible
+        profil = session.get("profil", {}) or {}
+        if not profil.get("identite"):
+            msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV (PDF, Word ou image)."
+        elif not cible:
+            exemple = ""
+            lo = session.get("last_offers") or []
+            if lo:
+                exemple = "\n\nOu choisis une offre affichée : `/commentpostuler 1`"
+            msg = ("✍️ Indique l'offre :\n/commentpostuler <poste ou bourse>\n\n"
+                   "Ex : `/commentpostuler Analyste SOC chez Orange`" + exemple)
+        else:
+            ok, used_credit, reste = _quota_or_credit(session, "apply", FREE_APPLY_DAILY)
+            if not ok:
+                msg = _quota_exceeded_msg("le guide de candidature") + "\n🎟️ Ou utilise des *crédits* : /credits."
+            else:
+                ident = profil.get("identite", {}) or {}
+                forces = ", ".join((profil.get("bilan", {}) or {}).get("forces", [])[:3])
+                system = ("Tu es " + CONSEILLER_PERSONA + " Tu expliques TRÈS concrètement comment postuler à une "
+                          "offre précise et tu rédiges un e-mail de candidature prêt à copier-coller, personnalisé "
+                          "avec le profil (sans crochets à remplir sauf si vraiment indispensable). Réponds en JSON uniquement.")
+                prompt = (f"Offre visée: {cible}\n"
+                          f"Profil: nom={ident.get('nom','')}, email={ident.get('email','')}, "
+                          f"tel={ident.get('telephone','')}, localisation={ident.get('localisation','')}, "
+                          f"points_forts={forces}, resume={profil.get('resume_profil','')}\n\n"
+                          'JSON: {"mode":"email|formulaire|plateforme","destinataire":"adresse e-mail si plausible/connue sinon vide",'
+                          '"objet":"objet de l\'e-mail","message":"corps de l\'e-mail, 6-10 lignes, personnalisé, prêt à envoyer",'
+                          '"champs":["champs d\'un formulaire à préparer"],"pieces":["CV adapté","lettre de motivation"],'
+                          '"etapes":["étape 1","étape 2","étape 3"],"conseil":"un conseil clé"}')
+                try:
+                    r = await call_groq(system, prompt, temperature=0.3, max_tokens=900)
+                    if used_credit:
+                        pass
+                    else:
+                        _quota_bump(session, "apply")
+                    mode = str(r.get("mode", "") or "").lower()
+                    mode_lbl = {"email": "📧 Candidature par e-mail", "formulaire": "📝 Formulaire en ligne",
+                                "plateforme": "🌐 Plateforme de recrutement"}.get(mode, "✉️ Candidature")
+                    msg = f"🧭 *Comment postuler — {_md_clean(cible)[:60]}*\n{mode_lbl}\n"
+                    dest = str(r.get("destinataire", "") or "").strip()
+                    if dest:
+                        msg += f"\n📧 *Destinataire :* {dest}"
+                    objet = str(r.get("objet", "") or "").strip()
+                    if objet:
+                        msg += f"\n\n✉️ *Objet (à copier) :*\n`{objet}`"
+                    message = str(r.get("message", "") or "").strip()
+                    if message:
+                        msg += f"\n\n📝 *Message (à copier-coller) :*\n{message}"
+                    champs = [c for c in (r.get("champs") or []) if isinstance(c, str) and c.strip()]
+                    if champs and mode != "email":
+                        msg += "\n\n🗂️ *Champs à préparer :* " + ", ".join(champs[:8])
+                    pieces = [p for p in (r.get("pieces") or []) if isinstance(p, str) and p.strip()]
+                    if pieces:
+                        msg += "\n\n📎 *À joindre :* " + ", ".join(pieces[:5])
+                    etapes = [e for e in (r.get("etapes") or []) if isinstance(e, str) and e.strip()]
+                    if etapes:
+                        msg += "\n\n✅ *Étapes :*\n" + "\n".join(f"{i}. {_md_clean(e)}" for i, e in enumerate(etapes[:5], 1))
+                    conseil = str(r.get("conseil", "") or "").strip()
+                    if conseil:
+                        msg += f"\n\n💡 {_md_clean(conseil)}"
+                    msg += f"\n\n▶️ *Génère tes documents :* /postuler {cible[:40]}"
+                    if reste:
+                        msg += f"\n_Il te reste {reste} guide(s) gratuit(s) aujourd'hui._"
+                    msg += _credit_note(session, used_credit)
+                except Exception as e:
+                    logger.error(f"commentpostuler: {e}")
+                    msg = "😕 Je n'ai pas pu préparer le guide, réessaie dans un instant."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/dossier"):
         parts = t.split(maxsplit=1)
         cible_desc = parts[1].strip() if len(parts) > 1 else ""
@@ -2709,7 +2794,7 @@ PROFIL: {profil_str}
 L'utilisateur écrit librement. Deux cas :
 1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
-COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
+COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
 REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
