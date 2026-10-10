@@ -174,7 +174,8 @@
   @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
 </style>
 </head>
-<body data-bot="nex_move_bot">
+<!-- data-wa = numero du BOT WhatsApp (reponses auto) · data-pay = numero PERSO qui recoit les paiements -->
+<body data-bot="nex_move_bot" data-wa="22962118761" data-pay="22994078765">
 <header>
   <div class="wrap nav">
     <a class="brand" href="#top"><span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove</a>
@@ -198,9 +199,10 @@
           <h1>Postule moins au hasard.<br><span class="accent">Décroche plus — emploi, études, mobilité.</span></h1>
           <p class="lead">NexMove lit ton CV, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), les <strong>note selon ton profil</strong> et prépare chaque dossier — lettre, CV adapté, entretien. Dans ta messagerie, sans app.</p>
           <div class="cta-row">
-            <a class="btn btn-amb js-start" href="#">🚀 Démarrer gratuitement</a>
-            <a class="btn btn-ghost" href="#comment">Voir comment ça marche ↓</a>
+            <a class="btn btn-amb js-start" href="#">🚀 Démarrer sur Telegram</a>
+            <a class="btn js-wa" href="#" style="background:#25D366;color:#06281a;border:none;font-weight:700">💬 Ouvrir sur WhatsApp</a>
           </div>
+          <div style="margin-top:.5rem"><a class="btn btn-ghost" href="#comment" style="padding:.3rem 0;background:none;border:none;color:var(--gris)">Voir comment ça marche ↓</a></div>
           <div class="trust">
             <span><b>✓</b> Gratuit pour commencer</span>
             <span><b>✓</b> Sans app à installer</span>
@@ -331,7 +333,7 @@
       <div class="kicker">Simple comme un message</div>
       <h2>Trois étapes, zéro prise de tête</h2>
       <div class="price" style="grid-template-columns:repeat(3,1fr)">
-        <div class="plan"><div class="fnum">1</div><h3 style="margin-top:.4rem">Ouvre le bot</h3><p style="color:var(--gris)">Sur Telegram (WhatsApp bientôt). Aucune app, aucune inscription compliquée.</p></div>
+        <div class="plan"><div class="fnum">1</div><h3 style="margin-top:.4rem">Ouvre le bot</h3><p style="color:var(--gris)">Sur Telegram ou WhatsApp. Aucune app, aucune inscription compliquée.</p></div>
         <div class="plan"><div class="fnum">2</div><h3 style="margin-top:.4rem">Envoie ton CV</h3><p style="color:var(--gris)">Ou dis-nous ton parcours. Pas de CV ? NexMove t'en crée un.</p></div>
         <div class="plan"><div class="fnum">3</div><h3 style="margin-top:.4rem">Avance, accompagné·e</h3><p style="color:var(--gris)">Opportunités notées, dossiers prêts, entretiens — jusqu'au départ.</p></div>
       </div>
@@ -355,17 +357,17 @@
           <span class="tag">Le plus choisi</span>
           <h3>Premium</h3><div class="p">3 500 <small>FCFA / mois</small></div>
           <ul><li>Opportunités &amp; matching illimités</li><li>Score, compatibilité &amp; simulations</li><li>Dossiers complets (CV + lettre + projet)</li><li>Alertes personnalisées &amp; suivi</li></ul>
-          <a class="btn btn-blue js-start" href="#" style="width:100%;justify-content:center">Passer au Premium</a>
+          <a class="btn btn-blue js-pay" href="#" data-msg="Bonjour, je veux passer au Premium NexMove (3 500 FCFA/mois). Comment faire le paiement ?" style="width:100%;justify-content:center">Passer au Premium</a>
         </div>
         <div class="plan">
           <h3>Pro</h3><div class="p">8 900 <small>FCFA / mois</small></div>
           <ul><li>Tout le Premium</li><li>Priorité &amp; volumes élevés</li><li>Accompagnement mobilité renforcé</li><li>Idéal candidatures intensives</li></ul>
-          <a class="btn btn-ghost js-start" href="#" style="width:100%;justify-content:center">Choisir Pro</a>
+          <a class="btn btn-ghost js-pay" href="#" data-msg="Bonjour, je veux l'offre Pro NexMove (8 900 FCFA/mois). Comment faire le paiement ?" style="width:100%;justify-content:center">Choisir Pro</a>
         </div>
       </div>
       <div class="creditbox">
-        <div class="txt">🎟️ <b>Pas envie d'abonnement ?</b> Prends un <b>pack de crédits</b> : 1 crédit = 1 action (analyse CV, score, simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas.</div>
-        <a class="btn btn-ghost js-start" href="#">Voir les packs</a>
+        <div class="txt">🎟️ <b>Pas envie d'abonnement ?</b> Prends un <b>pack de crédits</b> : 1 crédit = 1 action (analyse CV, score, simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas. <span style="color:var(--gris)">Écris-nous sur WhatsApp, fais le dépôt Mobile Money, reçois ton code.</span></div>
+        <a class="btn js-pay" href="#" data-msg="Bonjour, je veux acheter un pack de crédits NexMove. Comment faire le paiement ?" style="background:#25D366;color:#06281a;border:none;font-weight:700">💬 Payer sur WhatsApp</a>
       </div>
       <p class="disc">NexMove <strong>accompagne</strong> ta démarche : il augmente tes chances, mais l'admission, la bourse, le visa ou l'emploi restent la décision des organismes et employeurs.</p>
     </div>
@@ -377,12 +379,12 @@
       <div class="kicker">On répond</div>
       <h2>Questions fréquentes</h2>
       <div style="margin-top:22px">
-        <details open><summary>NexMove, c'est quoi exactement ?</summary><p>Un assistant IA de mobilité et d'emploi que tu utilises dans ta messagerie (Telegram, bientôt WhatsApp). Il analyse ton profil, trouve des opportunités notées, prépare tes dossiers et t'accompagne pas à pas.</p></details>
+        <details open><summary>NexMove, c'est quoi exactement ?</summary><p>Un assistant IA de mobilité et d'emploi que tu utilises dans ta messagerie (Telegram ou WhatsApp). Il analyse ton profil, trouve des opportunités notées, prépare tes dossiers et t'accompagne pas à pas.</p></details>
         <details><summary>Est-ce que c'est gratuit ?</summary><p>Oui, tu commences gratuitement et tu découvres chaque fonction. L'illimité passe par un abonnement Premium abordable, ou par des packs de crédits à la carte.</p></details>
-        <details><summary>Faut-il installer une application ?</summary><p>Non. Tout se passe dans Telegram (WhatsApp bientôt). Tu peux même interagir à la voix et démarrer sans CV.</p></details>
+        <details><summary>Faut-il installer une application ?</summary><p>Non. Tout se passe dans Telegram ou WhatsApp. Tu peux même interagir à la voix et démarrer sans CV.</p></details>
         <details><summary>Vous garantissez un visa, une bourse ou un emploi ?</summary><p>Non, et personne ne peut l'honnêtement. NexMove <strong>maximise tes chances</strong> et t'évite les erreurs : la décision revient aux écoles, organismes et employeurs.</p></details>
         <details><summary>Que deviennent mes données ?</summary><p>Elles servent uniquement à t'accompagner, ne sont pas revendues, et tu peux tout effacer à tout moment (<code>/supprimer</code>). Voir notre <a href="confidentialite.html" style="color:var(--bleu2)">politique de confidentialité</a>.</p></details>
-        <details><summary>Comment payer ?</summary><p>Par Mobile Money : tu reçois un code, tu l'actives dans le bot, et ton accès démarre aussitôt.</p></details>
+        <details><summary>Comment payer ?</summary><p>Par Mobile Money, en 3 étapes : tu nous écris sur <strong>WhatsApp</strong> (bouton « Payer sur WhatsApp »), tu fais le dépôt, on te renvoie un <strong>code</strong> que tu actives dans le bot (<code>/premium</code> ou <code>/credits</code>) — ton accès démarre aussitôt.</p></details>
       </div>
     </div>
   </section>
@@ -393,7 +395,10 @@
       <div class="band reveal">
         <h2>Ton prochain move commence maintenant</h2>
         <p>Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move. Gratuit pour démarrer.</p>
-        <a class="btn btn-amb js-start" href="#">🚀 Démarrer sur Telegram</a>
+        <div class="cta-row" style="justify-content:center">
+          <a class="btn btn-amb js-start" href="#">🚀 Démarrer sur Telegram</a>
+          <a class="btn js-wa" href="#" style="background:#25D366;color:#06281a;border:none;font-weight:700">💬 Ouvrir sur WhatsApp</a>
+        </div>
       </div>
     </div>
   </section>
@@ -410,7 +415,8 @@
         <a href="cgu.html">CGU</a>
         <a href="confidentialite.html">Confidentialité</a>
         <a href="mentions.html">Mentions légales</a>
-        <a class="js-start" href="#">Ouvrir le bot</a>
+        <a class="js-start" href="#">Telegram</a>
+        <a class="js-wa" href="#">WhatsApp</a>
       </div>
     </div>
     <p class="disc">NexMove est un assistant conversationnel basé sur l'IA. NexMove n'est pas affilié à Campus France, à IRCC, aux ambassades ni à aucun organisme officiel ; il aide à préparer les démarches, sans s'y substituer. © <span id="y"></span> blvckUnlimited. Tous droits réservés.</p>
@@ -420,8 +426,19 @@
 <script>
   (function(){
     var bot = document.body.getAttribute('data-bot') || 'nex_move_bot';
+    var wa  = document.body.getAttribute('data-wa') || '';
+    var pay = document.body.getAttribute('data-pay') || '';
     var url = 'https://t.me/' + bot;
+    function waLink(num, msg){ return 'https://wa.me/' + num + (msg ? '?text=' + encodeURIComponent(msg) : ''); }
     document.querySelectorAll('.js-start').forEach(function(a){ a.setAttribute('href', url); });
+    // Liens vers le BOT WhatsApp (reponses auto)
+    document.querySelectorAll('.js-wa').forEach(function(a){
+      a.setAttribute('href', waLink(wa, a.getAttribute('data-msg') || ''));
+    });
+    // Liens de PAIEMENT -> numero perso (ou bot en secours si non configure)
+    document.querySelectorAll('.js-pay').forEach(function(a){
+      a.setAttribute('href', waLink(pay || wa, a.getAttribute('data-msg') || ''));
+    });
     var y = document.getElementById('y'); if(y) y.textContent = new Date().getFullYear();
 
     // Démo interactive : offres notées par profil
