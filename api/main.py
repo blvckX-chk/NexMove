@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.55.0"
+VERSION         = "2.59.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -237,7 +237,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
-                profile_store, profile_quality, usage_store, premium_store, referral_store)
+                profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store)
 
 
 # (Embeddings/vision : voir llm.py — PR-B)
@@ -348,6 +348,57 @@ def _quota_bump(session: dict, feature: str) -> None:
         except Exception as e:
             logger.error(f"quota bump {feature}: {e}")
 
+# ── Crédits fongibles : 1 crédit = 1 action quand la limite gratuite est atteinte ──
+def _credit_balance(session: dict) -> int:
+    try:
+        return max(0, int(session.get("credits", 0) or 0))
+    except Exception:
+        return 0
+
+def _quota_or_credit(session: dict, feature: str, limit: int) -> tuple[bool, bool, int]:
+    """(autorisé, crédit_utilisé, restant_gratuit). Si la limite gratuite est atteinte mais que
+    l'utilisateur a des crédits fongibles, on en consomme 1 pour autoriser l'action."""
+    ok, restant = _quota_check(session, feature, limit)
+    if ok:
+        return True, False, restant
+    if _credit_balance(session) > 0:
+        session["credits"] = _credit_balance(session) - 1
+        return True, True, 0
+    return False, False, 0
+
+def _credit_note(session: dict, used_credit: bool) -> str:
+    return (f"\n\n🎟️ _1 crédit utilisé — il te reste {_credit_balance(session)} crédit·s._"
+            if used_credit else "")
+
+def _admin_stats() -> dict:
+    """Agrégats pour le pilotage (commande /stats + panel web). Aucune donnée personnelle."""
+    try:
+        users = session_manager.count()
+    except Exception:
+        users = 0
+    try:
+        active = session_manager.list_active()
+    except Exception:
+        active = []
+    onboarded = len(active)
+    paid = sum(1 for s in active if _user_tier(s) in _PREMIUM_TIERS)
+    credits_actifs = sum(1 for s in active if _credit_balance(s) > 0)
+    try:
+        srcs = session_manager.sources_stats()
+    except Exception:
+        srcs = []
+    return {
+        "version": VERSION,
+        "users_total": users,
+        "onboarded": onboarded,
+        "payants_actifs": paid,
+        "users_avec_credits": credits_actifs,
+        "premium_codes": premium_store.stats(),
+        "credit_codes": credit_store.stats(),
+        "sources_marketing": srcs[:15],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    }
+
 def _apply_premium(session: dict, tier: str, days: int) -> str:
     """Active/prolonge un abonnement. Empile sur le temps restant si encore actif. Renvoie l'échéance ISO."""
     now = datetime.now(timezone.utc)
@@ -371,8 +422,18 @@ def _quota_exceeded_msg(feature_label: str) -> str:
             "🎁 _Tarif de lancement : -40% (durée limitée)._\n"
             "_Ou réessaie demain : la limite se recharge chaque jour._")
 
-# ── Upsell / nudges marketing (éthiques, contextuels, sensibles au palier) ──
+# ── Upsell / nudges marketing (éthiques, contextuels, sensibles au palier ET au profil) ──
 _LAUNCH_OFFER = "🎁 Tarif de lancement : *-40%* sur le Premium (durée limitée)."
+
+def _profile_perk(session: dict) -> str:
+    """Bénéfice Premium formulé selon l'OBJECTIF du profil (upsell personnalisé)."""
+    prefs = ((session.get("profil") or {}).get("preferences") or {})
+    obj = str(prefs.get("objectif", "")).lower()
+    if any(k in obj for k in ("étud", "etud", "bourse", "master", "licence", "doctorat", "fellowship")):
+        return "ton dossier Campus France complet, le score d'admissibilité illimité et des lettres sur mesure"
+    if _is_travail(obj):
+        return "la compatibilité par compétence illimitée, des offres priorisées et le suivi de tes candidatures"
+    return "les offres illimitées, les dossiers complets et un accompagnement prioritaire"
 
 def _upsell_line(session: dict, moment: str = "generic") -> str:
     """Renvoie UNE phrase d'incitation adaptée au moment et au palier (vide pour admin/pro/vip).
@@ -390,6 +451,7 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
                 "💎 Membre Premium : besoin d'un accompagnement renforcé ? Découvre le *Pro* — /offres.",
             ])
         return ""  # pro / vip : on ne sollicite pas
+    perk = _profile_perk(session)   # bénéfice personnalisé selon l'objectif du profil
     nudges = {
         "quota": [
             "💎 Les membres *Premium* n'ont *aucune limite*. Passe au niveau supérieur — /offres. " + _LAUNCH_OFFER,
@@ -400,11 +462,11 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
             "🚀 Tu aimes la boîte à outils ? *Premium* débloque tout, sans limite — /offres.",
         ],
         "success": [
-            "🎯 Beau travail ! Les membres *Premium* vont plus loin : offres illimitées, dossiers complets — /offres.",
+            f"🎯 Beau travail ! *Premium* débloque {perk} — /offres.",
             "🔓 Ce n'est qu'un aperçu — *Premium* ouvre tout le potentiel de NexMove — /offres. " + _LAUNCH_OFFER,
         ],
         "generic": [
-            "💎 Débloque tout NexMove avec *Premium* — /offres. " + _LAUNCH_OFFER,
+            f"💎 Avec *Premium* : {perk} — /offres. " + _LAUNCH_OFFER,
             "⭐ De plus en plus de candidats préparent leur avenir avec NexMove. *Premium* pour aller plus vite — /offres.",
         ],
     }
@@ -467,7 +529,11 @@ _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "ent
                   "canada", "procedure", "budget", "eligibilite", "dossier", "postuler", "compresser",
                   "traduire", "status", "profil", "parcours", "aide", "fusionner", "enpdf", "decouper",
                   "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
-                  "contact", "version", "rencontrer"}
+                  "contact", "version", "rencontrer",
+                  # Commandes plus récentes : accessibles aussi en langage naturel.
+                  "chances", "compatibilite", "simulation", "creercv", "outils", "extraire",
+                  "compresserimage", "enimages", "cv1page", "anonymiser", "mescandidatures",
+                  "timeline", "parrainage", "offres", "credits"}
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -641,7 +707,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "/compresser <Ko> · /fusionner · /enpdf (images→PDF) · /decouper <pages> · /traduire <texte>\n\n"
             "📊 *Mon espace*\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
-            "💎 /offres (abonnements) · /premium <code> (activer) · /monabo (mon statut)\n"
+            "💎 /offres · /premium <code> (abonnement) · 🎟️ /credits <code> (pack de crédits) · /monabo\n"
             "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
             "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
@@ -719,6 +785,46 @@ def _resume_prefs(prefs):
             + (f"• Type de poste : {prefs.get('type_emploi')}\n" if prefs.get('type_emploi') else "")
             + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
+
+# ── Récap de profil ÉDITABLE : l'utilisateur corrige un champ en écrivant "champ: valeur" ──
+_PROFIL_EDIT_FIELDS = {
+    "objectif": ("pref", "objectif"),
+    "pays": ("pref", "pays_cibles"), "pays cibles": ("pref", "pays_cibles"), "pays-cibles": ("pref", "pays_cibles"),
+    "langue": ("pref", "langues_opportunite"), "langues": ("pref", "langues_opportunite"),
+    "niveau": ("pref", "niveau"),
+    "mots-cles": ("pref", "mots_cles"), "mots cles": ("pref", "mots_cles"),
+    "mots-clés": ("pref", "mots_cles"), "mots clés": ("pref", "mots_cles"), "motscles": ("pref", "mots_cles"),
+    "nationalite": ("pref", "nationalite"), "nationalité": ("pref", "nationalite"),
+    "type de poste": ("pref", "type_emploi"), "type_emploi": ("pref", "type_emploi"),
+    "nom": ("ident", "nom"),
+}
+
+def _try_profil_edit(session: dict, t: str):
+    """Détecte 'champ: valeur' et corrige le profil (utilisateur onboardé). Renvoie un message ou None."""
+    m = re.match(r"^\s*([A-Za-zÀ-ÿ'’\- ]{3,20})\s*[:=]\s*(.{1,120})$", (t or "").strip())
+    if not m:
+        return None
+    champ = re.sub(r"\s+", " ", m.group(1).strip().lower())
+    val = m.group(2).strip()
+    target = _PROFIL_EDIT_FIELDS.get(champ)
+    if not target:
+        return None
+    profil = session.get("profil", {}) or {}
+    kind, key = target
+    if kind == "pref":
+        prefs = profil.get("preferences", {}) or {}
+        prefs[key] = val
+        profil["preferences"] = prefs
+    else:
+        ident = profil.get("identite", {}) or {}
+        ident[key] = val
+        profil["identite"] = ident
+    session["profil"] = profil
+    try:
+        profile_store.save(session.get("user_id"), session)
+    except Exception:
+        pass
+    return f"✅ Mis à jour : *{champ}* → {_md_clean(val)}.\n_Tape /profil pour voir ton récap complet._"
 
 # ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
 _WELCOME_PITCH = (
@@ -973,6 +1079,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
+    profil = session.get("profil", {}) or {}   # disponible pour TOUS les handlers (évite UnboundLocalError)
 
     # Mode /simulation (coach d'entretien) : capte les réponses libres (les commandes passent normalement).
     if session.get("sim_mode") and not low.startswith("/"):
@@ -1028,14 +1135,16 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         msg = ("🧰 *Ta boîte à outils NexMove* — pour des dossiers nickel, sans quitter la messagerie :\n\n"
                "📄 */postuler* <cible> — CV + lettre + projet adaptés (PDF & Word)\n"
                "🗂️ */dossier* <cible> — ton dossier de candidature complet\n"
-               "🗜️ */compresser* <Ko> — alléger un PDF trop lourd (soumissions en ligne)\n"
+               "🔎 */extraire* — récupérer le *texte* d'un PDF/scan/photo (OCR)\n"
+               "🗜️ */compresser* <Ko> — alléger un *PDF* trop lourd\n"
+               "🖼️🗜️ */compresserimage* <Ko> — alléger une *photo/image*\n"
                "🔗 */fusionner* — regrouper plusieurs PDF en un seul\n"
-               "🖼️ */enpdf* — transformer des images/photos en PDF\n"
+               "🖼️ */enpdf* — images/photos → PDF · 📄➡️🖼️ */enimages* — PDF → images PNG\n"
                "✂️ */decouper* <pages> — extraire des pages (ex : /decouper 1-3)\n"
                "🌍 */traduire* <texte> — traduire un texte (FR/EN)\n"
-               "📝 */creercv* — créer un CV si tu n'en as pas\n"
-               "🗓️ */timeline* — ta feuille de route en image\n\n"
-               "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser est ton ami._")
+               "📝 */creercv* — créer un CV · 🗓️ */timeline* — ta feuille de route en image\n"
+               "💎 *Premium* : 📄 */cv1page* (CV synthétique) · 🕶️ */anonymiser* (CV à l'aveugle)\n\n"
+               "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser & /compresserimage sont tes amis._")
         up = _upsell_line(session, "tool")
         if up:
             msg += "\n\n" + up
@@ -1068,10 +1177,10 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             msg = "📄 Fais d'abord /start et envoie ton CV — la simulation s'adapte à ton profil."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        ok, _ = _quota_check(session, "sim", FREE_SIM_DAILY)
+        ok, used_credit, _ = _quota_or_credit(session, "sim", FREE_SIM_DAILY)
         if not ok:
             msg = (_quota_exceeded_msg("les simulations d'entretien")
-                   + "\n\n💎 Les abonnés ont les simulations *illimitées* — tape /offres.")
+                   + "\n🎟️ Ou utilise des *crédits* : /credits.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         _quota_bump(session, "sim")
@@ -1223,9 +1332,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                    "Ex : `/compatibilite Développeur Python junior` · `/match Data analyst Cotonou`.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        ok, used_credit, reste = _quota_or_credit(session, "score", FREE_SCORE_DAILY)
         if not ok:
-            msg = _quota_exceeded_msg("les analyses de compatibilité") + "\n\n💎 Illimité en Premium — tape /offres."
+            msg = _quota_exceeded_msg("les analyses de compatibilité") + "\n🎟️ Ou utilise des *crédits* : /credits."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         try:
@@ -1255,7 +1364,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if r.get("conseil"):
                 msg += f"💡 {_md_clean(r['conseil'])}\n"
             msg += "\n▶️ /postuler <cible> (CV + lettre adaptés) · /formations <domaine> (combler les manques)."
-            if not _is_premium(session):
+            if used_credit:
+                msg += _credit_note(session, True)
+            elif not _is_premium(session):
                 msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui — illimité en Premium : /offres.)_"
         except Exception as e:
             logger.error(f"compatibilite: {e}"); msg = "😕 Analyse indisponible, réessaie."
@@ -1275,10 +1386,10 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                    "`/chances bourse Eiffel` · `/chances emploi data analyst Cotonou`.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        ok, reste = _quota_check(session, "score", FREE_SCORE_DAILY)
+        ok, used_credit, reste = _quota_or_credit(session, "score", FREE_SCORE_DAILY)
         if not ok:
             msg = (_quota_exceeded_msg("le score d'admissibilité")
-                   + "\n\n💎 Les abonnés ont le score *illimité* + le détail complet — tape /offres.")
+                   + "\n🎟️ Ou utilise des *crédits* : /credits.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         try:
@@ -1307,7 +1418,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if r.get("conseil"):
                 msg += f"\n💡 {_md_clean(r['conseil'])}\n"
             msg += "\n▶️ Prépare : /dossier <cible> · /postuler <cible> · /formations <domaine>."
-            if not _is_premium(session):
+            if used_credit:
+                msg += _credit_note(session, True)
+            elif not _is_premium(session):
                 msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui — illimité en Premium : /offres.)_"
         except Exception as e:
             logger.error(f"chances: {e}"); msg = "😕 Estimation indisponible, réessaie."
@@ -1382,6 +1495,73 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         else:
             _tool_clear(session.get("user_id")); session["tool_mode"] = "split"; session["split_spec"] = spec
             msg = f"✂️ *Découpe.* Envoie maintenant le *PDF* — je garde les pages *{spec}*."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/extraire") or low.startswith("/ocr") or low.startswith("/extraire-texte"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "extract"
+        msg = ("🔎 *Extraire le texte.*\nEnvoie un *PDF* ou une *image/photo* (même scannée) — "
+               "je t'en ressors le *texte copiable*.\n_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/compresserimage") or low.startswith("/compressimage") or low.startswith("/allegerimage"):
+        target = 0
+        for p in t.split()[1:]:
+            d = re.sub(r"[^0-9]", "", p)
+            if d:
+                target = max(30, min(5000, int(d)))
+        session["imgcompress_target"] = target or 300
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "imgcompress"
+        msg = (f"🖼️🗜️ *Alléger une image* — cible ≈ {session['imgcompress_target']} Ko.\n\n"
+               "Envoie la *photo/image* (photo d'identité, justificatif scanné…) — je te la renvoie plus légère.\n"
+               "_Astuce : /compresserimage 200 pour viser 200 Ko._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/enimages") or low.startswith("/pdfimages") or low.startswith("/pdf2img"):
+        _tool_clear(session.get("user_id")); session["tool_mode"] = "pdf2img"
+        msg = ("📄➡️🖼️ *PDF en images.*\nEnvoie le *PDF* — je te renvoie chaque page en *PNG* (dans un .zip).\n"
+               "_/annuler pour arrêter._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/cv1page") or low.startswith("/cvcondense") or low.startswith("/cvcondensé"):
+        if not _is_premium(session):
+            msg = "💎 *CV sur 1 page* est un outil *Premium*.\n" + _upsell_line(session, "tool")
+        else:
+            profil = session.get("profil") or {}
+            if not profil.get("identite"):
+                msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
+            else:
+                try:
+                    cp = _condense_profil(profil)
+                    comps = (cp.get("competences", {}).get("techniques", []) + cp.get("competences", {}).get("outils", []))[:8]
+                    buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps)
+                    nom = (profil.get("identite") or {}).get("nom") or "Candidat"
+                    await deliver_file(session, f"CV_1page_{_slug(nom)}.pdf", buf.getvalue(), "📄 Ton CV condensé (1 page)")
+                    msg = "✅ Voici ton *CV condensé* — parfait quand un recruteur veut du synthétique."
+                except Exception as e:
+                    logger.error(f"[cv1page] {e}"); msg = "😕 Génération impossible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/anonymiser") or low.startswith("/cvanonyme") or low.startswith("/anonyme"):
+        if not _is_premium(session):
+            msg = "💎 *CV anonymisé* est un outil *Premium*.\n" + _upsell_line(session, "tool")
+        else:
+            profil = session.get("profil") or {}
+            if not profil.get("identite"):
+                msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
+            else:
+                try:
+                    ap = _anonymize_profil(profil)
+                    comps = (ap.get("competences", {}).get("techniques", []) + ap.get("competences", {}).get("outils", []))[:14]
+                    buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps)
+                    await deliver_file(session, "CV_anonyme.pdf", buf.getvalue(), "🕶️ Ton CV anonymisé")
+                    msg = "✅ *CV anonymisé* (nom et coordonnées masqués) — idéal pour une candidature à l'aveugle ou une CVthèque."
+                except Exception as e:
+                    logger.error(f"[anonymiser] {e}"); msg = "😕 Génération impossible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1733,9 +1913,38 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         profil = session.get("profil", {}) or {}
         if profil:
             ident = profil.get("identite", {})
-            msg = f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\nÉtape : {session.get('etape','—')}\n\n" + _resume_prefs(profil.get("preferences", {}) or {})
+            recap = _resume_prefs(profil.get("preferences", {}) or {}).replace(
+                "\n\nTout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.", "")
+            msg = (f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\n\n" + recap +
+                   "\n\n✏️ *Pour corriger*, écris `champ: valeur` — ex. `objectif: travailler`, "
+                   "`pays: Canada`, `langue: anglais`, `mots-clés: data, python`.")
         else:
             msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV (PDF, Word ou image)."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/credits") or low.startswith("/credit") or low.startswith("/mescredits"):
+        parts = t.split(maxsplit=1)
+        code = parts[1].strip() if len(parts) > 1 else ""
+        if not code:
+            bal = _credit_balance(session)
+            msg = (f"🎟️ *Tes crédits : {bal}*\n"
+                   "1 crédit = 1 action (analyse CV, score, simulation…) quand ta *limite gratuite du jour* est "
+                   "atteinte. Les crédits *ne périment pas*.\n\n"
+                   "➕ *Pour en obtenir* : achète un pack → tu reçois un code → tape */credits TON-CODE*.\n"
+                   "💡 Tape /offres pour voir les *packs de crédits* (ou l'abonnement illimité).")
+        else:
+            r = credit_store.redeem(code, session.get("user_id"))
+            if not r.get("ok"):
+                raison = {"introuvable": "ce code n'existe pas", "déjà utilisé": "ce code a déjà été utilisé"}.get(
+                    r.get("reason"), r.get("reason", "code invalide"))
+                msg = f"❌ Activation impossible : {raison}. Vérifie le code (format CRD-XXXXXXXX) ou /contact."
+            else:
+                n = int(r.get("credits", 0))
+                session["credits"] = _credit_balance(session) + n
+                session_manager.set(session.get("user_id"), session)
+                msg = (f"✅ *+{n} crédits* ajoutés ! 🎟️\nNouveau solde : *{_credit_balance(session)}* crédits.\n"
+                       "Ils se déclenchent automatiquement dès que tu dépasses une limite gratuite.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1775,6 +1984,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         else:
             msg = ("🆓 *Statut : Gratuit.*\nTu profites des bases (1 CV/jour, veille à la demande, 1 alerte…).\n\n"
                    "💎 Passe en Premium pour l'illimité : tape /offres, puis active ton code avec /premium.")
+        msg += f"\n🎟️ Crédits : *{_credit_balance(session)}* (1 crédit = 1 action hors quota — /credits)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1782,8 +1992,10 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         msg = ("💎 *Passe au niveau supérieur*\n\n"
                "*Premium* — CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
                "*Pro* — tout Premium + sources premium, alertes illimitées, relecture.\n\n"
-               "👉 Récupère ton code d'activation, puis tape */premium TON-CODE*.\n"
-               "Besoin d'aide pour t'abonner ? Tape /contact.")
+               "🎟️ *Pas envie d'abonnement ?* Prends un *pack de crédits* : 1 crédit = 1 action (CV, score, "
+               "simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas → /credits.\n\n"
+               "👉 Récupère ton code, puis tape */premium TON-CODE* (abonnement) ou */credits TON-CODE* (pack).\n"
+               "Besoin d'aide ? Tape /contact.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1821,6 +2033,51 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/gencredits"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split()
+        credits = int(re.sub(r"[^0-9]", "", parts[1]) or 0) if len(parts) > 1 else 0
+        count = int(re.sub(r"[^0-9]", "", parts[2]) or 0) if len(parts) > 2 else 0
+        if credits <= 0 or not (1 <= count <= 500):
+            msg = ("🎟️ *Génération de codes de crédits* (admin)\n`/gencredits <crédits_par_code> <nombre>`\n"
+                   "Ex : `/gencredits 10 50` → 50 codes de 10 crédits.\n"
+                   f"État actuel : {credit_store.stats()}")
+        else:
+            codes = credit_store.create_codes(credits, count, batch=now[:10])
+            entete = f"{len(codes)} codes de {credits} crédits :"
+            if len(codes) <= 25:
+                msg = f"✅ {entete}\n" + "\n".join(f"`{c}`" for c in codes)
+            else:
+                data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
+                await deliver_file(session, f"credits_{credits}_{now[:10]}.txt", data, f"🧾 {entete}")
+                msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {credit_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/stats") or low.startswith("/dashboard") or low.startswith("/panel"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        d = _admin_stats()
+        pc = d["premium_codes"]; cc = d["credit_codes"]
+        lignes = [f"📊 *NexMove — tableau de bord* (v{d['version']})",
+                  f"👥 Utilisateurs : *{d['users_total']}* · onboardés : *{d['onboarded']}* · payants actifs : *{d['payants_actifs']}*",
+                  f"🎟️ Avec crédits : *{d['users_avec_credits']}*",
+                  f"💎 Codes Premium — non utilisés : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
+                  f"🎟️ Codes crédits — non utilisés : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
+        if d["sources_marketing"]:
+            lignes.append("\n*Top sources :*")
+            for r in d["sources_marketing"][:8]:
+                lignes.append(f"• `{r['source']}` — {r['total']} users · {r['paid']} payants")
+        lignes.append("\n_Détail attribution : /srcstats · Panel web : nexmove.blvckunlimited.space/admin.html_")
+        msg = "\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -2013,6 +2270,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 opp_store.add_candidature(session.get("user_id"), cible_desc, r.get("deadline", ""), r.get("deadline_iso", ""))
                 msg += ("📄 CV + lettre/projet d'études envoyés (PDF + 📝 Word modifiable). Dossier ajouté à ton suivi (/status).\n"
                         "⚠️ _Vérifie les exigences exactes sur le site officiel._")
+                up = _upsell_line(session, "success")
+                if up:
+                    msg += "\n\n" + up
             except Exception as e:
                 logger.error(f"dossier: {e}")
                 msg = "😕 La préparation du dossier a échoué, réessaie."
@@ -2357,6 +2617,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                         "_Garde-le : tape /moi <code> depuis WhatsApp ou un autre appareil pour retrouver ton profil._")
             msg += ("\n\n▶️ *La suite :* /veille (plus d'offres) · /campusfrance (études en France) · "
                     "/ecoles · /canada · /menu.\n_Je t'enverrai chaque jour les meilleures offres liées à ton profil._")
+            up = _upsell_line(session, "success")
+            if up:
+                msg += "\n\n" + up
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
         else:
             session["etape"] = "PREFERENCES"
@@ -2383,6 +2646,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    # Onboardé : correction rapide du profil "champ: valeur" AVANT tout routage (sinon "pays: canada"
+    # serait capté comme l'intention /canada).
+    edited = _try_profil_edit(session, t)
+    if edited:
+        _push(session, "user", t); _push(session, "assistant", edited); session["derniere_activite"] = now
+        return edited, session
+
     # Utilisateur actif — langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
     # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.
     cmd = _free_text_to_command(low, t)
@@ -2395,7 +2665,7 @@ PROFIL: {profil_str}
 L'utilisateur écrit librement. Deux cas :
 1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
-COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · dossier <cible> · postuler <cible> · compresser · traduire <texte> · status · profil · parcours · aide.
+COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
 REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
@@ -2619,6 +2889,70 @@ def compress_pdf(pdf_bytes: bytes, target_kb: int = 2000) -> tuple:
             break
     doc.close()
     return best, len(best) // 1024
+
+def compress_image(data: bytes, target_kb: int = 300) -> tuple:
+    """Allège une image (qualité JPEG + redimensionnement) pour viser ~target_kb. Renvoie (bytes, kb)."""
+    if Image is None:
+        return data, len(data) // 1024
+    img = Image.open(io.BytesIO(data))
+    if img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+    target = max(30, target_kb) * 1024
+    w, h = img.size
+    best = data
+    for scale, q in ((1.0, 80), (1.0, 65), (0.8, 65), (0.65, 60), (0.5, 55), (0.4, 50)):
+        im2 = img if scale == 1.0 else img.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        b = io.BytesIO(); im2.save(b, format="JPEG", quality=q, optimize=True)
+        cand = b.getvalue()
+        if len(cand) < len(best):
+            best = cand
+        if len(best) <= target:
+            break
+    return best, len(best) // 1024
+
+def pdf_to_images_zip(pdf_bytes: bytes, dpi: int = 150, max_pages: int = 30) -> bytes:
+    """Rend chaque page d'un PDF en PNG et renvoie un ZIP (1 PNG par page)."""
+    import zipfile
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    buf = io.BytesIO()
+    try:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for i, page in enumerate(doc):
+                if i >= max_pages:
+                    break
+                pix = page.get_pixmap(dpi=dpi, alpha=False)
+                z.writestr(f"page_{i+1:02d}.png", pix.tobytes("png"))
+    finally:
+        doc.close()
+    return buf.getvalue()
+
+def _anonymize_profil(profil: dict) -> dict:
+    """Copie du profil avec nom + coordonnées masqués (candidature à l'aveugle / CVthèque)."""
+    import copy
+    p = copy.deepcopy(profil or {})
+    idt = p.get("identite") or {}
+    idt.update({"nom": "Candidat", "email": "", "telephone": "", "localisation": ""})
+    p["identite"] = idt
+    return p
+
+def _condense_profil(profil: dict) -> dict:
+    """Copie allégée du profil pour un CV synthétique (≈1 page)."""
+    import copy
+    p = copy.deepcopy(profil or {})
+    p["formation"] = (p.get("formation") or [])[:2]
+    exps = (p.get("experience") or [])[:3]
+    for e in exps:
+        if isinstance(e, dict) and isinstance(e.get("missions"), list):
+            e["missions"] = e["missions"][:2]
+    p["experience"] = exps
+    comp = p.get("competences") or {}
+    for k in ("techniques", "outils", "soft_skills"):
+        if isinstance(comp.get(k), list):
+            comp[k] = comp[k][:8]
+    p["competences"] = comp
+    if p.get("resume_profil"):
+        p["resume_profil"] = str(p["resume_profil"])[:300]
+    return p
 
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
@@ -3054,6 +3388,45 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         else:
             await deliver_text(session, "😕 Découpe impossible (vérifie les numéros de pages).")
         return
+    if mode == "extract":
+        session["tool_mode"] = None; session_manager.set(uid, session)
+        fn = (filename or "").lower()
+        try:
+            if fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF":
+                txt = await asyncio.to_thread(extract_text_pdf, pdf_bytes)
+            else:
+                txt = await asyncio.to_thread(extract_text_image, pdf_bytes)
+        except Exception as e:
+            logger.error(f"[extract] {e}"); txt = ""
+        txt = (txt or "").strip()
+        if not txt:
+            await deliver_text(session, "😕 Je n'ai pas réussi à extraire de texte (document vide ou illisible).")
+        elif len(txt) <= 3000:
+            await deliver_text(session, "🔎 *Texte extrait :*\n\n" + txt)
+        else:
+            await deliver_file(session, "texte_extrait.txt", txt.encode("utf-8"), "🔎 Texte extrait (fichier)")
+        return
+    if mode == "imgcompress":
+        target = session.pop("imgcompress_target", 300); session["tool_mode"] = None; session_manager.set(uid, session)
+        try:
+            data, kb = await asyncio.to_thread(compress_image, pdf_bytes, target)
+            await deliver_file(session, "image_compressee.jpg", data, f"🖼️ {len(pdf_bytes)//1024} Ko → {kb} Ko")
+        except Exception as e:
+            logger.error(f"[imgcompress] {e}")
+            await deliver_text(session, "😕 Compression d'image impossible sur ce fichier.")
+        return
+    if mode == "pdf2img":
+        session["tool_mode"] = None; session_manager.set(uid, session)
+        if not (pdf_bytes[:4] == b"%PDF" or (filename or "").lower().endswith(".pdf")):
+            await deliver_text(session, "❌ Envoie un *PDF* pour la conversion en images.")
+            return
+        try:
+            z = await asyncio.to_thread(pdf_to_images_zip, pdf_bytes)
+            await deliver_file(session, "pages_png.zip", z, "🖼️ Chaque page du PDF en PNG (zip)")
+        except Exception as e:
+            logger.error(f"[pdf2img] {e}")
+            await deliver_text(session, "😕 Conversion impossible sur ce fichier.")
+        return
     # Mode compression : l'utilisateur a demandé /compresser puis envoie un PDF
     target_kb = session.pop("compress_target", 0)
     if target_kb:
@@ -3078,10 +3451,13 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         await deliver_text(session, "❌ Fichier illisible ou trop lourd (max 20 Mo).")
         return
     # Quota gratuit : l'analyse de CV (LLM/vision) est coûteuse ; l'admin est illimité.
-    ok, _ = _quota_check(session, "cv", FREE_CV_DAILY)
+    ok, used_credit, _ = _quota_or_credit(session, "cv", FREE_CV_DAILY)
     if not ok:
-        await deliver_text(session, _quota_exceeded_msg("l'analyse de CV"))
+        await deliver_text(session, _quota_exceeded_msg("l'analyse de CV") + "\n🎟️ Ou utilise des *crédits* : /credits.")
         return
+    if used_credit:
+        session_manager.set(uid, session)   # persiste le débit du crédit
+        await deliver_text(session, "🎟️ Limite gratuite atteinte — j'utilise *1 crédit* pour analyser ton CV.")
     fn = (filename or "cv").lower()
     is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
     is_docx = fn.endswith((".docx", ".dotx"))
@@ -4343,6 +4719,9 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         msg = (entete + "━━━━━━━━━━━━━━━━━━\n\n"
                + "\n\n".join(lignes)
                + "\n\n_/postuler <titre> pour ton CV + lettre · 👍/👎 pour affiner._")
+        up = _upsell_line(s, "generic")
+        if up:
+            msg += "\n\n" + up
         if await deliver_text(s, msg):
             opp_store.mark_notified(ids)
             notified += 1
@@ -4565,6 +4944,12 @@ async def _alert_admin(text: str) -> None:
                 await send_message(str(aid), text)
             except Exception as e:
                 logger.warning(f"alert admin {aid}: {e}")
+
+
+@app.get("/api/admin/stats")
+async def admin_stats(_auth: bool = Depends(verify_api_key)):
+    """Agrégats de pilotage pour le panel web (protégé par X-API-Key). Pas de données personnelles."""
+    return _admin_stats()
 
 
 @app.get("/api/selfcheck")

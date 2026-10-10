@@ -518,6 +518,65 @@ class PremiumStore:
         return {s: int(n) for s, n in rows}
 
 
+class CreditStore:
+    """Codes de crédits FONGIBLES : chaque code = N crédits utilisables sur n'importe quelle action.
+    Usage unique. Vendus sur Chariow, activés via /credits <code>. (Monétisation flexible sans abonnement.)"""
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS credit_codes (
+            code TEXT PRIMARY KEY, credits INTEGER, batch TEXT,
+            status TEXT DEFAULT 'unused', used_by TEXT, used_at TEXT, created_at TEXT)""")
+        con.commit(); con.close()
+
+    def _fresh_code(self, con) -> str:
+        for _ in range(10):
+            code = "CRD-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(8))
+            if not con.execute("SELECT 1 FROM credit_codes WHERE code=?", (code,)).fetchone():
+                return code
+        return "CRD-" + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(10))
+
+    def create_codes(self, credits: int, count: int, batch: str = "") -> list:
+        now = datetime.now(timezone.utc).isoformat()
+        out = []
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            for _ in range(max(1, int(count))):
+                code = self._fresh_code(con)
+                con.execute("INSERT INTO credit_codes(code,credits,batch,status,created_at) VALUES(?,?,?, 'unused', ?)",
+                            (code, int(credits), batch or now[:10], now))
+                out.append(code)
+            con.commit()
+        finally:
+            con.close()
+        return out
+
+    def redeem(self, code: str, user_id: str) -> dict:
+        """Consomme un code (usage unique). Renvoie {ok, credits} ou {ok:False, reason}."""
+        code = (code or "").strip().upper()
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT credits,status FROM credit_codes WHERE code=?", (code,)).fetchone()
+            if not row:
+                return {"ok": False, "reason": "introuvable"}
+            if row[1] == "used":
+                return {"ok": False, "reason": "déjà utilisé"}
+            con.execute("UPDATE credit_codes SET status='used', used_by=?, used_at=? WHERE code=? AND status='unused'",
+                        (str(user_id), datetime.now(timezone.utc).isoformat(), code))
+            if con.total_changes == 0:
+                return {"ok": False, "reason": "déjà utilisé"}
+            con.commit()
+            return {"ok": True, "credits": int(row[0] or 0)}
+        finally:
+            con.close()
+
+    def stats(self) -> dict:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT status, COUNT(*) FROM credit_codes GROUP BY status").fetchall()
+        con.close()
+        return {s: int(n) for s, n in rows}
+
+
 class ReferralStore:
     """Parrainage : un code stable par utilisateur ; chaque filleul n'est parrainé qu'une fois."""
     def __init__(self, path: str = DB_PATH):
@@ -622,5 +681,6 @@ opp_store._ensure_contacts()
 profile_store = ProfileStore()
 usage_store = UsageStore()
 premium_store = PremiumStore()
+credit_store = CreditStore()
 referral_store = ReferralStore()
 cache = Cache()

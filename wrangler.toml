@@ -1,0 +1,9 @@
+# Cloudflare Workers — publie la vitrine statique (dossier web/) via "Static Assets".
+# Le projet "nexmove" (Workers & Pages) utilise `npx wrangler deploy` comme Deploy command ;
+# ce fichier lui dit quoi publier. Aucun code Worker : c'est un déploiement 100 % assets statiques.
+name = "nexmove"
+compatibility_date = "2025-01-01"
+
+[assets]
+directory = "./web"
+# Chaque fichier est servi par son chemin : / -> web/index.html, /admin.html, /cgu.html, etc.

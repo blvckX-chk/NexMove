@@ -1087,3 +1087,133 @@ def test_cmd_outils_liste_et_boutons():
     msg, s = _run(main.process_text_message(s, "/outils"))
     assert "/compresser" in msg and "/fusionner" in msg
     assert s.get("_kb_options")
+
+# ------------------ Nouveaux outils (v2.56) ------------------
+def test_compress_image_reduit():
+    from PIL import Image as _I
+    import io as _io
+    im = _I.new("RGB", (800, 800), (123, 200, 50))
+    b = _io.BytesIO(); im.save(b, format="PNG"); raw = b.getvalue()
+    data, kb = main.compress_image(raw, 100)
+    assert isinstance(data, (bytes, bytearray)) and len(data) <= len(raw) and isinstance(kb, int)
+
+def test_pdf_to_images_zip():
+    import fitz as _f
+    d = _f.open(); d.new_page(); d.new_page(); raw = d.tobytes(); d.close()
+    z = main.pdf_to_images_zip(raw)
+    assert z[:2] == b"PK" and len(z) > 50
+
+def test_anonymize_profil_masque():
+    p = {"identite": {"nom": "Jean Dupont", "email": "j@x.com", "telephone": "090", "localisation": "Cotonou"},
+         "competences": {"techniques": ["Python"]}}
+    a = main._anonymize_profil(p)
+    assert a["identite"]["nom"] == "Candidat" and a["identite"]["email"] == ""
+    assert p["identite"]["nom"] == "Jean Dupont"  # original intact (copie)
+
+def test_condense_profil_trim():
+    p = {"formation": [{"d": i} for i in range(5)],
+         "experience": [{"missions": list(range(6))} for _ in range(5)],
+         "competences": {"techniques": [f"t{i}" for i in range(20)]}}
+    c = main._condense_profil(p)
+    assert len(c["formation"]) == 2 and len(c["experience"]) == 3
+    assert len(c["experience"][0]["missions"]) == 2 and len(c["competences"]["techniques"]) == 8
+
+def test_profile_perk_selon_objectif():
+    s_etud = {"profil": {"preferences": {"objectif": "étudier à l'étranger"}}}
+    s_trav = {"profil": {"preferences": {"objectif": "travailler"}}}
+    assert "Campus France" in main._profile_perk(s_etud)
+    assert "compatibilité" in main._profile_perk(s_trav)
+
+def test_cv1page_premium_gate():
+    s = {"user_id": "g1", "chat_id": "1", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/cv1page"))
+    assert "Premium" in msg
+
+def test_anonymiser_premium_gate():
+    s = {"user_id": "g2", "chat_id": "1", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/anonymiser"))
+    assert "Premium" in msg
+
+def test_cmd_extraire_arme_le_mode():
+    s = {"user_id": "e1", "chat_id": "1", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/extraire"))
+    assert s.get("tool_mode") == "extract" and "texte" in msg.lower()
+
+# ------------------ Crédits fongibles ------------------
+def test_credit_balance_et_quota_or_credit(monkeypatch):
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (False, 0))
+    s = {"user_id": "c", "credits": 2}
+    ok, used, _ = main._quota_or_credit(s, "cv", 8)
+    assert ok and used and s["credits"] == 1
+
+def test_quota_or_credit_sans_credit(monkeypatch):
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (False, 0))
+    s = {"user_id": "c", "credits": 0}
+    ok, used, _ = main._quota_or_credit(s, "cv", 8)
+    assert not ok and not used
+
+def test_quota_or_credit_dans_le_quota(monkeypatch):
+    monkeypatch.setattr(main, "_quota_check", lambda s, f, l: (True, 3))
+    s = {"user_id": "c", "credits": 5}
+    ok, used, r = main._quota_or_credit(s, "cv", 8)
+    assert ok and not used and s["credits"] == 5 and r == 3
+
+def test_cmd_credits_redeem(monkeypatch):
+    monkeypatch.setattr(main.credit_store, "redeem", lambda code, uid: {"ok": True, "credits": 10})
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: None)
+    s = {"user_id": "cr", "chat_id": "1", "historique": [], "onboarding_complete": True, "credits": 2}
+    msg, s = _run(main.process_text_message(s, "/credits CRD-ABCDEFGH"))
+    assert s["credits"] == 12 and "12" in msg
+
+def test_cmd_gencredits_admin_gate(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/gencredits 10 5"))
+    assert "administrateur" in msg.lower()
+
+# ------------------ Routeur langage naturel : nouvelles commandes ------------------
+def test_valid_intents_inclut_nouvelles_commandes():
+    for c in ("chances", "compatibilite", "simulation", "creercv", "outils",
+              "credits", "mescandidatures", "offres", "extraire"):
+        assert c in main._VALID_INTENTS
+
+# ------------------ Panel / stats admin ------------------
+def test_admin_stats_structure():
+    d = main._admin_stats()
+    for k in ("version", "users_total", "onboarded", "payants_actifs",
+              "premium_codes", "credit_codes", "sources_marketing"):
+        assert k in d
+
+def test_cmd_stats_admin_gate(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    s = {"user_id": "u", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/stats"))
+    assert "administrateur" in msg.lower()
+
+def test_cmd_stats_admin_ok(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"7"})
+    s = {"user_id": "7", "chat_id": "7", "historique": [], "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/stats"))
+    assert "tableau de bord" in msg.lower()
+
+def test_api_admin_stats_endpoint():
+    d = _run(main.admin_stats(_auth=True))
+    assert d.get("version") and "users_total" in d
+
+# ------------------ Récap de profil éditable ------------------
+def test_try_profil_edit(monkeypatch):
+    monkeypatch.setattr(main.profile_store, "save", lambda uid, s: "NEX-XXXXX")
+    s = {"user_id": "p", "profil": {"preferences": {"objectif": "etudier"}}}
+    r = main._try_profil_edit(s, "objectif: travailler")
+    assert r and s["profil"]["preferences"]["objectif"] == "travailler"
+
+def test_try_profil_edit_champ_inconnu():
+    assert main._try_profil_edit({"profil": {}}, "message: coucou") is None
+    assert main._try_profil_edit({"profil": {}}, "juste une phrase sans deux points") is None
+
+def test_profil_edit_via_message(monkeypatch):
+    monkeypatch.setattr(main.profile_store, "save", lambda uid, s: "NEX-XXXXX")
+    s = {"user_id": "pe", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "profil": {"preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "pays: Canada"))
+    assert s["profil"]["preferences"]["pays_cibles"] == "Canada" and "mis à jour" in msg.lower()

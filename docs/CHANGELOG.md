@@ -2,6 +2,40 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.59 — Panel admin + récap de profil éditable + fix cron & /canada
+- **Panel web admin** : `web/admin.html` (hébergé sur la vitrine) interroge **`GET /api/admin/stats`**
+  (protégé par la clé admin) → KPIs (users, onboardés, payants, crédits), codes Premium/crédits,
+  attribution par source. Commande Telegram équivalente : **/stats** (admin).
+- **Récap de profil éditable** : /profil affiche un récap + l'utilisateur corrige en écrivant
+  `champ: valeur` (ex. `objectif: travailler`, `pays: Canada`, `mots-clés: data, python`).
+- **Fix** : le script `scripts/nex-cron.sh` utilisait le mauvais en-tête (`X-API-Key` → `X-Forge-Nex-Key`)
+  → les crons échouaient silencieusement. Corrigé + rapporte désormais le code HTTP.
+- **Fix bug** : `/canada` (et autres handlers) plantaient (UnboundLocalError `profil`) — `profil` est
+  maintenant disponible pour tous les handlers.
+
+## v2.58 — Langage naturel étendu (ne plus se perdre dans les commandes)
+- Le routeur en langage naturel (utilisateurs onboardés) reconnaît désormais **toutes les commandes
+  récentes** : écrire « quelles sont mes chances pour ce master », « entraîne-moi à l'entretien »,
+  « crée-moi un CV », « mes candidatures », « la boîte à outils », « combien de crédits »… déclenche la
+  bonne action **sans connaître le nom de la commande**. `_VALID_INTENTS` + prompt du routeur enrichis
+  (chances, compatibilite, simulation, creercv, outils, extraire, mescandidatures, parrainage, offres, credits…).
+
+## v2.57 — Crédits fongibles (monétisation flexible) + upsell branché partout
+- **Packs de crédits fongibles** : 1 crédit = 1 action (CV, score, simulation…) quand la limite gratuite
+  du jour est atteinte. Codes **CRD-XXXXXXXX** à usage unique (vendus sur Chariow), activés via
+  **/credits <code>** ; solde via **/credits**. Génération admin : **/gencredits <crédits> <nombre>**.
+  Les crédits se déclenchent automatiquement (CV, /compatibilite, /chances, /simulation) et ne périment pas.
+- **Upsell branché** aussi sur : fin d'onboarding, dossier généré (/postuler), pied du digest quotidien.
+- /offres et /monabo exposent les crédits ; CreditStore (table credit_codes).
+
+## v2.56 — Nouveaux outils + upsell personnalisé selon le profil
+- **5 nouveaux outils** (sans dépendance) : **/extraire** (texte d'un PDF/scan/photo, OCR),
+  **/compresserimage** (alléger une photo), **/enimages** (PDF → PNG en .zip),
+  et deux **perks Premium** : **/cv1page** (CV synthétique) et **/anonymiser** (CV à l'aveugle).
+- **Upsell personnalisé** : les nudges s'adaptent désormais à l'**objectif du profil** (études →
+  dossier Campus France / score ; emploi → compatibilité / candidatures), en plus du palier.
+- /outils enrichi avec les nouveaux outils.
+
 ## v2.55 — Boîte à outils mise en avant + moteur d'upsell
 - **/outils** : hub qui met en avant tous les outils intégrés (postuler, dossier, compresser, fusionner,
   images→PDF, découper, traduire, créer CV, timeline) avec boutons + astuces. Ajouté à l'aide.

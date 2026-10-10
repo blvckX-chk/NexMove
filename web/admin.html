@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>NexMove — Panel admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{--bleu:#2F5BFF;--nuit:#0B1B4D;--ambre:#FFB020;--fond:#F7F9FC;--carte:#fff;--texte:#0F172A;--gris:#5b6478;--bord:#e6ebf3}
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--fond:#0A1024;--carte:#111a35;--texte:#eef2fb;--gris:#a4adc4;--bord:#1e2a4d}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--fond);color:var(--texte);font-family:Inter,system-ui,sans-serif;line-height:1.5}
+  .wrap{max-width:960px;margin:0 auto;padding:20px 16px 48px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:.5rem;font-weight:800;font-size:1.2rem}
+  .logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--bleu),var(--nuit));display:grid;place-items:center}
+  .logo svg{width:18px;height:18px}
+  input,button{font:inherit}
+  input{padding:.6rem .8rem;border:1.5px solid var(--bord);border-radius:10px;background:var(--carte);color:var(--texte);min-width:220px}
+  button{cursor:pointer;border:0;border-radius:10px;padding:.62rem 1.1rem;font-weight:700;background:var(--bleu);color:#fff}
+  button.ghost{background:transparent;border:1.5px solid var(--bord);color:var(--texte);font-weight:600}
+  .bar{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:20px 0}
+  @media(max-width:720px){.grid{grid-template-columns:repeat(2,1fr)}}
+  .card{background:var(--carte);border:1px solid var(--bord);border-radius:16px;padding:18px}
+  .card .k{color:var(--gris);font-size:.82rem;font-weight:600}
+  .card .v{font-size:1.9rem;font-weight:800;margin-top:.25rem}
+  h2{font-size:1.05rem;margin:22px 0 10px}
+  table{width:100%;border-collapse:collapse;background:var(--carte);border:1px solid var(--bord);border-radius:14px;overflow:hidden}
+  th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--bord);font-size:.92rem}
+  th{color:var(--gris);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
+  tr:last-child td{border-bottom:0}
+  .muted{color:var(--gris);font-size:.88rem}
+  .pill{display:inline-block;background:color-mix(in srgb,var(--bleu) 14%,transparent);color:var(--bleu);padding:.1rem .5rem;border-radius:999px;font-weight:700;font-size:.8rem}
+  .err{background:color-mix(in srgb,#e11 14%,transparent);color:#e11;padding:.6rem .9rem;border-radius:10px;margin:12px 0;font-size:.9rem}
+  .foot{margin-top:28px;color:var(--gris);font-size:.82rem}
+  code{background:color-mix(in srgb,var(--bleu) 12%,transparent);padding:.05rem .35rem;border-radius:5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand"><span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove · Panel</div>
+    <div class="bar">
+      <input id="key" type="password" placeholder="Clé admin (X-Forge-Nex-Key)" autocomplete="off">
+      <button id="load">Charger</button>
+      <button id="logout" class="ghost">Oublier la clé</button>
+    </div>
+  </header>
+
+  <div id="msg"></div>
+
+  <div class="grid" id="kpis" hidden>
+    <div class="card"><div class="k">Utilisateurs</div><div class="v" id="k-users">—</div></div>
+    <div class="card"><div class="k">Onboardés</div><div class="v" id="k-onb">—</div></div>
+    <div class="card"><div class="k">Payants actifs</div><div class="v" id="k-paid">—</div></div>
+    <div class="card"><div class="k">Avec crédits</div><div class="v" id="k-cred">—</div></div>
+  </div>
+
+  <div id="codes" hidden>
+    <h2>Codes</h2>
+    <table>
+      <thead><tr><th>Type</th><th>Non utilisés</th><th>Utilisés</th></tr></thead>
+      <tbody>
+        <tr><td>💎 Premium</td><td id="pc-unused">—</td><td id="pc-used">—</td></tr>
+        <tr><td>🎟️ Crédits</td><td id="cc-unused">—</td><td id="cc-used">—</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="srcwrap" hidden>
+    <h2>Attribution par source <span class="pill" id="src-count"></span></h2>
+    <table>
+      <thead><tr><th>Source</th><th>Users</th><th>Onboardés</th><th>Payants</th></tr></thead>
+      <tbody id="src-body"></tbody>
+    </table>
+  </div>
+
+  <div class="foot">
+    Données agrégées (aucune info personnelle). Version <span id="ver">—</span> · maj <span id="ts">—</span>.<br>
+    API : <code id="api-url"></code>. La clé reste dans ce navigateur (localStorage), elle n'est jamais partagée.
+  </div>
+</div>
+
+<script>
+  // À AJUSTER si ton sous-domaine API change :
+  var API = "https://api-nexmove.blvckunlimited.space/api/admin/stats";
+  document.getElementById("api-url").textContent = API;
+
+  var keyInput = document.getElementById("key");
+  var msg = document.getElementById("msg");
+  try { keyInput.value = localStorage.getItem("nexmove_admin_key") || ""; } catch(e){}
+
+  function setMsg(html){ msg.innerHTML = html || ""; }
+  function num(n){ return (n===undefined||n===null) ? "—" : n; }
+
+  async function load(){
+    var key = keyInput.value.trim();
+    if(!key){ setMsg('<div class="err">Entre ta clé admin.</div>'); return; }
+    try { localStorage.setItem("nexmove_admin_key", key); } catch(e){}
+    setMsg('<div class="muted">Chargement…</div>');
+    try{
+      var r = await fetch(API, { headers: { "X-Forge-Nex-Key": key } });
+      if(r.status === 403 || r.status === 401){ setMsg('<div class="err">Clé refusée (403). Vérifie ta clé admin.</div>'); return; }
+      if(!r.ok){ setMsg('<div class="err">Erreur '+r.status+'.</div>'); return; }
+      var d = await r.json();
+      setMsg("");
+      document.getElementById("kpis").hidden = false;
+      document.getElementById("codes").hidden = false;
+      document.getElementById("srcwrap").hidden = false;
+      document.getElementById("k-users").textContent = num(d.users_total);
+      document.getElementById("k-onb").textContent = num(d.onboarded);
+      document.getElementById("k-paid").textContent = num(d.payants_actifs);
+      document.getElementById("k-cred").textContent = num(d.users_avec_credits);
+      var pc = d.premium_codes||{}, cc = d.credit_codes||{};
+      document.getElementById("pc-unused").textContent = num(pc.unused||0);
+      document.getElementById("pc-used").textContent = num(pc.used||0);
+      document.getElementById("cc-unused").textContent = num(cc.unused||0);
+      document.getElementById("cc-used").textContent = num(cc.used||0);
+      var body = document.getElementById("src-body"); body.innerHTML = "";
+      (d.sources_marketing||[]).forEach(function(s){
+        var tr = document.createElement("tr");
+        tr.innerHTML = "<td><code>"+s.source+"</code></td><td>"+s.total+"</td><td>"+s.onboarded+"</td><td>"+s.paid+"</td>";
+        body.appendChild(tr);
+      });
+      document.getElementById("src-count").textContent = (d.sources_marketing||[]).length + " sources";
+      document.getElementById("ver").textContent = d.version || "—";
+      document.getElementById("ts").textContent = (d.ts||"").replace("T"," ").slice(0,16);
+    }catch(e){
+      setMsg('<div class="err">Impossible de joindre l\'API. Vérifie que le tunnel tourne et l\'URL ci-dessous.</div>');
+    }
+  }
+  document.getElementById("load").addEventListener("click", load);
+  document.getElementById("logout").addEventListener("click", function(){
+    try{ localStorage.removeItem("nexmove_admin_key"); }catch(e){} keyInput.value=""; setMsg('<div class="muted">Clé oubliée.</div>');
+  });
+  keyInput.addEventListener("keydown", function(e){ if(e.key==="Enter") load(); });
+  if(keyInput.value) load();
+</script>
+</body>
+</html>
