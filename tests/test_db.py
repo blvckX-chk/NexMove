@@ -288,3 +288,16 @@ def test_credit_codes_create_redeem(tmp_path, monkeypatch):
     assert cs.redeem(codes[0], "u2")["ok"] is False   # usage unique
     assert cs.redeem("CRD-UNKNOWN", "u1")["ok"] is False
     assert cs.stats().get("used") == 1
+
+def test_candidature_note_et_full(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    store = db.OppStore()
+    store.add_candidature("u1", "Master Informatique Toulouse", "15/03", "2027-03-15")
+    assert store.set_note("u1", "master informatique", "entretien jeudi 14h") == 1
+    assert store.update_statut("u1", "master", "entretien") == 1
+    rows = store.list_candidatures_full("u1")
+    assert rows and rows[0][0] == "Master Informatique Toulouse"
+    assert rows[0][2] == "entretien" and rows[0][3] == "entretien jeudi 14h"
+    assert rows[0][5]  # updated_at renseigné
+    # note sur cible inconnue -> 0 ligne
+    assert store.set_note("u1", "inexistant xyz", "note") == 0

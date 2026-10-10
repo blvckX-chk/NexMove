@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.62 — Suivi candidatures enrichi (pipeline + notes)
+- **/mescandidatures** affiche désormais un **pipeline** regroupé par statut (En préparation →
+  Envoyée → Relancée → Entretien → Réponse → Acceptée/Refusée/Clôturée), avec deadline et note.
+- Nouvelle commande **/note <cible> : <texte>** pour garder un mémo par candidature
+  (ex. « entretien jeudi 14h, relire le projet »).
+- DB : colonnes `note` + `updated_at` sur `candidatures` ; `set_note`, `list_candidatures_full`.
+- Les rappels de relance automatiques (cron `/api/relances`) existaient déjà. Tests ajoutés.
+
 ## v2.61 — Guide « comment postuler » (e-mail/formulaire prêt à copier)
 - Nouvelle commande **/commentpostuler <offre>** : le bot explique **comment candidater**
   (e-mail / formulaire / plateforme), rédige l'**objet** + le **message** prêts à copier-coller,

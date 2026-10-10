@@ -135,7 +135,9 @@ class OppStore:
             id TEXT PRIMARY KEY, user_id TEXT, cible TEXT, deadline TEXT,
             statut TEXT DEFAULT 'en_preparation', created_at TEXT)""")
         for ddl in ("ALTER TABLE candidatures ADD COLUMN deadline_iso TEXT DEFAULT ''",
-                    "ALTER TABLE candidatures ADD COLUMN reminders_sent TEXT DEFAULT ''"):
+                    "ALTER TABLE candidatures ADD COLUMN reminders_sent TEXT DEFAULT ''",
+                    "ALTER TABLE candidatures ADD COLUMN note TEXT DEFAULT ''",
+                    "ALTER TABLE candidatures ADD COLUMN updated_at TEXT DEFAULT ''"):
             try:
                 con.execute(ddl)
             except Exception:
@@ -207,11 +209,32 @@ class OppStore:
         """Met à jour le statut de la/les candidature(s) dont la cible contient `cible_query`.
         Renvoie le nombre de lignes modifiées."""
         con = sqlite3.connect(self._path, timeout=10)
-        con.execute("UPDATE candidatures SET statut=? WHERE user_id=? AND lower(cible) LIKE ?",
-                    (str(statut), str(user_id), f"%{str(cible_query).lower()}%"))
+        now = datetime.now(timezone.utc).isoformat()
+        con.execute("UPDATE candidatures SET statut=?, updated_at=? WHERE user_id=? AND lower(cible) LIKE ?",
+                    (str(statut), now, str(user_id), f"%{str(cible_query).lower()}%"))
         n = con.total_changes
         con.commit(); con.close()
         return int(n)
+
+    def set_note(self, user_id, cible_query, note) -> int:
+        """Ajoute/remplace la note libre d'une candidature (ex. « entretien jeudi 14h »).
+        Renvoie le nombre de lignes modifiées."""
+        con = sqlite3.connect(self._path, timeout=10)
+        now = datetime.now(timezone.utc).isoformat()
+        con.execute("UPDATE candidatures SET note=?, updated_at=? WHERE user_id=? AND lower(cible) LIKE ?",
+                    (str(note)[:500], now, str(user_id), f"%{str(cible_query).lower()}%"))
+        n = con.total_changes
+        con.commit(); con.close()
+        return int(n)
+
+    def list_candidatures_full(self, user_id):
+        """Liste enrichie pour le suivi : cible, deadline, statut, note, dates."""
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("""SELECT cible,deadline,statut,note,created_at,updated_at
+                              FROM candidatures WHERE user_id=? ORDER BY created_at DESC""",
+                           (str(user_id),)).fetchall()
+        con.close()
+        return rows
 
     def all_candidatures(self):
         con = sqlite3.connect(self._path, timeout=10)
