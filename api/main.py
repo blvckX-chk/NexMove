@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.61.0"
+VERSION         = "2.62.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2475,19 +2475,54 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         return msg, session
 
     if low.startswith("/mescandidatures") or low.startswith("/candidatures") or low.startswith("/suivi") or low.startswith("/pipeline"):
-        cands = opp_store.list_candidatures(session.get("user_id"))
+        cands = opp_store.list_candidatures_full(session.get("user_id"))
         if not cands:
             msg = ("🗂️ *Tes candidatures* — vide pour l'instant.\n"
                    "Prépare un dossier avec /dossier <cible> ou /postuler <cible> : il apparaîtra ici, et tu suivras son avancement.")
         else:
-            lignes = []
-            for (cible, deadline, statut) in cands[:20]:
-                lib, emo = _CAND_STATUTS.get(statut or "en_preparation", ("En préparation", "📝"))
-                d = f" · 📅 {_md_clean(deadline)}" if deadline else ""
-                lignes.append(f"{emo} *{_md_clean(cible)[:48]}* — _{lib}_{d}")
-            msg = ("🗂️ *Suivi de tes candidatures*\n" + "\n".join(lignes)
-                   + "\n\n✏️ Mettre à jour : `/candidature <statut> <cible>`\n"
-                     "_statuts : envoyée · relancée · entretien · réponse · acceptée · refusée · clôturée_")
+            # Vue PIPELINE : regroupées par statut, dans l'ordre d'avancement.
+            ordre = ["en_preparation", "envoyee", "relance", "entretien", "reponse", "acceptee", "refusee", "cloturee"]
+            groupes = {k: [] for k in ordre}
+            for (cible, deadline, statut, note, cree, maj) in cands[:40]:
+                groupes.setdefault(statut or "en_preparation", groupes["en_preparation"]).append((cible, deadline, note))
+            blocs = []
+            for st in ordre:
+                items = groupes.get(st) or []
+                if not items:
+                    continue
+                lib, emo = _CAND_STATUTS[st]
+                lignes = []
+                for (cible, deadline, note) in items:
+                    ligne = f"   • *{_md_clean(cible)[:48]}*"
+                    if deadline:
+                        ligne += f" · 📅 {_md_clean(deadline)}"
+                    if note:
+                        ligne += f"\n     🗒️ _{_md_clean(note)[:90]}_"
+                    lignes.append(ligne)
+                blocs.append(f"{emo} *{lib}* ({len(items)})\n" + "\n".join(lignes))
+            msg = ("🗂️ *Suivi de tes candidatures*\n\n" + "\n\n".join(blocs)
+                   + "\n\n✏️ Statut : `/candidature <statut> <cible>`"
+                     "\n🗒️ Note : `/note <cible> : <texte>`"
+                     "\n_statuts : envoyée · relancée · entretien · réponse · acceptée · refusée · clôturée_")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/note") or low.startswith("/noter"):
+        reste = t.split(maxsplit=1)
+        corps = reste[1].strip() if len(reste) > 1 else ""
+        # Séparateur cible / note : " : " en priorité, sinon " | " ou " - ".
+        sep = next((s for s in (" : ", " | ", " — ", " - ") if s in corps), None)
+        cible, note = ("", "")
+        if sep:
+            cible, note = corps.split(sep, 1)
+            cible, note = cible.strip(), note.strip()
+        if not cible or not note:
+            msg = ("🗒️ *Ajouter une note à une candidature*\n`/note <cible> : <texte>`\n"
+                   "Ex : `/note Master informatique : entretien jeudi 14h, relire le projet`")
+        else:
+            n = opp_store.set_note(session.get("user_id"), cible, note)
+            msg = (f"🗒️ Note enregistrée pour *{_md_clean(cible)[:48]}*." if n else
+                   f"🤔 Aucune candidature ne correspond à « {_md_clean(cible)} ». Vérifie avec /mescandidatures (ou prépare-la via /postuler).")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

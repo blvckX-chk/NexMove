@@ -1276,3 +1276,31 @@ def test_comment_postuler_sans_profil():
 def test_comment_postuler_nl_route():
     assert main._free_text_to_command("comment postuler à orange", "comment postuler à Orange") == "/commentpostuler Orange"
     assert main._free_text_to_command("comment candidater pour la bourse daad", "comment candidater pour la bourse DAAD") == "/commentpostuler la bourse DAAD"
+
+# ── Suivi candidatures enrichi : notes + pipeline (v2.62) ──
+def test_note_command(monkeypatch):
+    captured = {}
+    def fake_set_note(uid, cible, note):
+        captured["v"] = (cible, note); return 1
+    monkeypatch.setattr(main.opp_store, "set_note", fake_set_note)
+    s = {"user_id": "n1", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "etape": "ACTIF", "profil": {"identite": {"nom": "A"}}}
+    msg, s = _run(main.process_text_message(s, "/note Master Info : entretien jeudi 14h"))
+    assert "enregistrée" in msg.lower()
+    assert captured["v"] == ("Master Info", "entretien jeudi 14h")
+
+def test_note_command_sans_separateur():
+    s = {"user_id": "n2", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "etape": "ACTIF", "profil": {"identite": {"nom": "A"}}}
+    msg, s = _run(main.process_text_message(s, "/note juste du texte sans separateur"))
+    assert "Ajouter une note" in msg
+
+def test_mescandidatures_pipeline(monkeypatch):
+    rows = [("Master IA Toulouse", "15/03", "entretien", "revoir le projet", "c", "u"),
+            ("Dev Python Cotonou", "", "envoyee", "", "c", "u")]
+    monkeypatch.setattr(main.opp_store, "list_candidatures_full", lambda uid: rows)
+    s = {"user_id": "mc", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "etape": "ACTIF", "profil": {"identite": {"nom": "A"}}}
+    msg, s = _run(main.process_text_message(s, "/mescandidatures"))
+    assert "Entretien" in msg and "Envoyée" in msg
+    assert "revoir le projet" in msg and "/note" in msg
