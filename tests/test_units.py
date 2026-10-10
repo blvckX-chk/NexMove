@@ -1253,3 +1253,26 @@ def test_cv_preview_offers_reutilisees(monkeypatch):
     msg, s = _run(main.process_text_message(s, "oui"))
     assert "offres notées" in msg.lower() and s.get("cv_preview_offers")
     assert calls["n"] == 1
+
+# ── Guide "comment postuler" (v2.61) ──
+def test_comment_postuler(monkeypatch):
+    async def fake(system, prompt, **kw):
+        return {"mode": "email", "destinataire": "rh@x.co", "objet": "Candidature SOC",
+                "message": "Bonjour, je candidate...", "pieces": ["CV adapté", "lettre"],
+                "etapes": ["Préparer le CV", "Envoyer l'e-mail"], "conseil": "Relance à J+7"}
+    monkeypatch.setattr(main, "call_groq", fake)
+    s = {"user_id": "cp", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "etape": "ACTIF", "profil": {"identite": {"nom": "Awa", "email": "a@x.co"}}}
+    msg, s = _run(main.process_text_message(s, "/commentpostuler Analyste SOC chez Orange"))
+    assert "Comment postuler" in msg and "Candidature SOC" in msg
+    assert "rh@x.co" in msg and "/postuler" in msg
+
+def test_comment_postuler_sans_profil():
+    s = {"user_id": "np", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "etape": "ACTIF", "profil": {}}
+    msg, s = _run(main.process_text_message(s, "/commentpostuler Analyste"))
+    assert "profil" in msg.lower()
+
+def test_comment_postuler_nl_route():
+    assert main._free_text_to_command("comment postuler à orange", "comment postuler à Orange") == "/commentpostuler Orange"
+    assert main._free_text_to_command("comment candidater pour la bourse daad", "comment candidater pour la bourse DAAD") == "/commentpostuler la bourse DAAD"
