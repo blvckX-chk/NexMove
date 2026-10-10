@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.59.0"
+VERSION         = "2.60.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -772,6 +772,34 @@ def _type_label(typ):
     if any(k in tp for k in ("emploi", "job", "poste", "stage", "cdi", "cdd")):
         return "💼 EMPLOI"
     return "🌍 OPPORTUNITÉ"
+
+def _score_badge(score) -> str:
+    """Note de compatibilité 0-100 -> '82% · Fort' (comme les offres notées de la vitrine)."""
+    s = max(0, min(100, int(score or 0)))
+    if s >= 85:
+        lab = "Excellent"
+    elif s >= 70:
+        lab = "Fort"
+    elif s >= 55:
+        lab = "Correct"
+    else:
+        lab = "Partiel"
+    return f"{s}% · {lab}"
+
+def _render_scored_offers(opps, n: int = 3) -> str:
+    """Affiche des offres AVEC leur note de compatibilité + raison + lien (format partagé)."""
+    lignes = []
+    for i, o in enumerate((opps or [])[:n], 1):
+        titre = _md_clean(str(o.get("titre", "") or ""))[:55] or "Opportunité"
+        ligne = f"\n{i}. {_type_label(o.get('type', ''))} *{titre}*\n   🧭 Compatibilité : {_score_badge(o.get('score_composite'))}"
+        raison = _md_clean(str(o.get("raison", "") or "")).strip()
+        if raison:
+            ligne += f"\n   💬 {raison[:110]}"
+        lien = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
+        if lien:
+            ligne += f"\n   🔗 {lien}"
+        lignes.append(ligne)
+    return "\n".join(lignes)
 
 def _resume_prefs(prefs):
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
@@ -2499,10 +2527,25 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"
         filled = _prefill_prefs_from_cv(session)   # B1 : moins de questions grâce au CV
+        # Recherche AUTO : des offres notées tout de suite après le CV (valeur immédiate).
+        preview = ""
+        try:
+            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+            opps = res.get("opportunites", []) or []
+            for o in opps:
+                opp_store.add(session.get("user_id"), o)
+            if opps:
+                session["cv_preview_offers"] = opps[:6]   # réutilisées à la fin (pas de 2e recherche)
+                preview = ("🔎 *Déjà des offres notées pour ton profil :*\n"
+                           + _render_scored_offers(opps, 3)
+                           + "\n\n_Réponds à 2-3 questions pour affiner et recevoir les meilleures chaque jour._\n\n")
+        except Exception as e:
+            logger.error(f"cv-preview osint: {e}")
         q = _ask_pref(session, "objectif")
         if filled:
             q = ("📎 J'ai déjà repéré *" + "* et *".join(_PREF_LABELS.get(f, f) for f in filled) +
                  "* dans ton CV (tu pourras corriger à la fin).\n\n") + q
+        q = preview + q
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
 
@@ -2584,19 +2627,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                                     f"🎉 *Parrainage réussi !* Tu as {cnt} filleuls → *{REFERRAL_REWARD_DAYS} jours Premium* offerts. Tape /monabo.")
             except Exception as e:
                 logger.error(f"referral reward: {e}")
-            msg = "🎉 *Profil validé !* Voici déjà des pistes pour toi :\n"
-            # Première veille AUTOMATIQUE : de la valeur immédiate (levier de rétention).
+            msg = "🎉 *Profil validé !* Voici tes offres notées :\n"
+            # Première veille : on RÉUTILISE l'aperçu déjà calculé après le CV (pas de 2e recherche),
+            # sinon on lance une recherche maintenant. Offres affichées AVEC leur note.
             try:
-                res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
-                top = res.get("opportunites", [])[:3]
-                for o in res.get("opportunites", []):
-                    opp_store.add(session.get("user_id"), o)
+                cached = session.pop("cv_preview_offers", None)
+                if cached:
+                    top = cached[:3]
+                else:
+                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+                    top = res.get("opportunites", [])[:3]
+                    for o in res.get("opportunites", []):
+                        opp_store.add(session.get("user_id"), o)
                 if top:
-                    for i, o in enumerate(top, 1):
-                        msg += f"\n{i}. {_type_label(o.get('type',''))} *{_md_clean(o.get('titre',''))[:55]}*"
-                        lien = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
-                        if lien:
-                            msg += f"\n   🔗 {lien}"
+                    msg += _render_scored_offers(top, 3)
                     _attach_feedback(session, top)
                 else:
                     msg += "\nJe scrute déjà le web — tape /veille dans un instant."

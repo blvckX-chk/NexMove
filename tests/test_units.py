@@ -1217,3 +1217,39 @@ def test_profil_edit_via_message(monkeypatch):
          "profil": {"preferences": {}}}
     msg, s = _run(main.process_text_message(s, "pays: Canada"))
     assert s["profil"]["preferences"]["pays_cibles"] == "Canada" and "mis à jour" in msg.lower()
+
+# ── Recherche auto après CV : notation des offres (v2.60) ──
+def test_score_badge_paliers():
+    assert main._score_badge(92).endswith("Excellent")
+    assert main._score_badge(70).endswith("Fort")
+    assert main._score_badge(55).endswith("Correct")
+    assert main._score_badge(10).endswith("Partiel")
+    assert main._score_badge(None).startswith("0%")
+    assert main._score_badge(150).startswith("100%")
+
+def test_render_scored_offers():
+    offers = [{"type": "emploi", "titre": "Dev Python", "score_composite": 88,
+               "raison": "React et tests couverts", "url": "https://ex.co/1"},
+              {"type": "bourse", "titre": "Master IA", "score_composite": 62,
+               "portail_officiel": "https://ex.co/2"}]
+    out = main._render_scored_offers(offers, 3)
+    assert "Compatibilité : 88% · Excellent" in out
+    assert "Dev Python" in out and "https://ex.co/1" in out
+    assert "62% · Correct" in out
+    # n limite le nombre d'offres affichées
+    assert main._render_scored_offers(offers, 1).count("Compatibilité") == 1
+
+def test_cv_preview_offers_reutilisees(monkeypatch):
+    # L'aperçu calculé après le CV est réutilisé à la validation finale (pas de 2e recherche).
+    calls = {"n": 0}
+    async def fake_osint(profil, cible="", user_id="", **kw):
+        calls["n"] += 1
+        return {"opportunites": [{"type": "emploi", "titre": "Offre", "score_composite": 80, "url": "https://ex.co"}]}
+    monkeypatch.setattr(main, "run_osint", fake_osint)
+    monkeypatch.setattr(main.opp_store, "add", lambda *a, **k: True)
+    monkeypatch.setattr(main.profile_store, "save", lambda uid, s: "NEX-XXXXX")
+    s = {"user_id": "cv1", "chat_id": "1", "historique": [], "etape": "CV_RECU",
+         "profil": {"identite": {"nom": "A"}, "preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "oui"))
+    assert "offres notées" in msg.lower() and s.get("cv_preview_offers")
+    assert calls["n"] == 1
