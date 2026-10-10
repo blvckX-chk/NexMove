@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.60 — Recherche auto après le CV (offres notées immédiates)
+- **Valeur immédiate** : dès que l'utilisateur valide son CV, le bot lance une **recherche
+  automatique** et affiche **3 offres notées** (compatibilité %, niveau, raison, lien) — sans attendre
+  les questions de préférences. Les questions servent ensuite à *affiner*.
+- **Offres notées partout** : nouveau format partagé `_render_scored_offers` + badge
+  `_score_badge` (Excellent/Fort/Correct/Partiel) ; la veille finale d'onboarding affiche aussi la note.
+- **Sans surcoût** : l'aperçu calculé après le CV est **réutilisé** à la validation finale
+  (une seule recherche, pas deux). Tests ajoutés (badge, rendu, réutilisation).
+
 ## v2.59 — Panel admin + récap de profil éditable + fix cron & /canada
 - **Panel web admin** : `web/admin.html` (hébergé sur la vitrine) interroge **`GET /api/admin/stats`**
   (protégé par la clé admin) → KPIs (users, onboardés, payants, crédits), codes Premium/crédits,
