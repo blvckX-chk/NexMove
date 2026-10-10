@@ -100,7 +100,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.62.0"
+VERSION         = "2.63.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -706,7 +706,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "📄 *Candidater*\n"
             "/dossier <cible> (documents + CV + projet) · /postuler <cible> (CV + lettre)\n"
             "/formations <domaine> (te distinguer)\n"
-            "🎤 /simulation (entretien blanc : campus france / visa / emploi)\n"
+            "🎤 /simulation [offre/poste] (entretien blanc noté /10 + version améliorée)\n"
             "🎯 /chances <cible> (tes chances d'admission/visa/bourse + comment les augmenter)\n"
             "🧩 /compatibilite <poste> (score par compétence) · 🗂️ /mescandidatures (suivi)\n\n"
             "🧰 *Outils PDF & docs* → tape /outils pour tout voir\n"
@@ -1035,23 +1035,37 @@ def _sim_profil_txt(session: dict) -> str:
 async def _sim_llm(session: dict, answer: str) -> dict:
     key = session.get("sim_type", "campus")
     label, focus = _SIM_TYPES.get(key, _SIM_TYPES["campus"])
+    cible = session.get("sim_cible", "")
+    cible_txt = (f" Poste/offre visé précisément : « {cible} » — tire TES questions de cette cible." if cible else "")
     hist = session.get("sim_history", [])
     contexte = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist[-4:] if h.get("a"))
-    system = (f"Tu es un examinateur bienveillant qui fait passer un {label} à un candidat francophone "
-              f"d'Afrique de l'Ouest. Points évalués : {focus}. À partir de sa DERNIÈRE réponse, donne un "
-              "feedback court et constructif (1-2 phrases : un point fort + un axe précis d'amélioration), "
-              "puis pose LA question suivante (une seule, de plus en plus précise, jamais déjà posée). "
-              "Tutoie. Réponds en JSON strict.")
-    prompt = (f"Profil du candidat : {_sim_profil_txt(session)}\n"
-              f"Échanges précédents :\n{contexte or '(début)'}\n\n"
-              f"Dernière réponse du candidat : « {answer[:600]} »\n\n"
-              'JSON: {"feedback":"","question":""}')
+    if answer:
+        system = (f"Tu es un examinateur bienveillant qui fait passer un {label} à un candidat francophone "
+                  f"d'Afrique de l'Ouest. Points évalués : {focus}." + cible_txt + " À partir de sa DERNIÈRE réponse : "
+                  "(1) note-la sur 10 (entier) ; (2) feedback court (un point fort + un axe précis) ; "
+                  "(3) propose une VERSION AMÉLIORÉE de sa réponse (2-4 phrases, à la 1re personne, réaliste pour CE profil) ; "
+                  "(4) pose LA question suivante (une seule, plus précise, jamais déjà posée). Tutoie. JSON strict.")
+        prompt = (f"Profil du candidat : {_sim_profil_txt(session)}\n"
+                  f"Échanges précédents :\n{contexte or '(début)'}\n\n"
+                  f"Dernière réponse du candidat : « {answer[:600]} »\n\n"
+                  'JSON: {"note":0,"feedback":"","meilleure_reponse":"","question":""}')
+    else:
+        system = (f"Tu es un examinateur bienveillant qui fait passer un {label} à un candidat francophone "
+                  f"d'Afrique de l'Ouest. Points évalués : {focus}." + cible_txt
+                  + " Pose LA PREMIÈRE question d'entretien, adaptée au profil. Tutoie. JSON strict.")
+        prompt = (f"Profil du candidat : {_sim_profil_txt(session)}\n\n"
+                  'JSON: {"question":""}')
     try:
-        r = await call_groq(system, prompt, temperature=0.4, max_tokens=400)
+        r = await call_groq(system, prompt, temperature=0.4, max_tokens=500)
         return r if isinstance(r, dict) else {}
     except Exception as e:
         logger.warning(f"[sim] {e}")
         return {}
+
+def _sim_global_score(session: dict) -> int:
+    """Moyenne des notes /10 attribuées pendant la simulation (0 si aucune)."""
+    notes = [h["note"] for h in (session.get("sim_history") or []) if isinstance(h.get("note"), (int, float))]
+    return round(sum(notes) / len(notes)) if notes else 0
 
 async def _sim_debrief(session: dict) -> str:
     key = session.get("sim_type", "campus")
@@ -1070,19 +1084,44 @@ async def _sim_debrief(session: dict) -> str:
 
 async def _simulation_start(session: dict, arg: str) -> tuple[str, dict]:
     key = _sim_type_key(arg)
+    a = (arg or "").strip()
+    # Cible spécifique (offre/poste) si l'argument n'est pas qu'un mot-type.
+    is_type_only = a.lower() in ("", "campus", "campusfrance", "campus france", "visa", "consulaire",
+                                 "emploi", "job", "embauche", "travail", "entretien")
+    cible = "" if is_type_only else a
+    if cible and "visa" not in a.lower() and "campus" not in a.lower():
+        key = "emploi"   # un entretien pour une offre précise = entretien d'embauche
     session["sim_mode"] = True
     session["sim_type"] = key
+    session["sim_cible"] = cible
     session["sim_count"] = 0
     session["sim_history"] = []
     session["tool_mode"] = None; session["guide_mode"] = False
     label, _f = _SIM_TYPES[key]
+    titre = f"{label} — {cible[:40]}" if cible else label
     r = await _sim_llm(session, "")
     q = (r.get("question") or "").strip() or _sim_fallback_q(session)
     session["sim_history"] = [{"q": q}]
-    msg = (f"🎤 *Simulation — {label}*\nJe te pose {SIM_MAX_Q} questions, réponds naturellement comme au vrai "
-           "entretien. _Tape /terminer pour t'arrêter et recevoir ton bilan._\n\n"
+    msg = (f"🎤 *Simulation — {titre}*\nJe te pose {SIM_MAX_Q} questions, réponds naturellement (écrit ou vocal). "
+           "Je note chaque réponse sur 10 et te propose une version améliorée.\n"
+           "_Tape /terminer pour t'arrêter et recevoir ton bilan._\n\n"
            f"❓ {q}")
     return msg, session
+
+def _sim_feedback_block(r: dict) -> str:
+    """Bloc 'note /10 + feedback + version améliorée' pour une réponse."""
+    bloc = ""
+    note = r.get("note")
+    if isinstance(note, (int, float)):
+        note = max(0, min(10, int(note)))
+        bloc += f"🎯 *Note : {note}/10*\n"
+    fb = (r.get("feedback") or "").strip()
+    if fb:
+        bloc += f"💬 {fb}\n"
+    mieux = (r.get("meilleure_reponse") or "").strip()
+    if mieux:
+        bloc += f"✨ *Version améliorée :* {mieux}\n"
+    return bloc
 
 async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
     hist = session.get("sim_history", [])
@@ -1090,21 +1129,28 @@ async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
         hist[-1]["a"] = answer
     session["sim_history"] = hist
     session["sim_count"] = session.get("sim_count", 0) + 1
+    # On évalue CHAQUE réponse (note /10 + version améliorée), y compris la dernière.
+    r = await _sim_llm(session, answer)
+    if hist and isinstance(r.get("note"), (int, float)):
+        hist[-1]["note"] = max(0, min(10, int(r["note"])))
+        session["sim_history"] = hist
+    bloc = _sim_feedback_block(r)
     if session["sim_count"] >= SIM_MAX_Q:
         debrief = await _sim_debrief(session)
+        score = _sim_global_score(session)
         session["sim_mode"] = False
         session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
-        msg = (f"🎬 *Fin de la simulation — bilan :*\n\n{debrief}\n\n"
+        entete = (bloc + "\n" if bloc else "")
+        note_globale = f"🏆 *Score global : {score}/10*\n\n" if score else ""
+        msg = (f"{entete}🎬 *Fin de la simulation — bilan :*\n\n{note_globale}{debrief}\n\n"
                "🔁 Refaire : /simulation · 📄 Prépare ton dossier : /dossier <cible> · 🎯 /entretien pour les conseils.")
         _push(session, "assistant", msg)
         return msg, session
-    r = await _sim_llm(session, answer)
-    fb = (r.get("feedback") or "").strip()
     q = (r.get("question") or "").strip() or _sim_fallback_q(session)
     hist.append({"q": q}); session["sim_history"] = hist
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     reste = SIM_MAX_Q - session["sim_count"]
-    msg = (f"💬 {fb}\n\n" if fb else "") + f"❓ *Question {session['sim_count'] + 1}/{SIM_MAX_Q}* — {q}\n_(encore {reste})_"
+    msg = (bloc + "\n" if bloc else "") + f"❓ *Question {session['sim_count'] + 1}/{SIM_MAX_Q}* — {q}\n_(encore {reste})_"
     _push(session, "assistant", msg)
     return msg, session
 
@@ -1604,8 +1650,10 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         if session.get("sim_mode"):
             _push(session, "user", t)
             debrief = await _sim_debrief(session)
+            score = _sim_global_score(session)
             session["sim_mode"] = False
-            msg = (f"🎬 *Simulation terminée — bilan :*\n\n{debrief}\n\n"
+            note_globale = f"🏆 *Score global : {score}/10*\n\n" if score else ""
+            msg = (f"🎬 *Simulation terminée — bilan :*\n\n{note_globale}{debrief}\n\n"
                    "🔁 Refaire : /simulation · 📄 /dossier <cible> · 🎯 /entretien.")
             _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session

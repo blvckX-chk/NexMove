@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.63 — Entraînement entretien noté (/10 + version améliorée)
+- La **simulation d'entretien** note désormais **chaque réponse sur 10**, propose une
+  **version améliorée** de la réponse, et donne un **score global /10** au bilan.
+- **/simulation \<offre/poste\>** : les questions sont tirées de l'offre visée (sinon campus/visa/emploi).
+- Réponses en **texte ou vocal** (transcription déjà gérée). Arrêt anticipé `/terminer` → bilan + score.
+- Tests ajoutés (score global, bloc de feedback, ciblage, tour de simulation).
+
 ## v2.62 — Suivi candidatures enrichi (pipeline + notes)
 - **/mescandidatures** affiche désormais un **pipeline** regroupé par statut (En préparation →
   Envoyée → Relancée → Entretien → Réponse → Acceptée/Refusée/Clôturée), avec deadline et note.
