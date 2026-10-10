@@ -1262,6 +1262,7 @@ def test_comment_postuler(monkeypatch):
                 "etapes": ["Préparer le CV", "Envoyer l'e-mail"], "conseil": "Relance à J+7"}
     monkeypatch.setattr(main, "call_groq", fake)
     s = {"user_id": "cp", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "premium_tier": "premium", "premium_until": "2099-01-01T00:00:00+00:00",
          "etape": "ACTIF", "profil": {"identite": {"nom": "Awa", "email": "a@x.co"}}}
     msg, s = _run(main.process_text_message(s, "/commentpostuler Analyste SOC chez Orange"))
     assert "Comment postuler" in msg and "Candidature SOC" in msg
@@ -1304,3 +1305,36 @@ def test_mescandidatures_pipeline(monkeypatch):
     msg, s = _run(main.process_text_message(s, "/mescandidatures"))
     assert "Entretien" in msg and "Envoyée" in msg
     assert "revoir le projet" in msg and "/note" in msg
+
+# ── Entraînement entretien noté (v2.63) ──
+def test_sim_global_score():
+    s = {"sim_history": [{"note": 6}, {"note": 9}, {"q": "x"}]}
+    assert main._sim_global_score(s) == 8   # round((6+9)/2)
+    assert main._sim_global_score({"sim_history": []}) == 0
+
+def test_sim_feedback_block():
+    b = main._sim_feedback_block({"note": 7, "feedback": "Clair", "meilleure_reponse": "Je suis..."})
+    assert "7/10" in b and "Clair" in b and "Version améliorée" in b
+    assert "10/10" in main._sim_feedback_block({"note": 15})  # borné à 10
+
+def test_sim_start_cible_offre(monkeypatch):
+    async def fake(system, prompt, **kw):
+        return {"question": "Présente-toi."}
+    monkeypatch.setattr(main, "call_groq", fake)
+    s = {"user_id": "si", "profil": {"identite": {"nom": "A"}, "preferences": {}}}
+    msg, s = _run(main._simulation_start(s, "Analyste SOC chez Orange"))
+    assert s["sim_cible"] == "Analyste SOC chez Orange" and s["sim_type"] == "emploi"
+    s2 = {"user_id": "si2", "profil": {"identite": {}, "preferences": {}}}
+    _msg, s2 = _run(main._simulation_start(s2, "visa"))
+    assert s2["sim_cible"] == "" and s2["sim_type"] == "visa"
+
+def test_sim_turn_note_et_amelioration(monkeypatch):
+    async def fake(system, prompt, **kw):
+        return {"note": 8, "feedback": "Bien", "meilleure_reponse": "Mieux...", "question": "Suite ?"}
+    monkeypatch.setattr(main, "call_groq", fake)
+    s = {"user_id": "st", "profil": {"identite": {}, "preferences": {}},
+         "sim_mode": True, "sim_type": "emploi", "sim_cible": "Dev", "sim_count": 0,
+         "sim_history": [{"q": "Présente-toi."}]}
+    msg, s = _run(main._simulation_turn(s, "Je suis dev Python"))
+    assert "8/10" in msg and "Version améliorée" in msg
+    assert s["sim_history"][0]["note"] == 8
