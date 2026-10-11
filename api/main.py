@@ -1,5 +1,6 @@
 import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, hmac, re, math, shutil
 import html as _htmlmod
+from html.parser import HTMLParser
 import xml.etree.ElementTree as ET
 from urllib.parse import quote
 from datetime import datetime, timezone, timedelta
@@ -100,7 +101,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.63.0"
+VERSION         = "2.64.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -120,6 +121,7 @@ FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d
 FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
 FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (score d'admissibilité) / jour (gratuit)
 FREE_APPLY_DAILY    = int(os.getenv("FREE_APPLY_DAILY", "3"))    # /commentpostuler (guide de candidature) / jour (gratuit)
+FREE_LINK_DAILY     = int(os.getenv("FREE_LINK_DAILY", "4"))     # audit d'un lien d'opportunité / jour (gratuit)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -131,6 +133,9 @@ _PREMIUM_TIERS = ("premium", "pro", "vip")
 _TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin"}
 # Détection d'un code premium collé tel quel (ex. « PRM-AB12CD34 ») -> activation sans taper /premium.
 _PRM_CODE_RE = re.compile(r"\bPRM-[A-Z0-9]{6,12}\b", re.I)
+_URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+", re.I)
+# Étapes d'onboarding où un lien NE doit PAS déclencher l'audit (on attend une autre réponse).
+_ONBOARDING_STEPS = {"ATTENTE_CV", "CV_RECU", "PREFERENCES", "PREF_TYPE_EMPLOI", "CONFIRMATION"}
 
 # Pipeline de candidatures (mini-CRM) : statut canonique -> (libellé + emoji) ; mots reconnus -> canonique.
 _CAND_STATUTS = {
@@ -1172,6 +1177,13 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         if _mprem:
             return await process_text_message(session, "/premium " + _mprem.group(0).upper())
 
+    # Lien d'opportunité collé -> audit automatique (compatibilité, admissibilité, comment postuler).
+    if (not low.startswith("/") and not session.get("sim_mode")
+            and session.get("etape") not in _ONBOARDING_STEPS):
+        _murl = _URL_RE.search(t)
+        if _murl:
+            return await audit_opportunity_link(session, _murl.group(0))
+
     if low.startswith("/start"):
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
@@ -1214,6 +1226,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if low.startswith("/outils") or low.startswith("/boiteaoutils") or low.startswith("/tools"):
         msg = ("🧰 *Ta boîte à outils NexMove* — pour des dossiers nickel, sans quitter la messagerie :\n\n"
                "📄 */postuler* <cible> — CV + lettre + projet adaptés (PDF & Word)\n"
+               "🔗 *Colle un lien* d'offre/bourse/programme — j'analyse admissibilité + comment postuler\n"
                "🧭 */commentpostuler* <cible> — *comment candidater* (e-mail/formulaire prêt à copier)\n"
                "🗂️ */dossier* <cible> — ton dossier de candidature complet\n"
                "🔎 */extraire* — récupérer le *texte* d'un PDF/scan/photo (OCR)\n"
@@ -2293,6 +2306,16 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 msg = "😕 La génération des documents a échoué, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
+
+    if low.startswith("/lien") or low.startswith("/analyser") or low.startswith("/analyselien") or low.startswith("/audit"):
+        m = _URL_RE.search(t)
+        if not m:
+            msg = ("🔗 *Analyser un lien d'opportunité*\nColle simplement le lien (offre, bourse, programme…) "
+                   "et je te dis s'il te correspond, ton admissibilité et comment postuler.\n\n"
+                   "Ex : `https://…` ou `/lien https://…`")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        return await audit_opportunity_link(session, m.group(0))
 
     if low.startswith("/commentpostuler") or low.startswith("/comment-postuler") or low.startswith("/howto"):
         parts = t.split(maxsplit=1)
@@ -3450,6 +3473,23 @@ async def handle_action(session, data, callback_id=None):
             msg, session = await process_text_message(session, cmd)
             await deliver_text(session, msg, with_menu=True)
             return session
+        if act in ("lien_postuler", "lien_chances", "lien_suivre"):
+            cible = session.get("last_link_cible", "")
+            if not cible:
+                await deliver_text(session, "Renvoie-moi le lien de l'opportunité et je m'en occupe.", with_menu=True)
+                return session
+            if act == "lien_suivre":
+                try:
+                    opp_store.add_candidature(session.get("user_id"), cible)
+                    session_manager.set(session.get("user_id"), session)
+                except Exception as e:
+                    logger.error(f"lien_suivre: {e}")
+                await deliver_text(session, f"🗂️ *{cible}* ajoutée à ton suivi — tape /mescandidatures.", with_menu=True)
+                return session
+            cmd = ("/commentpostuler " if act == "lien_postuler" else "/chances ") + cible
+            msg, session = await process_text_message(session, cmd)
+            await deliver_text(session, msg, with_menu=True)
+            return session
         if act in _ACT_HELP:
             await deliver_text(session, _ACT_HELP[act], with_menu=True)
             return session
@@ -4130,6 +4170,156 @@ async def tavily_search(query: str, max_results: int = 7) -> list:
     except Exception as e:
         logger.error(f"Tavily erreur: {e}")
         return []
+
+# ── Audit d'un LIEN d'opportunité envoyé par l'utilisateur ──────────────────────
+class _HTMLText(HTMLParser):
+    """Extracteur de texte lisible (ignore script/style/nav), + titre."""
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.title = ""; self._buf = []; self._skip = 0; self._in_title = False
+    def handle_starttag(self, tag, attrs):
+        if tag in ("script", "style", "noscript", "svg", "template", "iframe"):
+            self._skip += 1
+        elif tag == "title":
+            self._in_title = True
+        elif tag in ("br", "p", "li", "div", "h1", "h2", "h3", "tr"):
+            self._buf.append("\n")
+    def handle_endtag(self, tag):
+        if tag in ("script", "style", "noscript", "svg", "template", "iframe"):
+            self._skip = max(0, self._skip - 1)
+        elif tag == "title":
+            self._in_title = False
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+        if not self._skip:
+            s = data.strip()
+            if s:
+                self._buf.append(s)
+    def text(self):
+        return " ".join(" ".join(self._buf).split())
+
+async def fetch_url_text(url: str) -> dict:
+    """Récupère une page web et en extrait titre + texte lisible (plafonné)."""
+    try:
+        r = await http().get(url, headers={"User-Agent": _BROWSER_UA, "Accept-Language": "fr,en;q=0.8"},
+                             timeout=20.0, follow_redirects=True)
+    except Exception as e:
+        logger.warning(f"[lien] fetch {url}: {e}")
+        return {"ok": False, "reason": "injoignable"}
+    if r.status_code >= 400:
+        return {"ok": False, "reason": f"http {r.status_code}"}
+    ctype = (r.headers.get("content-type") or "").lower()
+    if "html" not in ctype and "xml" not in ctype and "text" not in ctype:
+        return {"ok": False, "reason": "format non lisible"}
+    try:
+        p = _HTMLText(); p.feed(r.text)
+        return {"ok": True, "url": str(r.url), "title": " ".join(p.title.split())[:200], "text": p.text()[:6000]}
+    except Exception as e:
+        logger.warning(f"[lien] parse {url}: {e}")
+        return {"ok": False, "reason": "illisible"}
+
+async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
+    """Analyse un lien d'opportunité envoyé par l'utilisateur : extrait les infos, note la
+    compatibilité avec le profil, et propose postuler / chances / suivre."""
+    uid = session.get("user_id")
+    ok, used_credit, reste = _quota_or_credit(session, "lien", FREE_LINK_DAILY)
+    if not ok:
+        msg = _quota_exceeded_msg("l'analyse de liens") + "\n🎟️ Ou utilise des *crédits* : /credits."
+        _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        return msg, session
+    await deliver_text(session, "🔎 J'analyse ce lien…")
+    page = await fetch_url_text(url)
+    if not page.get("ok"):
+        if not used_credit:
+            pass  # on ne décompte pas un échec
+        raison = {"injoignable": "je n'arrive pas à ouvrir ce lien", "format non lisible": "ce lien n'est pas une page lisible",
+                  "illisible": "je n'arrive pas à lire cette page"}.get(page.get("reason"), "lien illisible")
+        msg = (f"😕 {raison}. Vérifie qu'il s'ouvre dans un navigateur, ou copie-colle le *texte* de l'annonce et je l'analyse."
+               )
+        _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        return msg, session
+    profil = session.get("profil", {}) or {}
+    ident = profil.get("identite", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    comp = profil.get("competences", {}) or {}
+    skills = ", ".join((comp.get("techniques", []) + comp.get("outils", []))[:8])
+    profil_txt = (f"résumé: {profil.get('resume_profil','')[:200]} | compétences: {skills} | "
+                  f"objectif: {prefs.get('objectif','')} | pays visés: {prefs.get('pays_cibles','')} | "
+                  f"niveau: {prefs.get('niveau','')}") if profil else "(profil non renseigné)"
+    system = ("Tu es " + CONSEILLER_PERSONA + " On te donne le CONTENU d'une page web (offre d'emploi, bourse, "
+              "programme, formation...). Extrais l'opportunité et évalue l'adéquation avec le profil fourni. "
+              "Si la page n'est PAS une opportunité, mets est_opportunite=false. Sois factuel, ne invente rien "
+              "(laisse vide si absent). Réponds en JSON strict.")
+    prompt = (f"PROFIL: {profil_txt}\n\nURL: {page['url']}\nTITRE: {page['title']}\n"
+              f"CONTENU:\n{page['text']}\n\n"
+              'JSON: {"est_opportunite":true,"titre":"","organisation":"","type":"emploi|bourse|fellowship|formation|stage",'
+              '"lieu":"","deadline":"","financement":"total|partiel|aucun|?","score_composite":0,'
+              '"admissible":"oui|plutot_oui|incertain|plutot_non|non","criteres":["critères clés d\'éligibilité"],'
+              '"manques":["ce qui pourrait te manquer"],"comment_postuler":"résumé de la marche à suivre","raison":"pourquoi ce score"}')
+    try:
+        r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
+    except Exception as e:
+        logger.error(f"[lien] llm {e}")
+        msg = "😕 Analyse momentanément indisponible, réessaie dans un instant."
+        _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        return msg, session
+    if not used_credit:
+        _quota_bump(session, "lien")
+    if not isinstance(r, dict) or r.get("est_opportunite") is False or not (r.get("titre") or page.get("title")):
+        msg = ("🤔 Ce lien ne ressemble pas à une offre/opportunité exploitable. "
+               "Si c'en est une, copie-colle le texte de l'annonce et je l'analyse.")
+        _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        return msg, session
+    titre = _md_clean(str(r.get("titre") or page.get("title") or "Opportunité"))[:70]
+    msg = f"🔗 *{titre}*"
+    orga = _md_clean(str(r.get("organisation") or ""))
+    lieu = _md_clean(str(r.get("lieu") or ""))
+    sous = " · ".join(x for x in (_type_label(r.get("type", "")), orga, lieu) if x)
+    if sous:
+        msg += f"\n{sous}"
+    if profil:
+        msg += f"\n🧭 *Compatibilité : {_score_badge(r.get('score_composite'))}*"
+        adm = {"oui": "✅ Tu sembles *éligible*", "plutot_oui": "👍 *Plutôt éligible*",
+               "incertain": "🤔 *Éligibilité incertaine*", "plutot_non": "⚠️ *Difficilement éligible*",
+               "non": "❌ *Non éligible a priori*"}.get(str(r.get("admissible", "")).lower())
+        if adm:
+            msg += f"\n{adm}"
+    dl = _md_clean(str(r.get("deadline") or ""))
+    if dl:
+        msg += f"\n📅 Deadline : {dl}"
+    crit = [c for c in (r.get("criteres") or []) if isinstance(c, str) and c.strip()][:4]
+    if crit:
+        msg += "\n\n📋 *Critères clés :*\n" + "\n".join(f"• {_md_clean(c)}" for c in crit)
+    manques = [m for m in (r.get("manques") or []) if isinstance(m, str) and m.strip()][:3]
+    if manques:
+        msg += "\n\n⚠️ *À renforcer :* " + ", ".join(_md_clean(m) for m in manques)
+    raison = _md_clean(str(r.get("raison") or ""))
+    if raison:
+        msg += f"\n\n💬 {raison[:160]}"
+    cp = _md_clean(str(r.get("comment_postuler") or ""))
+    if cp:
+        msg += f"\n\n🧭 *Comment postuler :* {cp[:200]}"
+    # Mémorise la cible pour les actions de suivi (boutons).
+    session["last_link_cible"] = titre
+    msg += (f"\n\n▶️ *La suite :* `/commentpostuler {titre[:34]}` (e-mail/formulaire) · "
+            f"`/chances {titre[:34]}` (tes chances détaillées) · `/postuler {titre[:30]}` (CV + lettre)")
+    session["_kb_options"] = [("🧭 Comment postuler", "act:lien_postuler"),
+                              ("🎯 Mes chances", "act:lien_chances"),
+                              ("🗂️ Suivre", "act:lien_suivre")]
+    if reste:
+        msg += f"\n_Il te reste {reste} analyse(s) de lien gratuite(s) aujourd'hui._"
+    msg += _credit_note(session, used_credit)
+    # Enregistre comme opportunité suivie (pour la veille/stats).
+    try:
+        opp_store.add(uid, {"titre": titre, "organisation": orga, "type": r.get("type", ""),
+                            "url": page["url"], "deadline": dl, "score_composite": int(r.get("score_composite", 0) or 0),
+                            "raison": raison})
+    except Exception:
+        pass
+    _push(session, "user", url); _push(session, "assistant", msg)
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
 
 # Flux RSS de bourses / opportunités (sources réelles, sans clé API)
 # ── Catalogue de sources STRUCTURÉ (scope: local/intl/both, type: bourse/emploi/fellowship/ong) ──

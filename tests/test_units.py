@@ -1338,3 +1338,43 @@ def test_sim_turn_note_et_amelioration(monkeypatch):
     msg, s = _run(main._simulation_turn(s, "Je suis dev Python"))
     assert "8/10" in msg and "Version améliorée" in msg
     assert s["sim_history"][0]["note"] == 8
+
+# ── Audit de lien d'opportunité (v2.64) ──
+def test_url_regex():
+    assert main._URL_RE.search("regarde https://x.co/a?b=1 stp").group(0) == "https://x.co/a?b=1"
+    assert main._URL_RE.search("pas de lien ici") is None
+
+def test_html_text_extractor():
+    p = main._HTMLText()
+    p.feed("<title>Ma Page</title><style>x{}</style><h1>Titre</h1><p>Bonjour <b>monde</b></p><script>bad()</script>")
+    assert p.title.strip() == "Ma Page"
+    txt = p.text()
+    assert "Titre" in txt and "Bonjour" in txt and "monde" in txt and "bad" not in txt
+
+def test_audit_link_flow(monkeypatch):
+    async def fake_fetch(url):
+        return {"ok": True, "url": url, "title": "Bourse Eiffel", "text": "Bourse master, deadline 10 janvier."}
+    async def fake_llm(system, prompt, **kw):
+        return {"est_opportunite": True, "titre": "Bourse Eiffel", "organisation": "Campus France",
+                "type": "bourse", "lieu": "France", "deadline": "10 janvier", "score_composite": 82,
+                "admissible": "plutot_oui", "criteres": ["Master"], "manques": [], "comment_postuler": "Via l'école", "raison": "ok"}
+    async def fake_deliver(session, text, **kw): return True
+    monkeypatch.setattr(main, "fetch_url_text", fake_fetch)
+    monkeypatch.setattr(main, "call_groq", fake_llm)
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main.opp_store, "add", lambda *a, **k: True)
+    s = {"user_id": "lk", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "premium_tier": "premium", "premium_until": "2099-01-01T00:00:00+00:00",
+         "profil": {"identite": {"nom": "A"}, "preferences": {"objectif": "etudier"}}}
+    msg, s = _run(main.process_text_message(s, "voici https://x.co/eiffel"))
+    assert "Bourse Eiffel" in msg and "82%" in msg and "Plutôt éligible" in msg
+    assert s["last_link_cible"] == "Bourse Eiffel"
+
+def test_audit_link_pas_pendant_onboarding(monkeypatch):
+    # En plein onboarding (ATTENTE_CV), un lien ne doit PAS déclencher l'audit.
+    called = {"n": 0}
+    async def fake_audit(session, url): called["n"] += 1; return "x", session
+    monkeypatch.setattr(main, "audit_opportunity_link", fake_audit)
+    s = {"user_id": "ob", "chat_id": "1", "historique": [], "etape": "ATTENTE_CV", "profil": {}}
+    _msg, s = _run(main.process_text_message(s, "https://x.co/truc"))
+    assert called["n"] == 0

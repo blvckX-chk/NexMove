@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.64 — Analyse d'un lien d'opportunité collé
+- **Colle un lien** (offre, bourse, programme, formation) et le bot l'**audite** : il ouvre la page,
+  extrait l'opportunité, **note la compatibilité** avec ton profil, donne un **verdict d'admissibilité**,
+  les **critères clés**, ce qu'il te **manque**, et **comment postuler**.
+- Détection **automatique** des URL dans un message (hors onboarding) + commande **/lien <url>**.
+- Boutons de suite : *Comment postuler* (/commentpostuler), *Mes chances* (/chances), *Suivre* (ajout au suivi).
+- Récupération web côté serveur (`fetch_url_text` + extracteur HTML), quota gratuit `FREE_LINK_DAILY` + crédits.
+- L'opportunité est enregistrée dans ta veille. Tests ajoutés.
+
 ## v2.63 — Entraînement entretien noté (/10 + version améliorée)
 - La **simulation d'entretien** note désormais **chaque réponse sur 10**, propose une
   **version améliorée** de la réponse, et donne un **score global /10** au bilan.
