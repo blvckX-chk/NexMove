@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NexMove — Études, emploi, ici ou ailleurs</title>
+<title>NexMove · Études, emploi, ici ou ailleurs</title>
 <meta name="description" content="NexMove est ton assistant IA de mobilité et d'emploi sur Telegram et WhatsApp : il analyse ton CV, trouve de vraies opportunités notées par compétence, prépare tes dossiers et t'accompagne jusqu'au départ. En français, sans app.">
 <meta name="keywords" content="assistant IA emploi, recherche d'emploi Bénin, CV, lettre de motivation IA, offres d'emploi, bourse, études à l'étranger, Campus France, mobilité, Telegram, WhatsApp, Mobile Money, Afrique de l'Ouest">
 <meta name="author" content="blvckUnlimited">
@@ -12,7 +12,7 @@
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
-<meta property="og:title" content="NexMove — l'assistant pour ton prochain move">
+<meta property="og:title" content="NexMove · l'assistant pour ton prochain move">
 <meta property="og:description" content="Assistant IA sur Telegram & WhatsApp : CV, opportunités notées, dossiers, entretiens. Études, emploi, ici ou ailleurs.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="NexMove">
@@ -21,9 +21,9 @@
 <meta property="og:image" content="https://nexmove.blvckunlimited.space/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="NexMove — Postule moins au hasard. Décroche plus : emploi, études, mobilité.">
+<meta property="og:image:alt" content="NexMove · Postule moins au hasard. Décroche plus : emploi, études, mobilité.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="NexMove — l'assistant pour ton prochain move">
+<meta name="twitter:title" content="NexMove · l'assistant pour ton prochain move">
 <meta name="twitter:description" content="Assistant IA sur Telegram & WhatsApp : CV, opportunités notées, dossiers, entretiens. Sans app, paiement Mobile Money.">
 <meta name="twitter:image" content="https://nexmove.blvckunlimited.space/og.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -31,10 +31,10 @@
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root{
-    --bleu:#2F5BFF; --bleu2:#6b86ff; --ambre:#FFB020;
-    --bg:#070b1a; --bg2:#0b1226; --carte:#111a35; --carte2:#152146;
-    --txt:#eef2fb; --gris:#9aa6c4; --bord:#1e2a4d; --bord2:#263461;
-    --ok:#30d98c; --rayon:16px;
+    --bleu:#2F5BFF; --bleu2:#3a5bd0; --ambre:#FFB020;
+    --bg:#f7f9fc; --bg2:#eef2f9; --carte:#ffffff; --carte2:#eef2fb;
+    --txt:#121a33; --gris:#59637d; --bord:#e4e9f2; --bord2:#d4dcea;
+    --ok:#16b57a; --rayon:16px;
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -51,17 +51,17 @@
   .btn-blue{background:var(--bleu);color:#fff;box-shadow:0 10px 30px rgba(47,91,255,.4)}
   .btn-blue:hover{transform:translateY(-2px)}
   .btn-ghost{background:transparent;color:var(--txt);border:1.5px solid var(--bord2);font-weight:600}
-  .btn-ghost:hover{border-color:var(--bleu);color:#fff}
+  .btn-ghost:hover{border-color:var(--bleu);color:var(--bleu)}
 
   /* Header */
-  header{position:sticky;top:0;z-index:40;background:rgba(7,11,26,.72);backdrop-filter:blur(12px);border-bottom:1px solid var(--bord)}
+  header{position:sticky;top:0;z-index:40;background:rgba(255,255,255,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--bord)}
   .nav{display:flex;align-items:center;justify-content:space-between;height:66px;gap:1rem}
   .brand{display:flex;align-items:center;gap:.55rem;font-weight:800;font-size:1.12rem}
   .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--bleu),#1b2e86);display:grid;place-items:center}
   .logo svg{width:20px;height:20px}
   .nav-links{display:flex;gap:1.5rem;align-items:center}
   .nav-links a{color:var(--gris);font-weight:600;font-size:.94rem}
-  .nav-links a:hover{color:#fff}
+  .nav-links a:hover{color:var(--txt)}
   @media(max-width:860px){.nav-links a:not(.btn){display:none}}
 
   /* Hero */
@@ -86,8 +86,8 @@
 
   /* Mock product card (démo offres notées) */
   .mock{background:linear-gradient(180deg,var(--carte),var(--bg2));border:1px solid var(--bord2);border-radius:20px;
-    box-shadow:0 30px 80px rgba(0,0,0,.5);overflow:hidden}
-  .mock-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bord);background:rgba(255,255,255,.015)}
+    box-shadow:0 24px 60px rgba(23,37,84,.12);overflow:hidden}
+  .mock-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bord);background:rgba(18,26,51,.025)}
   .mock-top .t{display:flex;align-items:center;gap:.5rem;font-weight:700;font-size:.92rem}
   .mock-top .t .dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--bleu),#1b2e86);display:grid;place-items:center}
   .mock-top .t .dot svg{width:13px;height:13px}
@@ -95,7 +95,7 @@
   .chips{display:flex;gap:.5rem;flex-wrap:wrap;padding:12px 16px 4px}
   .chip{font-size:.78rem;font-weight:600;color:var(--gris);background:var(--carte2);border:1px solid var(--bord2);
     padding:.4rem .7rem;border-radius:999px;cursor:pointer;transition:.14s;white-space:nowrap}
-  .chip.on{color:#fff;border-color:var(--bleu);background:color-mix(in srgb,var(--bleu) 24%,transparent)}
+  .chip.on{color:var(--bleu);border-color:var(--bleu);background:color-mix(in srgb,var(--bleu) 12%,transparent)}
   .mock-sub{color:var(--gris);font-size:.78rem;padding:4px 16px 8px}
   .offer{padding:12px 16px;border-top:1px solid var(--bord)}
   .offer .r1{display:flex;align-items:center;justify-content:space-between;gap:.6rem}
@@ -116,7 +116,7 @@
   .stat{padding:26px 20px;border-right:1px solid var(--bord)}
   .stat:last-child{border-right:0}
   @media(max-width:760px){.stat{border-right:1px solid var(--bord);border-bottom:1px solid var(--bord)}.stat:nth-child(2n){border-right:0}}
-  .stat .v{font-size:1.5rem;font-weight:900;color:#fff}
+  .stat .v{font-size:1.5rem;font-weight:900;color:var(--txt)}
   .stat .v .u{color:var(--bleu2)}
   .stat .k{color:var(--gris);font-size:.86rem;margin-top:.25rem}
 
@@ -137,7 +137,7 @@
   .flist{list-style:none;padding:0;margin:0}
   .flist li{display:flex;gap:.6rem;padding:.3rem 0;color:var(--txt);font-size:.96rem}
   .flist li::before{content:"";flex:0 0 auto;width:16px;height:2px;background:var(--bleu);margin-top:.75rem;border-radius:2px}
-  .fimg{background:linear-gradient(180deg,var(--carte),var(--bg2));border:1px solid var(--bord2);border-radius:18px;padding:16px;box-shadow:0 24px 60px rgba(0,0,0,.4)}
+  .fimg{background:linear-gradient(180deg,var(--carte),var(--bg2));border:1px solid var(--bord2);border-radius:18px;padding:16px;box-shadow:0 20px 50px rgba(23,37,84,.1)}
 
   /* chat mock */
   .chat .b{max-width:82%;padding:.6rem .85rem;border-radius:14px;margin:.4rem 0;font-size:.9rem;line-height:1.35}
@@ -168,7 +168,7 @@
   .creditbox{margin-top:18px;background:linear-gradient(135deg,var(--carte2),var(--carte));border:1px solid var(--bord2);
     border-radius:16px;padding:20px;display:flex;gap:16px;align-items:center;flex-wrap:wrap;justify-content:space-between}
   .creditbox .txt{max-width:640px;color:var(--gris)}
-  .creditbox b{color:#fff}
+  .creditbox b{color:var(--txt)}
 
   /* FAQ */
   details{background:var(--carte);border:1px solid var(--bord2);border-radius:13px;padding:2px 18px;margin-bottom:10px}
@@ -177,19 +177,33 @@
   details[open] summary::after{content:"–"}
   details p{margin:0 0 15px;color:var(--gris)}
 
-  .band{background:linear-gradient(135deg,#132559,#0b1226);border:1px solid var(--bord2);border-radius:24px;padding:48px 28px;text-align:center;box-shadow:0 30px 80px rgba(0,0,0,.45)}
+  .band{background:linear-gradient(135deg,#1e3a8a,#2F5BFF);border:0;border-radius:24px;padding:48px 28px;text-align:center;color:#fff;box-shadow:0 24px 60px rgba(47,91,255,.28)}
+  .band h2{color:#fff}
   .band h2{margin:0 0 .4rem}
-  .band p{color:var(--gris);max-width:560px;margin:.2rem auto 1.5rem}
+  .band p{color:rgba(255,255,255,.85);max-width:560px;margin:.2rem auto 1.5rem}
 
   footer{border-top:1px solid var(--bord);padding:36px 0;color:var(--gris);font-size:.9rem}
   .foot{display:flex;flex-wrap:wrap;justify-content:space-between;gap:18px}
   .foot a{color:var(--gris);font-weight:600}
-  .foot a:hover{color:#fff}
+  .foot a:hover{color:var(--txt)}
   .disc{font-size:.8rem;color:#6b7695;margin-top:16px;line-height:1.5}
 
   .reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
   .reveal.in{opacity:1;transform:none}
   @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+
+  /* Mobile : espacements plus serrés, boutons pleine largeur, pas de débordement */
+  @media(max-width:560px){
+    section{padding:44px 0}
+    .hero{padding:40px 0 28px}
+    .band{padding:34px 18px;border-radius:18px}
+    .cta-row{gap:.6rem}
+    .cta-row .btn{flex:1 1 100%;justify-content:center}
+    .price{gap:14px}
+    .feat{padding:24px 0}
+    h1{font-size:clamp(2rem,8.5vw,2.6rem)}
+    .mock,.fimg{box-shadow:0 14px 34px rgba(23,37,84,.12)}
+  }
 </style>
 </head>
 <!-- data-wa = numero du BOT WhatsApp (reponses auto) · data-pay = numero PERSO qui recoit les paiements -->
@@ -214,8 +228,8 @@
       <div class="hgrid">
         <div>
           <span class="eyebrow">Assistant IA · Telegram &amp; WhatsApp · Français</span>
-          <h1>Postule moins au hasard.<br><span class="accent">Décroche plus — emploi, études, mobilité.</span></h1>
-          <p class="lead">NexMove lit ton CV, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), les <strong>note selon ton profil</strong> et prépare chaque dossier — lettre, CV adapté, entretien. Dans ta messagerie, sans app.</p>
+          <h1>Postule moins au hasard.<br><span class="accent">Décroche plus : emploi, études, mobilité.</span></h1>
+          <p class="lead">NexMove lit ton CV, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), les <strong>note selon ton profil</strong> et prépare chaque dossier : lettre, CV adapté, entretien. Dans ta messagerie, sans app.</p>
           <div class="cta-row">
             <a class="btn btn-amb js-start" href="#">Démarrer sur Telegram</a>
             <a class="btn js-wa" href="#" style="background:#25D366;color:#06281a;border:none;font-weight:700">Ouvrir sur WhatsApp</a>
@@ -235,7 +249,7 @@
             <div class="t"><span class="dot"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove · Offres</div>
             <span class="badge">Données d'exemple</span>
           </div>
-          <div class="mock-sub">Choisis un profil — vois les offres notées <strong>par compétence</strong>, comme dans le bot.</div>
+          <div class="mock-sub">Choisis un profil et vois les offres notées <strong>par compétence</strong>, comme dans le bot.</div>
           <div class="chips" id="chips">
             <span class="chip on" data-k="dev">Dév. web · Cotonou</span>
             <span class="chip" data-k="data">Data · télétravail</span>
@@ -252,7 +266,7 @@
     <div class="wrap"><div class="g">
       <div class="stat"><div class="v">24<span class="u">/7</span></div><div class="k">Disponible à toute heure, réponse en continu</div></div>
       <div class="stat"><div class="v">20<span class="u">+</span> pays</div><div class="k">Offres locales (Bénin/UEMOA) &amp; internationales</div></div>
-      <div class="stat"><div class="v">&lt; 1 <span class="u">min</span></div><div class="k">CV analysé — PDF, Word, photo, voix</div></div>
+      <div class="stat"><div class="v">&lt; 1 <span class="u">min</span></div><div class="k">CV analysé : PDF, Word, photo, voix</div></div>
       <div class="stat"><div class="v">0 <span class="u">app</span></div><div class="k">Tout dans Telegram / WhatsApp</div></div>
     </div></div>
   </div>
@@ -262,13 +276,13 @@
     <div class="wrap">
       <div class="kicker">Ce que NexMove fait pour toi</div>
       <h2>Du CV au départ, sans te perdre</h2>
-      <p class="sub">Un seul assistant pour analyser, trouver, candidater et te préparer — pas dix outils.</p>
+      <p class="sub">Un seul assistant pour analyser, trouver, candidater et te préparer. Pas dix outils.</p>
 
       <div class="feat reveal">
         <div>
           <div><span class="fnum">01</span><span class="ftag">Analyser</span></div>
           <h3>Analyse de ton CV</h3>
-          <p>Envoie ton CV en PDF, Word, photo — ou même à la voix. NexMove en extrait ton profil, repère tes forces et ce qui bloque.</p>
+          <p>Envoie ton CV en PDF, Word, photo, ou même à la voix. NexMove en extrait ton profil, repère tes forces et ce qui bloque.</p>
           <ul class="flist">
             <li>PDF, Word, image ou note vocale</li>
             <li>Profil pré-rempli et modifiable à tout moment</li>
@@ -285,7 +299,7 @@
         <div>
           <div><span class="fnum">02</span><span class="ftag">Trouver</span></div>
           <h3>Opportunités notées par compétence</h3>
-          <p>Emplois, stages, bourses et fellowships — locaux et à l'étranger. Chaque offre reçoit un score de compatibilité <strong>expliqué</strong> : tes points forts, ce qu'il reste à renforcer.</p>
+          <p>Emplois, stages, bourses et fellowships, locaux et à l'étranger. Chaque offre reçoit un score de compatibilité <strong>expliqué</strong> : tes points forts, ce qu'il reste à renforcer.</p>
           <ul class="flist">
             <li>Sources locales (Bénin/UEMOA) + 20 pays + télétravail</li>
             <li>Score par compétence, pas juste un chiffre</li>
@@ -308,16 +322,16 @@
         <div>
           <div><span class="fnum">03</span><span class="ftag">Candidater</span></div>
           <h3>Dossiers prêts en un message</h3>
-          <p>CV adapté à l'offre, lettre de motivation, projet d'études — générés en PDF &amp; Word. Plus le <strong>score d'admissibilité</strong> (/chances) et l'<strong>entretien blanc</strong> (/simulation).</p>
+          <p>CV adapté à l'offre, lettre de motivation, projet d'études, générés en PDF &amp; Word. Plus le <strong>score d'admissibilité</strong> (/chances) et l'<strong>entretien blanc</strong> (/simulation).</p>
           <ul class="flist">
             <li>CV + lettre + projet adaptés à chaque cible</li>
-            <li>Campus France, Canada, visa — étape par étape</li>
+            <li>Campus France, Canada, visa : étape par étape</li>
             <li>Boîte à outils : compresser, fusionner, convertir, extraire</li>
           </ul>
         </div>
         <div class="fimg chat">
           <div class="b me">Prépare mon dossier pour le master IA à Toulouse</div>
-          <div class="b bot">CV adapté + lettre + projet d'études générés (PDF &amp; Word). Score d'admissibilité : <strong>72/100</strong> — voici 3 actions pour l'augmenter…</div>
+          <div class="b bot">CV adapté + lettre + projet d'études générés (PDF &amp; Word). Score d'admissibilité : <strong>72/100</strong>. Voici 3 actions pour l'augmenter…</div>
           <div class="b me">entraîne-moi à l'entretien</div>
           <div class="b bot">C'est parti. Première question : « Pourquoi ce master, et pourquoi la France ? »</div>
         </div>
@@ -327,7 +341,7 @@
         <div>
           <div><span class="fnum">04</span><span class="ftag">Suivre</span></div>
           <h3>Suivi de tes candidatures</h3>
-          <p>Chaque candidature a son statut et son historique. Tu avances du brouillon à l'offre reçue, sans rien oublier — avec des rappels de deadline.</p>
+          <p>Chaque candidature a son statut et son historique. Tu avances du brouillon à l'offre reçue, sans rien oublier, avec des rappels de deadline.</p>
           <ul class="flist">
             <li>Du brouillon à la réponse, étape par étape</li>
             <li>Rappels de deadline automatiques</li>
@@ -336,10 +350,10 @@
         </div>
         <div class="fimg">
           <div class="kanban">
-            <div class="kcol"><div class="h"><span class="d" style="background:#8a93b2"></span>Brouillon</div><div class="kcard">Master IA — Toulouse<small>Dossier en préparation</small></div></div>
-            <div class="kcol"><div class="h"><span class="d" style="background:var(--bleu)"></span>Envoyée</div><div class="kcard">Dév. React — Rivelle<small>Envoyée il y a 2 j</small></div></div>
-            <div class="kcol"><div class="h"><span class="d" style="background:var(--ambre)"></span>Entretien</div><div class="kcard">Front-end — Tessa<small>Entretien jeudi</small></div></div>
-            <div class="kcol"><div class="h"><span class="d" style="background:var(--ok)"></span>Offre reçue</div><div class="kcard">Stage data — Nova<small>À confirmer</small></div></div>
+            <div class="kcol"><div class="h"><span class="d" style="background:#8a93b2"></span>Brouillon</div><div class="kcard">Master IA · Toulouse<small>Dossier en préparation</small></div></div>
+            <div class="kcol"><div class="h"><span class="d" style="background:var(--bleu)"></span>Envoyée</div><div class="kcard">Dév. React · Rivelle<small>Envoyée il y a 2 j</small></div></div>
+            <div class="kcol"><div class="h"><span class="d" style="background:var(--ambre)"></span>Entretien</div><div class="kcard">Front-end · Tessa<small>Entretien jeudi</small></div></div>
+            <div class="kcol"><div class="h"><span class="d" style="background:var(--ok)"></span>Offre reçue</div><div class="kcard">Stage data · Nova<small>À confirmer</small></div></div>
           </div>
         </div>
       </div>
@@ -351,12 +365,12 @@
     <div class="wrap">
       <div class="kicker">Simple comme un message</div>
       <h2>Trois étapes, zéro prise de tête</h2>
-      <div class="price" style="grid-template-columns:repeat(3,1fr)">
+      <div class="price">
         <div class="plan"><div class="fnum">1</div><h3 style="margin-top:.4rem">Ouvre le bot</h3><p style="color:var(--gris)">Sur Telegram ou WhatsApp. Aucune app, aucune inscription compliquée.</p></div>
         <div class="plan"><div class="fnum">2</div><h3 style="margin-top:.4rem">Envoie ton CV</h3><p style="color:var(--gris)">Ou dis-nous ton parcours. Pas de CV ? NexMove t'en crée un.</p></div>
-        <div class="plan"><div class="fnum">3</div><h3 style="margin-top:.4rem">Avance, accompagné·e</h3><p style="color:var(--gris)">Opportunités notées, dossiers prêts, entretiens — jusqu'au départ.</p></div>
+        <div class="plan"><div class="fnum">3</div><h3 style="margin-top:.4rem">Avance, accompagné·e</h3><p style="color:var(--gris)">Opportunités notées, dossiers prêts, entretiens, jusqu'au départ.</p></div>
       </div>
-      <div style="margin-top:26px"><a class="btn btn-amb js-start" href="#">Essayer maintenant — c'est gratuit</a></div>
+      <div style="margin-top:26px"><a class="btn btn-amb js-start" href="#">Essayer maintenant, c'est gratuit</a></div>
     </div>
   </section>
 
@@ -365,8 +379,8 @@
     <div class="wrap">
       <div class="kicker">Pas besoin de commandes</div>
       <h2>Dis-le en une phrase</h2>
-      <p class="sub">NexMove comprend le langage de tous les jours — en français, à l'écrit ou à la voix. Tu demandes, il agit, et il confirme avant ce qui compte.</p>
-      <div class="price" style="grid-template-columns:repeat(3,1fr)">
+      <p class="sub">NexMove comprend le langage de tous les jours, en français, à l'écrit ou à la voix. Tu demandes, il agit, et il confirme avant ce qui compte.</p>
+      <div class="price">
         <div class="plan"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" style="margin-bottom:.3rem"><path d="M4 5h16v11H9l-5 4V5z" stroke="var(--bleu2)" stroke-width="2" stroke-linejoin="round"/></svg><p style="color:var(--txt);margin:.4rem 0"><em>« Trouve-moi des offres data en télétravail »</em></p><p style="color:var(--gris)">Il lance la recherche et note les offres pour ton profil.</p></div>
         <div class="plan"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" style="margin-bottom:.3rem"><path d="M4 5h16v11H9l-5 4V5z" stroke="var(--bleu2)" stroke-width="2" stroke-linejoin="round"/></svg><p style="color:var(--txt);margin:.4rem 0"><em>« Prépare ma lettre pour cette offre »</em></p><p style="color:var(--gris)">Lettre + CV adaptés aux mots-clés du poste, prêts à relire.</p></div>
         <div class="plan"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" style="margin-bottom:.3rem"><path d="M4 5h16v11H9l-5 4V5z" stroke="var(--bleu2)" stroke-width="2" stroke-linejoin="round"/></svg><p style="color:var(--txt);margin:.4rem 0"><em>« Mes chances pour une bourse au Canada ? »</em></p><p style="color:var(--gris)">Il évalue, explique ce qui manque et te donne les étapes.</p></div>
@@ -380,7 +394,7 @@
     <div class="wrap">
       <div class="kicker">Des prix pensés pour ici</div>
       <h2>Commence gratuitement</h2>
-      <p class="sub">Passe au Premium pour l'illimité — ou prends des crédits à la carte, sans abonnement. Paiement Mobile Money.</p>
+      <p class="sub">Passe au Premium pour l'illimité, ou prends des crédits à la carte, sans abonnement. Paiement Mobile Money.</p>
       <div class="price">
         <div class="plan">
           <h3>Gratuit</h3><div class="p">0 <small>FCFA</small></div>
@@ -418,10 +432,10 @@
         <details><summary>Faut-il installer une application ?</summary><p>Non. Tout se passe dans Telegram ou WhatsApp. Tu peux même interagir à la voix et démarrer sans CV.</p></details>
         <details><summary>Comment le score de compatibilité est-il calculé ?</summary><p>NexMove compare ton profil (compétences, niveau, langues, objectif) à chaque offre et lui donne une note expliquée : tes points forts, et ce qu'il reste à renforcer. Tu sais <strong>pourquoi</strong> une offre te correspond, pas juste un chiffre.</p></details>
         <details><summary>D'où viennent les offres ?</summary><p>De sources locales (Bénin / UEMOA) et internationales : sites carrières, job boards et programmes d'études/bourses. Les liens morts et les offres hors de ta zone sont écartés avant la notation.</p></details>
-        <details><summary>Pas de CV ? Puis-je quand même l'utiliser ?</summary><p>Oui. Réponds à quelques questions ou dicte ton parcours : NexMove t'en rédige un CV clair, sans rien inventer — uniquement à partir de ce que tu indiques.</p></details>
+        <details><summary>Pas de CV ? Puis-je quand même l'utiliser ?</summary><p>Oui. Réponds à quelques questions ou dicte ton parcours : NexMove t'en rédige un CV clair, sans rien inventer, uniquement à partir de ce que tu indiques.</p></details>
         <details><summary>Vous garantissez un visa, une bourse ou un emploi ?</summary><p>Non, et personne ne peut l'honnêtement. NexMove <strong>maximise tes chances</strong> et t'évite les erreurs : la décision revient aux écoles, organismes et employeurs.</p></details>
         <details><summary>Que deviennent mes données ?</summary><p>Elles servent uniquement à t'accompagner, ne sont pas revendues, et tu peux tout effacer à tout moment (<code>/supprimer</code>). Voir notre <a href="confidentialite.html" style="color:var(--bleu2)">politique de confidentialité</a>.</p></details>
-        <details><summary>Comment payer ?</summary><p>Par Mobile Money, en 3 étapes : tu nous écris sur <strong>WhatsApp</strong> (bouton « Payer sur WhatsApp »), tu fais le dépôt, on te renvoie un <strong>code</strong> que tu actives dans le bot (<code>/premium</code> ou <code>/credits</code>) — ton accès démarre aussitôt.</p></details>
+        <details><summary>Comment payer ?</summary><p>Par Mobile Money, en 3 étapes : tu nous écris sur <strong>WhatsApp</strong> (bouton « Payer sur WhatsApp »), tu fais le dépôt, on te renvoie un <strong>code</strong> que tu actives dans le bot (<code>/premium</code> ou <code>/credits</code>), ton accès démarre aussitôt.</p></details>
       </div>
     </div>
   </section>
@@ -446,7 +460,7 @@
     <div class="foot">
       <div>
         <div class="brand" style="font-size:1rem"><span class="logo" style="width:26px;height:26px"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove</div>
-        <div style="margin-top:.5rem;color:var(--gris)">Un produit <strong style="color:#fff">blvckUnlimited</strong>.</div>
+        <div style="margin-top:.5rem;color:var(--gris)">Un produit <strong style="color:var(--txt)">blvckUnlimited</strong>.</div>
       </div>
       <div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:center">
         <a href="cgu.html">CGU</a>
