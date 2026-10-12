@@ -10,14 +10,27 @@ cd "$(dirname "$0")/.."
 BRANCH="${DEPLOY_BRANCH:-main}"
 HEALTH_URL="${HEALTH_URL:-https://api-nexmove.blvckunlimited.space/health}"
 
+ROOT="$(pwd)"
 echo "➤ 1/3  Mise à jour du code (origin/$BRANCH)…"
 git fetch origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH"
 echo "   version déployée : $(git rev-parse --short HEAD)"
 
-echo "➤ 2/3  Reconstruction et redémarrage des conteneurs…"
-docker compose up -d --build
+# Le docker-compose.yml peut être à la racine OU dans api/ (selon l'installation du VPS).
+if [ -f "$ROOT/docker-compose.yml" ]; then
+  COMPOSE_DIR="$ROOT"
+elif [ -f "$ROOT/api/docker-compose.yml" ]; then
+  COMPOSE_DIR="$ROOT/api"
+else
+  echo "⚠️  Aucun docker-compose.yml trouvé (ni à la racine, ni dans api/)."
+  exit 1
+fi
+
+echo "➤ 2/3  Reconstruction et redémarrage des conteneurs… ($COMPOSE_DIR)"
+# On force le fichier local pour éviter un éventuel COMPOSE_FILE mal configuré dans l'environnement.
+unset COMPOSE_FILE || true
+( cd "$COMPOSE_DIR" && docker compose -f docker-compose.yml up -d --build )
 
 echo "➤ 3/3  Vérification de la santé de l'API…"
 ok=0
@@ -38,6 +51,6 @@ if [ "$ok" = "1" ]; then
   fi
 else
   echo "⚠️  L'API ne répond pas encore sur $HEALTH_URL."
-  echo "   Regarde les logs :  docker compose logs --tail=50 api"
+  echo "   Regarde les logs :  (cd $COMPOSE_DIR && docker compose logs --tail=50)"
   exit 1
 fi
