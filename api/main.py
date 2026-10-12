@@ -101,7 +101,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.67.0"
+VERSION         = "2.68.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1205,6 +1205,45 @@ async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
     return msg, session
 
 
+# ── Brique 2 : suivi d'objectif sur plusieurs tours ──
+# Étapes d'une candidature, dans l'ordre logique. `_focus` mémorise la cible en cours + ce qui est fait.
+_FOCUS_STEPS = ["analyse", "chances", "docs", "postuler", "suivi"]
+_FOCUS_LABEL = {"analyse": "opportunité analysée", "chances": "chances évaluées",
+                "docs": "CV + lettre générés", "postuler": "méthode de candidature vue",
+                "suivi": "ajoutée au suivi"}
+
+def _focus_touch(session: dict, cible: str, step: str) -> None:
+    """Met à jour l'objectif en cours : si la cible change, on repart ; sinon on ajoute l'étape faite."""
+    cible = (cible or "").strip()
+    if not cible or not step:
+        return
+    f = session.get("focus") or {}
+    if _norm_cible(f.get("cible", "")) != _norm_cible(cible):
+        f = {"cible": cible[:70], "done": []}
+    if step not in f["done"]:
+        f["done"].append(step)
+    f["ts"] = datetime.now(timezone.utc).isoformat()
+    session["focus"] = f
+
+def _norm_cible(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())[:40]
+
+_FOCUS_NEXT_ACTION = {
+    "chances": ("évaluer tes chances", "/chances"),
+    "docs": ("générer ton CV + lettre adaptés", "/postuler"),
+    "postuler": ("voir comment envoyer ta candidature", "/commentpostuler"),
+    "suivi": ("l'ajouter à ton suivi", "/mescandidatures"),
+}
+
+def _focus_next(session: dict) -> tuple[str, str]:
+    """Prochaine étape conseillée pour l'objectif en cours -> (libellé, commande) ; ('','') si fini/aucun."""
+    f = session.get("focus") or {}
+    if not f.get("cible"):
+        return ("", "")
+    done = f.get("done") or []
+    missing = next((st for st in _FOCUS_STEPS if st not in done), None)
+    return _FOCUS_NEXT_ACTION.get(missing, ("", ""))
+
 def _conversation_context(session: dict) -> str:
     """Mémoire compacte et LISIBLE pour le routeur conversationnel : ce que le bot SAIT déjà
     (pour ne pas le redemander) + ce qui manque encore + dernier lien analysé + candidatures."""
@@ -1248,6 +1287,17 @@ def _conversation_context(session: dict) -> str:
         miss.append("CV")
     if miss:
         lignes.append("- MANQUE encore (à demander SEULEMENT si utile) : " + ", ".join(miss))
+    # Objectif en cours (brique 2) : la cible travaillée + ce qui est déjà fait + la suite logique.
+    f = session.get("focus") or {}
+    if f.get("cible"):
+        faits = ", ".join(_FOCUS_LABEL[s] for s in (f.get("done") or []) if s in _FOCUS_LABEL)
+        ligne = f"- OBJECTIF EN COURS : {f['cible']}"
+        if faits:
+            ligne += f" (déjà fait : {faits})"
+        lbl, cmd = _focus_next(session)
+        if lbl:
+            ligne += f" → PROCHAINE ÉTAPE proposée : {lbl} ({cmd})"
+        lignes.append(ligne)
     return "\n".join(lignes) if lignes else "(aucune info encore — l'utilisateur débute)"
 
 def _recent_dialogue(session: dict, n: int = 4) -> str:
@@ -1608,6 +1658,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                       'JSON: {"score":0,"verdict":"","forces":["",""],"manques":["",""],"actions":["",""],"conseil":""}')
             r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
             _quota_bump(session, "score")
+            _focus_touch(session, cible, "chances")
             sc = int(r.get("score", 0) or 0)
             emoji = "🟢" if sc >= 66 else ("🟡" if sc >= 40 else "🔴")
             barre = "▓" * round(sc / 10) + "░" * (10 - round(sc / 10))
@@ -2405,6 +2456,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                     except Exception as de:
                         logger.warning(f"[docx] postuler: {de}")
                 if ok_cv and ok_lm:
+                    _focus_touch(session, cible_desc, "docs")
                     msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n"
                            "📄 PDF (à envoyer) + 📝 Word (à personnaliser).\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
@@ -2471,6 +2523,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                         pass
                     else:
                         _quota_bump(session, "apply")
+                    _focus_touch(session, cible, "postuler")
                     mode = str(r.get("mode", "") or "").lower()
                     mode_lbl = {"email": "📧 Candidature par e-mail", "formulaire": "📝 Formulaire en ligne",
                                 "plateforme": "🌐 Plateforme de recrutement"}.get(mode, "✉️ Candidature")
@@ -3599,6 +3652,7 @@ async def handle_action(session, data, callback_id=None):
             if act == "lien_suivre":
                 try:
                     opp_store.add_candidature(session.get("user_id"), cible)
+                    _focus_touch(session, cible, "suivi")
                     session_manager.set(session.get("user_id"), session)
                 except Exception as e:
                     logger.error(f"lien_suivre: {e}")
@@ -4418,8 +4472,9 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
     cp = _md_clean(str(r.get("comment_postuler") or ""))
     if cp:
         msg += f"\n\n🧭 *Comment postuler :* {cp[:200]}"
-    # Mémorise la cible pour les actions de suivi (boutons).
+    # Mémorise la cible pour les actions de suivi (boutons) + objectif en cours (brique 2).
     session["last_link_cible"] = titre
+    _focus_touch(session, titre, "analyse")
     msg += (f"\n\n▶️ *La suite :* `/commentpostuler {titre[:34]}` (e-mail/formulaire) · "
             f"`/chances {titre[:34]}` (tes chances détaillées) · `/postuler {titre[:30]}` (CV + lettre)")
     session["_kb_options"] = [("🧭 Comment postuler", "act:lien_postuler"),

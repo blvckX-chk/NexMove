@@ -1445,3 +1445,24 @@ def test_recent_dialogue():
     d = main._recent_dialogue(s, 4)
     assert "Utilisateur: salut" in d and "Toi: Quel est ton objectif" in d
     assert main._recent_dialogue({"historique": []}) == "(début de conversation)"
+
+# ── Brique 2 : suivi d'objectif (v2.68) ──
+def test_focus_touch_et_next():
+    s = {"user_id": "f"}
+    main._focus_touch(s, "Bourse Eiffel", "analyse")
+    assert s["focus"]["cible"] == "Bourse Eiffel" and s["focus"]["done"] == ["analyse"]
+    assert main._focus_next(s) == ("évaluer tes chances", "/chances")
+    main._focus_touch(s, "Bourse Eiffel", "chances")
+    assert main._focus_next(s) == ("générer ton CV + lettre adaptés", "/postuler")
+    # nouvelle cible -> on repart à zéro
+    main._focus_touch(s, "Master IA", "analyse")
+    assert s["focus"]["done"] == ["analyse"]
+    # aucun focus -> pas de suite
+    assert main._focus_next({}) == ("", "")
+
+def test_focus_dans_contexte(monkeypatch):
+    monkeypatch.setattr(main.opp_store, "list_candidatures", lambda uid: [])
+    s = {"user_id": "fc", "profil": {}, "focus": {"cible": "Bourse X", "done": ["analyse", "chances"]}}
+    ctx = main._conversation_context(s)
+    assert "OBJECTIF EN COURS : Bourse X" in ctx
+    assert "PROCHAINE ÉTAPE" in ctx and "/postuler" in ctx
