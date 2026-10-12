@@ -101,7 +101,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.64.0"
+VERSION         = "2.65.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -196,8 +196,51 @@ async def verify_api_key(api_key: str = Security(api_key_header)):
         raise HTTPException(status_code=401, detail="Clé API invalide")
     return True
 
-app = FastAPI(title="NexMove API", version=VERSION)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+def _env_bool(name: str, default: bool = False) -> bool:
+    return str(os.getenv(name, str(default))).strip().lower() in ("1", "true", "yes", "on")
+
+# Sécurité : la doc interactive (/docs, /redoc, /openapi.json) expose toute la surface d'API.
+# On la DÉSACTIVE par défaut ; mets EXPOSE_DOCS=1 en dev pour la réactiver.
+_EXPOSE_DOCS = _env_bool("EXPOSE_DOCS", False)
+app = FastAPI(title="NexMove API", version=VERSION,
+              docs_url="/docs" if _EXPOSE_DOCS else None,
+              redoc_url="/redoc" if _EXPOSE_DOCS else None,
+              openapi_url="/openapi.json" if _EXPOSE_DOCS else None)
+
+# CORS : en prod, restreindre aux origines autorisées (ALLOWED_ORIGINS="https://a,https://b").
+_ALLOWED_ORIGINS = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "*").split(",") if o.strip()] or ["*"]
+app.add_middleware(CORSMiddleware, allow_origins=_ALLOWED_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+
+# ── Rate limiter simple (par IP, fenêtre glissante en mémoire) ──
+RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))   # 0 = désactivé
+_RATE_BUCKET: dict[str, list[float]] = {}
+# Exempts : pings uptime + webhooks entrants (déjà authentifiés par secret/signature ;
+# les limiter risquerait de FAIRE TOMBER des messages utilisateurs légitimes).
+_RATE_EXEMPT = ("/health", "/webhook/")
+
+_SEC_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+                "Referrer-Policy": "strict-origin-when-cross-origin"}
+
+@app.middleware("http")
+async def _rate_limit_mw(request: Request, call_next):
+    if RATE_LIMIT_PER_MIN > 0 and not request.url.path.startswith(_RATE_EXEMPT):
+        ip = (request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+              or (request.client.host if request.client else "?"))
+        nowt = time.time()
+        hits = [h for h in _RATE_BUCKET.get(ip, []) if nowt - h < 60]
+        if len(hits) >= RATE_LIMIT_PER_MIN:
+            return Response(content='{"detail":"Trop de requêtes, réessaie dans un instant."}',
+                            status_code=429, media_type="application/json",
+                            headers={"Retry-After": "30", **_SEC_HEADERS})
+        hits.append(nowt)
+        _RATE_BUCKET[ip] = hits
+        if len(_RATE_BUCKET) > 5000:   # garde-fou mémoire : purge les IP inactives
+            for k in [k for k, v in _RATE_BUCKET.items() if not v or nowt - v[-1] > 120]:
+                _RATE_BUCKET.pop(k, None)
+    resp = await call_next(request)
+    for k, v in _SEC_HEADERS.items():
+        resp.headers.setdefault(k, v)
+    return resp
 
 # Client HTTP unique et partagé (pool de connexions keep-alive) : évite un handshake TCP/TLS
 # à chaque appel sortant (LLM, Tavily, Telegram, WhatsApp, Messenger). Le timeout est passé par requête.
@@ -5313,6 +5356,14 @@ async def fb_webhook(request: Request):
 
 @app.get("/health")
 async def health():
+    """Santé PUBLIQUE minimale (pas de détail d'infra). Le détail est sur /api/admin/health (clé requise)."""
+    return {"status": "ok", "version": VERSION,
+            "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID)}
+
+
+@app.get("/api/admin/health")
+async def admin_health(_auth: bool = Depends(verify_api_key)):
+    """Détail d'infra (protégé par la clé admin X-Forge-Nex-Key)."""
     return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "remote_sources": ["remoteok", "remotive", "jobicy"], "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
@@ -5381,5 +5432,7 @@ async def _startup_alert():
         logger.warning(f"startup alert: {e}")
 
 @app.get("/")
-async def root():
-    return {"service": f"NexMove API v{VERSION}", "endpoints": ["POST /api/chat", "POST /api/chat-cv", "POST /api/parse-cv", "POST /api/generate-documents", "POST /api/osint", "POST /api/collect", "POST /api/score", "POST /api/notify", "GET /api/session/{user_id}", "GET /health"]}
+async def root(response: Response):
+    # Surface minimale (ne liste pas les endpoints) + cache CDN/navigateur.
+    response.headers["Cache-Control"] = "public, max-age=600"
+    return {"service": "NexMove API", "status": "ok"}

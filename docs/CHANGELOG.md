@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.65 — Durcissement sécurité (retours testeur)
+- **Doc API fermée** : `/docs`, `/redoc`, `/openapi.json` désactivés par défaut (réactivables avec `EXPOSE_DOCS=1`).
+- **/health minimal** : ne renvoie plus que `status/version/whatsapp_configured`. Le détail d'infra passe sur
+  **/api/admin/health** (protégé par la clé `X-Forge-Nex-Key`).
+- **/** minimal (ne liste plus les endpoints) + cache `max-age=600`.
+- **Rate limiter** par IP (`RATE_LIMIT_PER_MIN`, défaut 120/min) ; webhooks entrants et `/health` exemptés.
+- **En-têtes de sécurité** : `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`.
+- **CORS** restreignable via `ALLOWED_ORIGINS`.
+
 ## v2.64 — Analyse d'un lien d'opportunité collé
 - **Colle un lien** (offre, bourse, programme, formation) et le bot l'**audite** : il ouvre la page,
   extrait l'opportunité, **note la compatibilité** avec ton profil, donne un **verdict d'admissibilité**,

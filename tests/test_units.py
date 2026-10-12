@@ -1378,3 +1378,25 @@ def test_audit_link_pas_pendant_onboarding(monkeypatch):
     s = {"user_id": "ob", "chat_id": "1", "historique": [], "etape": "ATTENTE_CV", "profil": {}}
     _msg, s = _run(main.process_text_message(s, "https://x.co/truc"))
     assert called["n"] == 0
+
+# ── Durcissement sécurité (v2.65) ──
+def test_docs_desactivees_et_health_minimal():
+    from fastapi.testclient import TestClient
+    c = TestClient(main.app)
+    assert c.get("/docs").status_code == 404
+    assert c.get("/openapi.json").status_code == 404
+    h = c.get("/health").json()
+    assert h["status"] == "ok" and set(h) <= {"status", "version", "whatsapp_configured"}
+    root = c.get("/")
+    assert "endpoints" not in root.json() and "max-age" in root.headers.get("cache-control", "")
+
+def test_rate_limiter(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(main, "RATE_LIMIT_PER_MIN", 3)
+    main._RATE_BUCKET.clear()
+    c = TestClient(main.app)
+    codes = [c.get("/").status_code for _ in range(6)]
+    assert 429 in codes
+    # /health reste exempté (pings uptime)
+    main._RATE_BUCKET.clear()
+    assert all(c.get("/health").status_code == 200 for _ in range(6))
