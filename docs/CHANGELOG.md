@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.68 — Suivi d'objectif sur plusieurs tours (brique 2)
+- Le bot garde en tête l'**objectif en cours** (la cible travaillée) et **ce qui est déjà fait** :
+  opportunité analysée → chances évaluées → CV/lettre générés → méthode de candidature vue → ajoutée au suivi.
+- Il propose automatiquement la **prochaine étape logique** (sans repartir de zéro), et repart proprement
+  quand la cible change.
+- Mis à jour par l'analyse de lien, `/chances`, `/postuler`, `/commentpostuler`, et le bouton « Suivre ».
+- Ajout : logo NexMove carré (`web/logo-nexmove.png`) pour la photo de profil WhatsApp.
+
 ## v2.67 — Mémoire de contexte conversationnel (brique 1)
 - Le routeur conversationnel reçoit désormais une **mémoire compacte** : ce que le bot sait déjà
   (nom, objectif, pays, niveau, compétences, abonnement, dernier lien analysé, candidatures suivies)
