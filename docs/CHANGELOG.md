@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.66 — Analyse de lien fiabilisée + suivi d'intention
+- **Correctif** : un lien collé déclenche désormais l'analyse **à tout moment** (même avant d'avoir
+  envoyé un CV). Avant, en attente de CV, le lien partait en conversation (et pouvait être mal interprété).
+- **Suivi d'intention** : après un lien analysé, « je veux candidater » → `/commentpostuler` sur la
+  cible du lien ; « mes chances / suis-je éligible » → `/chances` sur cette cible (plus de questions redondantes).
+- Le routeur conversationnel ne **prétend plus** avoir lu un lien et n'invente plus de noms d'organismes ;
+  il invite à coller le lien pour l'analyser.
+
 ## v2.65 — Durcissement sécurité (retours testeur)
 - **Doc API fermée** : `/docs`, `/redoc`, `/openapi.json` désactivés par défaut (réactivables avec `EXPOSE_DOCS=1`).
 - **/health minimal** : ne renvoie plus que `status/version/whatsapp_configured`. Le détail d'infra passe sur

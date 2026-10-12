@@ -101,7 +101,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.65.0"
+VERSION         = "2.66.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1221,11 +1221,21 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             return await process_text_message(session, "/premium " + _mprem.group(0).upper())
 
     # Lien d'opportunité collé -> audit automatique (compatibilité, admissibilité, comment postuler).
-    if (not low.startswith("/") and not session.get("sim_mode")
-            and session.get("etape") not in _ONBOARDING_STEPS):
+    # Fonctionne À TOUT MOMENT (même avant d'avoir envoyé un CV), sauf en pleine simulation
+    # ou pendant la création de CV guidée.
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")):
         _murl = _URL_RE.search(t)
         if _murl:
             return await audit_opportunity_link(session, _murl.group(0))
+
+    # Suite d'un lien analysé : « je veux candidater / mes chances » -> on réutilise la cible du lien.
+    if (not low.startswith("/") and not session.get("sim_mode") and session.get("last_link_cible")
+            and not _URL_RE.search(t)):
+        _cible = session.get("last_link_cible")
+        if any(k in low for k in ("candidater", "postuler", "je veux candidat", "déposer ma candidature", "comment faire pour postuler")):
+            return await process_text_message(session, "/commentpostuler " + _cible)
+        if any(k in low for k in ("mes chances", "mon score", "éligib", "admissib", "suis-je éligible", "ai-je mes chances")):
+            return await process_text_message(session, "/chances " + _cible)
 
     if low.startswith("/start"):
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
@@ -2944,7 +2954,7 @@ L'utilisateur écrit librement. Deux cas :
 1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
 COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
-REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots. Ne PRÉTENDS JAMAIS avoir lu le contenu d'un lien/URL : si l'utilisateur en mentionne un, invite-le à le coller pour que tu l'analyses. N'invente aucun nom d'organisme/programme.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
         r = await call_groq(system, t, temperature=0.3, max_tokens=380)
