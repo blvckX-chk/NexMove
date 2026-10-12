@@ -1370,14 +1370,37 @@ def test_audit_link_flow(monkeypatch):
     assert "Bourse Eiffel" in msg and "82%" in msg and "Plutôt éligible" in msg
     assert s["last_link_cible"] == "Bourse Eiffel"
 
-def test_audit_link_pas_pendant_onboarding(monkeypatch):
-    # En plein onboarding (ATTENTE_CV), un lien ne doit PAS déclencher l'audit.
+def test_audit_link_meme_sans_cv(monkeypatch):
+    # Un lien collé déclenche l'audit MÊME avant le CV (ATTENTE_CV), mais PAS en création de CV guidée.
     called = {"n": 0}
     async def fake_audit(session, url): called["n"] += 1; return "x", session
     monkeypatch.setattr(main, "audit_opportunity_link", fake_audit)
     s = {"user_id": "ob", "chat_id": "1", "historique": [], "etape": "ATTENTE_CV", "profil": {}}
     _msg, s = _run(main.process_text_message(s, "https://x.co/truc"))
+    assert called["n"] == 1
+    # pendant la création de CV guidée, on ne détourne pas vers l'audit
+    called["n"] = 0
+    s2 = {"user_id": "ob2", "chat_id": "1", "historique": [], "etape": "ATTENTE_CV",
+          "cvbuild_step": 1, "profil": {}}
+    _msg, s2 = _run(main.process_text_message(s2, "https://x.co/truc"))
     assert called["n"] == 0
+
+def test_suite_lien_candidater(monkeypatch):
+    # Après un lien analysé, "je veux candidater" réutilise la cible mémorisée.
+    captured = {}
+    async def fake_cp(session, cmd):
+        captured["cmd"] = cmd; return "ok", session
+    # on intercepte le 2e appel récursif à process_text_message
+    orig = main.process_text_message
+    async def wrapper(session, text):
+        if text.startswith("/commentpostuler"):
+            captured["cmd"] = text; return "ok", session
+        return await orig(session, text)
+    monkeypatch.setattr(main, "process_text_message", wrapper)
+    s = {"user_id": "sl", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "etape": "ACTIF", "last_link_cible": "Bourse Eiffel", "profil": {"identite": {"nom": "A"}}}
+    _run(wrapper(s, "je veux candidater"))
+    assert captured.get("cmd") == "/commentpostuler Bourse Eiffel"
 
 # ── Durcissement sécurité (v2.65) ──
 def test_docs_desactivees_et_health_minimal():
