@@ -1423,3 +1423,25 @@ def test_rate_limiter(monkeypatch):
     # /health reste exempté (pings uptime)
     main._RATE_BUCKET.clear()
     assert all(c.get("/health").status_code == 200 for _ in range(6))
+
+# ── Mémoire de contexte conversationnel (v2.67) ──
+def test_conversation_context(monkeypatch):
+    monkeypatch.setattr(main.opp_store, "list_candidatures", lambda uid: [])
+    s = {"user_id": "cc", "cv_parsed": True, "last_link_cible": "Bourse X",
+         "profil": {"identite": {"nom": "Awa"},
+                    "preferences": {"objectif": "etudier", "pays_cibles": "France"},
+                    "competences": {"techniques": ["Python"]}}}
+    ctx = main._conversation_context(s)
+    assert "Awa" in ctx and "analysé" in ctx and "France" in ctx and "Bourse X" in ctx
+    assert "Python" in ctx
+    # un profil vide signale ce qui manque
+    monkeypatch.setattr(main.opp_store, "list_candidatures", lambda uid: [])
+    vide = main._conversation_context({"user_id": "v", "profil": {}})
+    assert "MANQUE" in vide and "CV" in vide
+
+def test_recent_dialogue():
+    s = {"historique": [{"role": "user", "content": "salut"},
+                        {"role": "assistant", "content": "Quel est ton objectif ?"}]}
+    d = main._recent_dialogue(s, 4)
+    assert "Utilisateur: salut" in d and "Toi: Quel est ton objectif" in d
+    assert main._recent_dialogue({"historique": []}) == "(début de conversation)"

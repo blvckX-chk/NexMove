@@ -101,7 +101,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.66.0"
+VERSION         = "2.67.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -940,7 +940,9 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "quelque chose »), ne suppose pas — pose UNE seule question de clarification précise et utile "
         "(études ou travail ? quel pays ou objectif ?) avant d'aller plus loin.\n"
         "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
-        "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON)."
+        "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON).\n\n"
+        "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
+        + _recent_dialogue(session, 4)
     )
     try:
         r = await call_groq(system, t, temperature=0.4, max_tokens=350, json_mode=False, tier="fast")
@@ -1202,6 +1204,62 @@ async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
     _push(session, "assistant", msg)
     return msg, session
 
+
+def _conversation_context(session: dict) -> str:
+    """Mémoire compacte et LISIBLE pour le routeur conversationnel : ce que le bot SAIT déjà
+    (pour ne pas le redemander) + ce qui manque encore + dernier lien analysé + candidatures."""
+    profil = session.get("profil", {}) or {}
+    ident = profil.get("identite", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    comp = profil.get("competences", {}) or {}
+    skills = [s for s in (comp.get("techniques", []) + comp.get("outils", [])) if isinstance(s, str)][:6]
+    lignes = []
+    nom = (ident.get("nom") or "").strip()
+    if nom and nom not in ("—", "-"):
+        lignes.append(f"- Prénom/nom : {nom}")
+    lignes.append(f"- CV : {'analysé' if session.get('cv_parsed') else 'pas encore envoyé'}")
+    if prefs.get("objectif"):
+        lignes.append(f"- Objectif : {prefs['objectif']}")
+    if prefs.get("pays_cibles"):
+        lignes.append(f"- Pays visés : {prefs['pays_cibles']}")
+    if prefs.get("niveau"):
+        lignes.append(f"- Niveau : {prefs['niveau']}")
+    if skills:
+        lignes.append(f"- Compétences : {', '.join(skills)}")
+    if prefs.get("mots_cles"):
+        lignes.append(f"- Domaine / mots-clés : {prefs['mots_cles']}")
+    tier = session.get("premium_tier")
+    if tier and tier in _PREMIUM_TIERS:
+        lignes.append(f"- Abonnement : {tier}")
+    if session.get("last_link_cible"):
+        lignes.append(f"- Dernier lien analysé : {session['last_link_cible']} (il peut demander à candidater / ses chances dessus)")
+    try:
+        cands = (opp_store.list_candidatures(session.get("user_id")) or [])[:3]
+        if cands:
+            lignes.append("- Candidatures suivies : " + ", ".join(f"{c[0]} ({c[2]})" for c in cands))
+    except Exception:
+        pass
+    miss = []
+    if not prefs.get("objectif"):
+        miss.append("objectif")
+    if not prefs.get("pays_cibles"):
+        miss.append("pays visé")
+    if not session.get("cv_parsed"):
+        miss.append("CV")
+    if miss:
+        lignes.append("- MANQUE encore (à demander SEULEMENT si utile) : " + ", ".join(miss))
+    return "\n".join(lignes) if lignes else "(aucune info encore — l'utilisateur débute)"
+
+def _recent_dialogue(session: dict, n: int = 4) -> str:
+    """Les derniers échanges, pour que le bot se souvienne de ce qu'il vient de dire/demander."""
+    hist = session.get("historique", []) or []
+    out = []
+    for h in hist[-n:]:
+        who = "Toi" if h.get("role") == "assistant" else "Utilisateur"
+        txt = str(h.get("content", "")).replace("\n", " ").strip()
+        if txt:
+            out.append(f"{who}: {txt[:160]}")
+    return "\n".join(out) if out else "(début de conversation)"
 
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
@@ -2947,14 +3005,21 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if cmd:
         return await process_text_message(session, cmd)
 
-    profil_str = json.dumps(session.get("profil", {}), ensure_ascii=False)[:800]
+    contexte = _conversation_context(session)
+    dialogue = _recent_dialogue(session, 4)
     system = f"""Tu es NexMove. {CONSEILLER_PERSONA}
-PROFIL: {profil_str}
+
+CE QUE TU SAIS DÉJÀ (contexte mémorisé — ne le redemande JAMAIS) :
+{contexte}
+
+DIALOGUE RÉCENT (souviens-toi de ce que tu viens de dire) :
+{dialogue}
+
 L'utilisateur écrit librement. Deux cas :
 1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
 COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
-REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »), ne redemande jamais le CV, max 100 mots. Ne PRÉTENDS JAMAIS avoir lu le contenu d'un lien/URL : si l'utilisateur en mentionne un, invite-le à le coller pour que tu l'analyses. N'invente aucun nom d'organisme/programme.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. N'invente aucun nom d'organisme/programme.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
         r = await call_groq(system, t, temperature=0.3, max_tokens=380)
