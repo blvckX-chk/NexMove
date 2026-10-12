@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.67 — Mémoire de contexte conversationnel (brique 1)
+- Le routeur conversationnel reçoit désormais une **mémoire compacte** : ce que le bot sait déjà
+  (nom, objectif, pays, niveau, compétences, abonnement, dernier lien analysé, candidatures suivies)
+  **+ ce qui manque** encore, **+ le dialogue récent**.
+- Résultat : le bot **ne redemande plus** une info déjà connue (CV, objectif, pays) et **ne se répète plus**
+  d'un tour à l'autre ; il propose l'action concrète suivante.
+- Même mémoire injectée dans les réponses **pré-onboarding** (ne repose plus la même question).
+
 ## v2.66 — Analyse de lien fiabilisée + suivi d'intention
 - **Correctif** : un lien collé déclenche désormais l'analyse **à tout moment** (même avant d'avoir
   envoyé un CV). Avant, en attente de CV, le lien partait en conversation (et pouvait être mal interprété).
