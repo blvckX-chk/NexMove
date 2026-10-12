@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.69 — Correctifs audit sécurité (SSRF + concurrence)
+- **Anti-SSRF** sur l'analyse de lien (`fetch_url_text`) : schémas http/https uniquement, **IP privées /
+  loopback / link-local / réservées refusées** (résolution DNS vérifiée, anti-rebinding partiel),
+  redirections suivies **manuellement et re-validées** à chaque saut, corps **plafonné à 2 Mo**.
+- **Verrou de session par utilisateur** : le traitement des messages d'un même user est sérialisé
+  (plus de crédit/quota perdu quand deux messages arrivent en parallèle).
+- Tests ajoutés (IP bloquées, résolution d'hôte, refus metadata/localhost/ftp, verrou).
+
 ## v2.68 — Suivi d'objectif sur plusieurs tours (brique 2)
 - Le bot garde en tête l'**objectif en cours** (la cible travaillée) et **ce qui est déjà fait** :
   opportunité analysée → chances évaluées → CV/lettre générés → méthode de candidature vue → ajoutée au suivi.

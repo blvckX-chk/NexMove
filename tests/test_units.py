@@ -1466,3 +1466,31 @@ def test_focus_dans_contexte(monkeypatch):
     ctx = main._conversation_context(s)
     assert "OBJECTIF EN COURS : Bourse X" in ctx
     assert "PROCHAINE ÉTAPE" in ctx and "/postuler" in ctx
+
+# ── Anti-SSRF + verrou de session (v2.69) ──
+def test_ssrf_ip_blocked():
+    for bad in ("127.0.0.1", "10.0.0.5", "169.254.169.254", "192.168.1.1", "172.16.0.1", "::1", "0.0.0.0"):
+        assert main._ip_blocked(bad), bad
+    for good in ("8.8.8.8", "1.1.1.1", "93.184.216.34"):
+        assert not main._ip_blocked(good), good
+    assert main._ip_blocked("pas-une-ip")  # invalide -> bloqué
+
+def test_host_is_safe(monkeypatch):
+    assert main._host_is_safe("169.254.169.254") is False      # IP interne littérale
+    monkeypatch.setattr(main.socket, "getaddrinfo", lambda h, p: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    assert main._host_is_safe("example.com") is True           # résout public
+    monkeypatch.setattr(main.socket, "getaddrinfo", lambda h, p: [(2, 1, 6, "", ("10.1.2.3", 0))])
+    assert main._host_is_safe("evil.internal") is False        # résout privé (rebinding)
+
+def test_fetch_url_ssrf_refuse():
+    r = _run(main.fetch_url_text("http://169.254.169.254/latest/meta-data"))
+    assert r["ok"] is False and "autoris" in r["reason"]
+    r2 = _run(main.fetch_url_text("ftp://example.com/x"))
+    assert r2["ok"] is False and "autoris" in r2["reason"]
+    r3 = _run(main.fetch_url_text("http://localhost:8000/api/admin/stats"))
+    assert r3["ok"] is False
+
+def test_user_lock_dedup():
+    import asyncio as _aio
+    l1 = main._user_lock("u1"); l2 = main._user_lock("u1"); l3 = main._user_lock("u2")
+    assert l1 is l2 and l1 is not l3 and isinstance(l1, _aio.Lock)

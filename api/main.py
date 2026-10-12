@@ -2,7 +2,8 @@ import os, io, json, base64, logging, secrets, time, asyncio, sqlite3, hashlib, 
 import html as _htmlmod
 from html.parser import HTMLParser
 import xml.etree.ElementTree as ET
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, urljoin
+import ipaddress, socket
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 
@@ -101,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.68.0"
+VERSION         = "2.69.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4074,7 +4075,26 @@ async def _download_doc(channel, doc):
             return None
     return None
 
+# Verrou par utilisateur : sérialise le read-modify-write de session quand plusieurs messages
+# du même user arrivent en parallèle (tâches de fond concurrentes) -> plus de crédit/quota perdu.
+_user_locks: dict = {}
+
+def _user_lock(user_id: str) -> asyncio.Lock:
+    lk = _user_locks.get(user_id)
+    if lk is None:
+        lk = asyncio.Lock()
+        _user_locks[user_id] = lk
+        if len(_user_locks) > 5000:   # purge basique des verrous inactifs
+            for k in [k for k, v in list(_user_locks.items()) if not v.locked()][:2000]:
+                _user_locks.pop(k, None)
+    return lk
+
 async def route_incoming(channel, user_id, chat_id, username, raw):
+    # Un seul traitement à la fois par utilisateur (évite les écritures de session concurrentes).
+    async with _user_lock(str(user_id)):
+        return await _route_incoming(channel, user_id, chat_id, username, raw)
+
+async def _route_incoming(channel, user_id, chat_id, username, raw):
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
     session["channel"] = channel
     session["chat_id"] = chat_id
@@ -4371,25 +4391,80 @@ class _HTMLText(HTMLParser):
     def text(self):
         return " ".join(" ".join(self._buf).split())
 
+_FETCH_MAX_BYTES = 2_000_000       # plafond de téléchargement (anti-DoS mémoire)
+_FETCH_MAX_REDIRECTS = 4
+
+def _ip_blocked(ip_str: str) -> bool:
+    """Refuse les IP non routables publiquement (anti-SSRF)."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    return (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
+            or ip.is_multicast or ip.is_unspecified)
+
+def _host_is_safe(host: str) -> bool:
+    """Résout le nom d'hôte et vérifie qu'AUCUNE des IP n'est interne (anti-SSRF + anti-rebinding partiel)."""
+    if not host:
+        return False
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        if _ip_blocked(info[4][0]):
+            return False
+    return True
+
 async def fetch_url_text(url: str) -> dict:
-    """Récupère une page web et en extrait titre + texte lisible (plafonné)."""
-    try:
-        r = await http().get(url, headers={"User-Agent": _BROWSER_UA, "Accept-Language": "fr,en;q=0.8"},
-                             timeout=20.0, follow_redirects=True)
-    except Exception as e:
-        logger.warning(f"[lien] fetch {url}: {e}")
-        return {"ok": False, "reason": "injoignable"}
-    if r.status_code >= 400:
-        return {"ok": False, "reason": f"http {r.status_code}"}
-    ctype = (r.headers.get("content-type") or "").lower()
-    if "html" not in ctype and "xml" not in ctype and "text" not in ctype:
-        return {"ok": False, "reason": "format non lisible"}
-    try:
-        p = _HTMLText(); p.feed(r.text)
-        return {"ok": True, "url": str(r.url), "title": " ".join(p.title.split())[:200], "text": p.text()[:6000]}
-    except Exception as e:
-        logger.warning(f"[lien] parse {url}: {e}")
-        return {"ok": False, "reason": "illisible"}
+    """Récupère une page web (anti-SSRF) et en extrait titre + texte lisible (plafonné).
+    - schémas http/https uniquement ; IP privées/loopback/link-local refusées ;
+    - redirections suivies MANUELLEMENT et re-validées à chaque saut ;
+    - corps plafonné à _FETCH_MAX_BYTES."""
+    headers = {"User-Agent": _BROWSER_UA, "Accept-Language": "fr,en;q=0.8",
+               "Accept": "text/html,application/xhtml+xml"}
+    cur = url
+    for _hop in range(_FETCH_MAX_REDIRECTS + 1):
+        parsed = urlparse(cur)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            return {"ok": False, "reason": "url non autorisée"}
+        if not await asyncio.to_thread(_host_is_safe, parsed.hostname):
+            logger.warning(f"[lien] SSRF bloqué: {parsed.hostname}")
+            return {"ok": False, "reason": "adresse non autorisée"}
+        try:
+            async with http().stream("GET", cur, headers=headers, timeout=20.0, follow_redirects=False) as resp:
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    loc = resp.headers.get("location")
+                    if not loc:
+                        return {"ok": False, "reason": f"http {resp.status_code}"}
+                    cur = urljoin(cur, loc)
+                    continue
+                if resp.status_code >= 400:
+                    return {"ok": False, "reason": f"http {resp.status_code}"}
+                ctype = (resp.headers.get("content-type") or "").lower()
+                if "html" not in ctype and "xml" not in ctype and "text" not in ctype:
+                    return {"ok": False, "reason": "format non lisible"}
+                total, chunks = 0, []
+                async for chunk in resp.aiter_bytes():
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total >= _FETCH_MAX_BYTES:
+                        break
+                body = b"".join(chunks)
+                final_url = str(resp.url)
+        except Exception as e:
+            logger.warning(f"[lien] fetch {cur}: {e}")
+            return {"ok": False, "reason": "injoignable"}
+        try:
+            html = body.decode("utf-8", "replace")
+            p = _HTMLText(); p.feed(html)
+            return {"ok": True, "url": final_url, "title": " ".join(p.title.split())[:200], "text": p.text()[:6000]}
+        except Exception as e:
+            logger.warning(f"[lien] parse {cur}: {e}")
+            return {"ok": False, "reason": "illisible"}
+    return {"ok": False, "reason": "trop de redirections"}
 
 async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
     """Analyse un lien d'opportunité envoyé par l'utilisateur : extrait les infos, note la
