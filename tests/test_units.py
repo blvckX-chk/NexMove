@@ -1194,7 +1194,7 @@ def test_cmd_stats_admin_ok(monkeypatch):
     monkeypatch.setattr(main, "_ADMIN_IDS", {"7"})
     s = {"user_id": "7", "chat_id": "7", "historique": [], "onboarding_complete": True}
     msg, s = _run(main.process_text_message(s, "/stats"))
-    assert "tableau de bord" in msg.lower()
+    assert "traction" in msg.lower() and "funnel" in msg.lower()
 
 def test_api_admin_stats_endpoint():
     d = _run(main.admin_stats(_auth=True))
@@ -1543,3 +1543,20 @@ def test_llm_providers_openrouter():
     orp = [p for p in llm._LLM_PROVIDERS if p["name"] == "openrouter"][0]
     assert orp["api"] == "openai" and orp["url"].startswith("https://openrouter.ai")
     assert llm.CEREBRAS_MODEL_FAST != "gemma-4-31b"                  # modèle invalide corrigé
+
+# ── Dashboard de traction + tier quality (v2.75) ──
+def test_admin_stats_traction(monkeypatch):
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [
+        {"created_at": now, "derniere_activite": now, "cv_parsed": True, "onboarding_complete": True,
+         "channel": "telegram", "profil": {"preferences": {"objectif": "etudier"}}},
+        {"created_at": now, "cv_parsed": True, "onboarding_complete": True, "channel": "whatsapp",
+         "premium_tier": "premium", "premium_until": "2099-01-01T00:00:00+00:00", "profil": {"preferences": {"objectif": "travailler"}}},
+        {"created_at": now, "channel": "telegram", "profil": {}},
+    ])
+    monkeypatch.setattr(main.session_manager, "sources_stats", lambda: [])
+    d = main._admin_stats()
+    assert d["users_total"] == 3 and d["onboarded"] == 2 and d["payants_actifs"] == 1
+    assert d["taux_activation"] == 67 and d["taux_conversion"] == 50
+    assert len(d["inscriptions_14j"]) == 14 and d["par_canal"]["telegram"] == 2

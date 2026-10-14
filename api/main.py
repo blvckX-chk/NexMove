@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.74.0"
+VERSION         = "2.75.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -421,32 +421,72 @@ def _credit_note(session: dict, used_credit: bool) -> str:
             if used_credit else "")
 
 def _admin_stats() -> dict:
-    """Agrégats pour le pilotage (commande /stats + panel web). Aucune donnée personnelle."""
+    """Dashboard de traction (commande /stats + panel web). Aucune donnée personnelle.
+    Calcule activation, conversion, rétention 7j, inscriptions/jour et répartition par canal."""
+    now = datetime.now(timezone.utc)
     try:
-        users = session_manager.count()
+        alls = session_manager.list_all()
     except Exception:
-        users = 0
-    try:
-        active = session_manager.list_active()
-    except Exception:
-        active = []
-    onboarded = len(active)
-    paid = sum(1 for s in active if _user_tier(s) in _PREMIUM_TIERS)
-    credits_actifs = sum(1 for s in active if _credit_balance(s) > 0)
+        alls = []
+    users = len(alls)
+    onboarded = cv_sent = paid = credits_actifs = active_7d = 0
+    by_channel: dict = {}
+    by_objectif: dict = {}
+    signups: dict = {}   # date -> nb
+    for s in alls:
+        if s.get("cv_parsed"):
+            cv_sent += 1
+        if s.get("onboarding_complete"):
+            onboarded += 1
+        if _user_tier(s) in _PREMIUM_TIERS:
+            paid += 1
+        if _credit_balance(s) > 0:
+            credits_actifs += 1
+        # rétention : actif sur 7 jours
+        da = s.get("derniere_activite") or s.get("created_at")
+        if da:
+            try:
+                if (now - datetime.fromisoformat(da)).days < 7:
+                    active_7d += 1
+            except Exception:
+                pass
+        ch = s.get("channel") or "?"
+        by_channel[ch] = by_channel.get(ch, 0) + 1
+        obj = ((s.get("profil", {}) or {}).get("preferences", {}) or {}).get("objectif")
+        if obj:
+            by_objectif[obj] = by_objectif.get(obj, 0) + 1
+        ca = s.get("created_at")
+        if ca:
+            signups[ca[:10]] = signups.get(ca[:10], 0) + 1
+    # inscriptions des 14 derniers jours (série continue, zéros inclus)
+    serie = []
+    for i in range(13, -1, -1):
+        d = (now.date() - timedelta(days=i)).isoformat()
+        serie.append({"date": d, "n": signups.get(d, 0)})
     try:
         srcs = session_manager.sources_stats()
     except Exception:
         srcs = []
+    def _rate(a, b):
+        return round(100 * a / b) if b else 0
     return {
         "version": VERSION,
         "users_total": users,
+        "cv_envoyes": cv_sent,
         "onboarded": onboarded,
         "payants_actifs": paid,
         "users_avec_credits": credits_actifs,
+        "actifs_7j": active_7d,
+        "taux_activation": _rate(onboarded, users),       # % des users qui finissent l'onboarding
+        "taux_conversion": _rate(paid, onboarded),        # % des onboardés qui paient
+        "taux_retention_7j": _rate(active_7d, users),
+        "inscriptions_14j": serie,
+        "par_canal": by_channel,
+        "par_objectif": dict(sorted(by_objectif.items(), key=lambda x: -x[1])[:6]),
         "premium_codes": premium_store.stats(),
         "credit_codes": credit_store.stats(),
         "sources_marketing": srcs[:15],
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now.isoformat(),
     }
 
 def _apply_premium(session: dict, tier: str, days: int) -> str:
@@ -2350,11 +2390,20 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             return msg, session
         d = _admin_stats()
         pc = d["premium_codes"]; cc = d["credit_codes"]
-        lignes = [f"📊 *NexMove — tableau de bord* (v{d['version']})",
-                  f"👥 Utilisateurs : *{d['users_total']}* · onboardés : *{d['onboarded']}* · payants actifs : *{d['payants_actifs']}*",
-                  f"🎟️ Avec crédits : *{d['users_avec_credits']}*",
-                  f"💎 Codes Premium — non utilisés : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
-                  f"🎟️ Codes crédits — non utilisés : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
+        spark = "".join("▁▂▃▄▅▆▇█"[min(7, p["n"])] for p in d.get("inscriptions_14j", []))
+        canal = " · ".join(f"{k}:{v}" for k, v in (d.get("par_canal") or {}).items())
+        lignes = [f"📊 *NexMove — traction* (v{d['version']})",
+                  f"👥 Utilisateurs : *{d['users_total']}*",
+                  f"📈 *Funnel :* CV {d['cv_envoyes']} → onboardés {d['onboarded']} → payants *{d['payants_actifs']}*",
+                  f"⚡ Activation : *{d['taux_activation']}%* · Conversion : *{d['taux_conversion']}%* · Rétention 7j : *{d['taux_retention_7j']}%*",
+                  f"🟢 Actifs 7j : *{d['actifs_7j']}* · 🎟️ avec crédits : {d['users_avec_credits']}",
+                  f"🗓️ Inscriptions 14j : {spark}  (total {sum(p['n'] for p in d.get('inscriptions_14j', []))})"]
+        if canal:
+            lignes.append(f"📲 Canal : {canal}")
+        if d.get("par_objectif"):
+            lignes.append("🎯 Objectifs : " + " · ".join(f"{k} {v}" for k, v in d["par_objectif"].items()))
+        lignes += [f"💎 Codes Premium — libres : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
+                   f"🎟️ Codes crédits — libres : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
         if d["sources_marketing"]:
             lignes.append("\n*Top sources :*")
             for r in d["sources_marketing"][:8]:
@@ -4260,7 +4309,7 @@ Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par 
 signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
 professionnel, phrases variées, pas de superlatifs creux.
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
-    return await call_groq(system, prompt, temperature=0.4, max_tokens=1200)
+    return await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):

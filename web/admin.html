@@ -56,9 +56,26 @@
 
   <div class="grid" id="kpis" hidden>
     <div class="card"><div class="k">Utilisateurs</div><div class="v" id="k-users">—</div></div>
+    <div class="card"><div class="k">CV envoyés</div><div class="v" id="k-cv">—</div></div>
     <div class="card"><div class="k">Onboardés</div><div class="v" id="k-onb">—</div></div>
     <div class="card"><div class="k">Payants actifs</div><div class="v" id="k-paid">—</div></div>
-    <div class="card"><div class="k">Avec crédits</div><div class="v" id="k-cred">—</div></div>
+  </div>
+
+  <div class="grid" id="rates" hidden>
+    <div class="card"><div class="k">Activation</div><div class="v" id="k-act">—</div></div>
+    <div class="card"><div class="k">Conversion</div><div class="v" id="k-conv">—</div></div>
+    <div class="card"><div class="k">Rétention 7j</div><div class="v" id="k-ret">—</div></div>
+    <div class="card"><div class="k">Actifs 7j</div><div class="v" id="k-act7">—</div></div>
+  </div>
+
+  <div id="chartwrap" hidden>
+    <h2>Inscriptions — 14 derniers jours</h2>
+    <div class="card"><div id="chart" style="display:flex;align-items:flex-end;gap:4px;height:120px"></div></div>
+  </div>
+
+  <div id="splitwrap" hidden style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+    <div><h2>Par canal</h2><div class="card" id="byCanal"></div></div>
+    <div><h2>Par objectif</h2><div class="card" id="byObjectif"></div></div>
   </div>
 
   <div id="codes" hidden>
@@ -109,13 +126,37 @@
       if(!r.ok){ setMsg('<div class="err">Erreur '+r.status+'.</div>'); return; }
       var d = await r.json();
       setMsg("");
-      document.getElementById("kpis").hidden = false;
-      document.getElementById("codes").hidden = false;
-      document.getElementById("srcwrap").hidden = false;
+      ["kpis","rates","chartwrap","splitwrap","codes","srcwrap"].forEach(function(id){ document.getElementById(id).hidden = false; });
       document.getElementById("k-users").textContent = num(d.users_total);
+      document.getElementById("k-cv").textContent = num(d.cv_envoyes);
       document.getElementById("k-onb").textContent = num(d.onboarded);
       document.getElementById("k-paid").textContent = num(d.payants_actifs);
-      document.getElementById("k-cred").textContent = num(d.users_avec_credits);
+      document.getElementById("k-act").textContent = (d.taux_activation||0)+"%";
+      document.getElementById("k-conv").textContent = (d.taux_conversion||0)+"%";
+      document.getElementById("k-ret").textContent = (d.taux_retention_7j||0)+"%";
+      document.getElementById("k-act7").textContent = num(d.actifs_7j);
+      // graphe inscriptions 14j (barres CSS)
+      var serie = d.inscriptions_14j||[]; var maxN = Math.max(1, Math.max.apply(null, serie.map(function(p){return p.n;})));
+      var chart = document.getElementById("chart"); chart.innerHTML = "";
+      serie.forEach(function(p){
+        var col = document.createElement("div");
+        col.title = p.date+" : "+p.n;
+        col.style.cssText = "flex:1;background:var(--bleu);border-radius:4px 4px 0 0;min-height:3px;height:"+Math.round(100*p.n/maxN)+"%";
+        chart.appendChild(col);
+      });
+      function fillKV(id, obj){
+        var el = document.getElementById(id); el.innerHTML = "";
+        var entries = Object.entries(obj||{});
+        if(!entries.length){ el.innerHTML = '<span class="muted">—</span>'; return; }
+        entries.forEach(function(kv){
+          var row = document.createElement("div");
+          row.style.cssText = "display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--bord)";
+          row.innerHTML = "<span>"+kv[0]+"</span><strong>"+kv[1]+"</strong>";
+          el.appendChild(row);
+        });
+      }
+      fillKV("byCanal", d.par_canal);
+      fillKV("byObjectif", d.par_objectif);
       var pc = d.premium_codes||{}, cc = d.credit_codes||{};
       document.getElementById("pc-unused").textContent = num(pc.unused||0);
       document.getElementById("pc-used").textContent = num(pc.used||0);

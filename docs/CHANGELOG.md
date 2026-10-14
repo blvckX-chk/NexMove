@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.75 — Dashboard de traction + rédaction premium (optionnelle)
+- **Dashboard de traction** : /stats et le panel web affichent le FUNNEL (users → CV → onboardés →
+  payants) + taux d'**activation**, **conversion**, **rétention 7j**, **inscriptions/jour (14j)**,
+  répartition par **canal** et **objectif**. Idéal pour présenter la traction à un financeur.
+- **Rédaction CV/lettre premium** (optionnelle) : nouveau niveau `tier="quality"` — si
+  `OPENROUTER_API_KEY` est présent, la génération passe par un modèle premium configurable
+  (`OPENROUTER_GENERATE_MODEL`, ex. `anthropic/claude-3.5-sonnet`), sinon fallback standard.
+- Section Témoignages prête (à remplir avec de VRAIS témoignages). Tests ajoutés.
+
 ## v2.74 — Bandeau Campus France + ciblage LinkedIn (OSINT temps réel)
 - **Vitrine** : bandeau de lancement « Campagne Études en France » au-dessus du hero (modifiable/supprimable).
 - **Recherche temps réel (OSINT/Tavily)** : pour les recherches d'EMPLOI, la requête fait désormais
