@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.73 — Témoignages (vitrine) + nouvelles sources d'offres
+- **Vitrine** : section *Témoignages* (« Avis ») avec bouton « Laisser mon témoignage » (WhatsApp).
+  ⚠️ Cartes d'exemple à remplacer par de VRAIS témoignages avant promotion.
+- **Sources d'offres** : 2 nouvelles API gratuites (Himalayas, The Muse) ajoutées à la collecte,
+  + flux RSS (We Work Remotely, Remotive, OYA Opportunities, ArmACAD, Oxford Scholarships).
+  Plus de résultats réels pour la veille et la recherche grounded.
+
 ## v2.72 — 4e fournisseur LLM (OpenRouter) + fix modèle « fast »
 - **OpenRouter** ajouté en **dernier recours** (pay-as-you-go) : s'active dès que `OPENROUTER_API_KEY`
   est dans le `.env` → le bot ne tombe jamais même si les 3 tiers gratuits saturent. Dormant sans la clé.

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.72.0"
+VERSION         = "2.73.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4621,6 +4621,12 @@ SOURCE_CATALOG = [
     {"url": "https://scholarship-positions.com/feed/",         "type": "bourse",     "scope": "intl"},
     {"url": "https://www.opportunitiescircle.com/feed/",       "type": "bourse",     "scope": "both"},
     {"url": "https://www.scholarshipsads.com/feed/",           "type": "bourse",     "scope": "both"},
+    {"url": "https://oyaop.com/feed/",                         "type": "bourse",     "scope": "both"},
+    {"url": "https://www.oxfordscholarships.com/feed/",        "type": "bourse",     "scope": "intl"},
+    {"url": "https://armacad.info/feed",                       "type": "bourse",     "scope": "intl"},
+    # Emplois (télétravail international, sans clé)
+    {"url": "https://weworkremotely.com/remote-jobs.rss",     "type": "emploi",     "scope": "both"},
+    {"url": "https://remotive.com/remote-jobs/feed",          "type": "emploi",     "scope": "both"},
     # Humanitaire / ONG (emplois & consultances) — activable via ENABLE_RELIEFWEB=1
     {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
      "active_env": "ENABLE_RELIEFWEB"},
@@ -4867,6 +4873,53 @@ async def fetch_jobicy() -> list:
         logger.error(f"jobicy: {e}")
         return []
 
+async def fetch_himalayas() -> list:
+    """Himalayas — offres 100% télétravail (international), sans clé API. https://himalayas.app/jobs/api"""
+    try:
+        r = await http().get("https://himalayas.app/jobs/api", params={"limit": 40},
+                             headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        out = []
+        for j in (r.json().get("jobs") or [])[:40]:
+            titre = (j.get("title") or "").strip()
+            comp = (j.get("companyName") or "").strip()
+            url = (j.get("applicationLink") or j.get("guid") or "").strip()
+            desc = re.sub("<[^>]+>", " ", j.get("excerpt") or j.get("description") or "")
+            desc = re.sub(r"\s+", " ", desc).strip()[:300]
+            if titre and url:
+                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                            "resume": desc, "type": "emploi", "scope": "both", "date": ""})
+        return out
+    except Exception as e:
+        logger.error(f"himalayas: {e}")
+        return []
+
+async def fetch_themuse(pages: int = 1) -> list:
+    """The Muse — offres (US/EU, tech & non-tech), API publique sans clé. https://www.themuse.com/api/public/jobs"""
+    out = []
+    try:
+        for page in range(max(1, pages)):
+            r = await http().get("https://www.themuse.com/api/public/jobs", params={"page": page},
+                                 headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
+            if r.status_code != 200:
+                break
+            for j in (r.json().get("results") or [])[:40]:
+                titre = (j.get("name") or "").strip()
+                comp = ((j.get("company") or {}).get("name") or "").strip()
+                url = ((j.get("refs") or {}).get("landing_page") or "").strip()
+                locs = ", ".join(l.get("name", "") for l in (j.get("locations") or [])[:2])
+                desc = re.sub("<[^>]+>", " ", j.get("contents") or "")
+                desc = re.sub(r"\s+", " ", desc).strip()[:280]
+                if titre and url:
+                    out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                                "resume": (f"{locs} · " if locs else "") + desc, "type": "emploi",
+                                "scope": "both", "date": (j.get("publication_date") or "")[:10]})
+        return out
+    except Exception as e:
+        logger.error(f"themuse: {e}")
+        return out
+
 async def fetch_adzuna(query: str, country: str = "fr") -> list:
     """API emploi Adzuna (clés gratuites). Ne fait rien si non configurée."""
     if not (ADZUNA_APP_ID and ADZUNA_APP_KEY):
@@ -5026,7 +5079,7 @@ async def ingest_structured() -> int:
     """Ingère les offres d'emploi structurées (arbeitnow + RemoteOK + Remotive + Jobicy
     + Adzuna si configuré + EURAXESS) dans le pool."""
     total = 0
-    for fetch in (fetch_arbeitnow, fetch_remoteok, fetch_remotive, fetch_jobicy):
+    for fetch in (fetch_arbeitnow, fetch_remoteok, fetch_remotive, fetch_jobicy, fetch_himalayas, fetch_themuse):
         try:
             for it in await fetch():
                 if opp_store.add_source(it):
@@ -5626,7 +5679,7 @@ async def health():
 @app.get("/api/admin/health")
 async def admin_health(_auth: bool = Depends(verify_api_key)):
     """Détail d'infra (protégé par la clé admin X-Forge-Nex-Key)."""
-    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "remote_sources": ["remoteok", "remotive", "jobicy"], "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "remote_sources": ["arbeitnow", "remoteok", "remotive", "jobicy", "himalayas", "themuse"], "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
 
 
 async def _check_health() -> dict:
