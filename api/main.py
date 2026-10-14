@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.70.0"
+VERSION         = "2.71.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -593,7 +593,8 @@ _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "ent
 # Intentions informatives SÛRES à exécuter même avant d'avoir un profil (pas de CV requis).
 _PREONB_DIRECT = {"campusfrance", "canada", "procedure", "ecoles", "formations", "budget", "logement",
                   "parcours", "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
-                  "entretien", "aide", "contact", "offres", "credits", "parrainage", "version"}
+                  "entretien", "aide", "contact", "offres", "credits", "parrainage", "version",
+                  "mobilite"}   # mobilite = recherche d'opportunités GROUNDED (web réel), jamais de l'invention
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -957,6 +958,11 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "DÉSAMBIGUÏSATION : si son intention est VAGUE (ex. « je veux partir », « aide-moi », « je cherche "
         "quelque chose »), ne suppose pas — pose UNE seule question de clarification précise et utile "
         "(études ou travail ? quel pays ou objectif ?) avant d'aller plus loin.\n"
+        "RÈGLE ABSOLUE ANTI-INVENTION : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL "
+        "précis de toi-même. Si on te demande de TROUVER des opportunités/bourses/offres, ne donne AUCUN nom : "
+        "réponds que tu vas lancer une recherche sur des sources RÉELLES et invite à envoyer le CV (ou dis « je cherche »). "
+        "Tu peux seulement mentionner des portails ultra-connus et vérifiables (Campus France, DAAD, Erasmus Mundus, "
+        "Chevening) SANS inventer de détail ni d'URL.\n"
         "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
         "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON).\n\n"
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
@@ -1472,9 +1478,10 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             comp = (profil.get("competences", {}).get("techniques", []))[:4]
             sources = "\n".join(
                 f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:200]}"
-                for s in grounded[:6]) if grounded else "(pas de résultat web — appuie-toi sur ta connaissance générale)"
+                for s in grounded[:6]) if grounded else "(pas de résultat web — n'invente aucune date ni URL précise ; reste sur les grandes étapes et renvoie vers campusfrance.org)"
             system = ("Tu es conseiller Campus France. Explique clairement la procédure 'Études en France' pour un "
-                      "étudiant africain francophone. Base les dates/étapes sur les résultats web fournis, sans inventer. JSON uniquement.")
+                      "étudiant africain francophone. Base les dates/étapes sur les résultats web fournis. "
+                      "N'INVENTE jamais une date, un montant ou une URL : en cas de doute, dis de vérifier sur campusfrance.org. JSON uniquement.")
             prompt = f"""RÉSULTATS WEB:
 {sources}
 PROFIL: compétences={comp}
@@ -3099,8 +3106,9 @@ DIALOGUE RÉCENT (souviens-toi de ce que tu viens de dire) :
 L'utilisateur écrit librement. Deux cas :
 1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
+RÈGLE CLÉ : dès qu'il demande de TROUVER/CHERCHER des opportunités, bourses, offres, emplois, stages ou programmes → renvoie TOUJOURS action="mobilite" (recherche sur sources web RÉELLES) avec son argument. Ne liste JAMAIS d'opportunités toi-même dans "message".
 COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
-REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. N'invente aucun nom d'organisme/programme.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
         r = await call_groq(system, t, temperature=0.3, max_tokens=380)
@@ -5116,6 +5124,27 @@ def _attach_feedback(session, opps):
         session["last_offers"] = lo
         session["_feedback_kb"] = kb
 
+# Portails RÉELS et vérifiables, utilisés UNIQUEMENT en repli quand la recherche web ne renvoie rien.
+# Objectif : ne jamais inventer d'opportunité — on oriente vers des sources officielles.
+_REAL_SCHOLARSHIP_PORTALS = [
+    {"titre": "Campus France — études & bourses en France", "url": "https://www.campusfrance.org", "type": "formation", "organisation": "campusfrance.org"},
+    {"titre": "Bourses d'excellence Eiffel (master/doctorat)", "url": "https://www.campusfrance.org/fr/eiffel-programme-bourses-excellence", "type": "bourse", "organisation": "campusfrance.org"},
+    {"titre": "DAAD — bourses pour l'Allemagne", "url": "https://www.daad.de/fr/", "type": "bourse", "organisation": "daad.de"},
+    {"titre": "Erasmus Mundus — masters conjoints (bourse complète)", "url": "https://www.eacea.ec.europa.eu/scholarships/erasmus-mundus-catalogue_en", "type": "bourse", "organisation": "ec.europa.eu"},
+    {"titre": "Chevening — bourses Royaume-Uni", "url": "https://www.chevening.org", "type": "bourse", "organisation": "chevening.org"},
+    {"titre": "Mastercard Foundation Scholars", "url": "https://mastercardfdn.org/all/scholars/", "type": "bourse", "organisation": "mastercardfdn.org"},
+    {"titre": "AUF — Agence universitaire de la Francophonie", "url": "https://www.auf.org/les_services/appels-offre/", "type": "bourse", "organisation": "auf.org"},
+    {"titre": "EduCanada — bourses d'études au Canada", "url": "https://www.educanada.ca/scholarships-bourses/", "type": "bourse", "organisation": "educanada.ca"},
+]
+_REAL_JOB_PORTALS = [
+    {"titre": "LinkedIn Emplois", "url": "https://www.linkedin.com/jobs/", "type": "emploi", "organisation": "linkedin.com"},
+    {"titre": "RemoteOK — emplois 100% télétravail", "url": "https://remoteok.com", "type": "emploi", "organisation": "remoteok.com"},
+    {"titre": "Jobberman (Afrique de l'Ouest)", "url": "https://www.jobberman.com", "type": "emploi", "organisation": "jobberman.com"},
+    {"titre": "ReliefWeb Jobs (ONG / humanitaire)", "url": "https://reliefweb.int/jobs", "type": "emploi", "organisation": "reliefweb.int"},
+    {"titre": "Emploi Bénin", "url": "https://www.emploibenin.com", "type": "emploi", "organisation": "emploibenin.com"},
+    {"titre": "Indeed", "url": "https://www.indeed.com", "type": "emploi", "organisation": "indeed.com"},
+]
+
 async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None) -> dict:
     profil = profil or {}
     exclude_urls = exclude_urls or set()
@@ -5225,21 +5254,20 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles — vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
-        system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale) pour ressortissants "
-                  "africains. Respecte le PARCOURS RÉEL (reconversion incluse) : cible le domaine actuel/visé. "
-                  "Ne cite QUE des organismes RÉELS — locaux (agences, universités, entreprises, programmes du pays) "
-                  "ET internationaux (DAAD, Campus France, Erasmus Mundus, Chevening, AUF, Mastercard Foundation…). "
-                  "N'invente jamais d'URL (portail officiel en clair). JSON uniquement.")
-        local_txt = ((f"Inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations locales, bourses "
-                      f"nationales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
-                     if veut_local and local_pays else "")
-        prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' + international' if local_pays else 'Non précisé')}
-{local_txt}DATE DU JOUR: {today}. Uniquement des opportunités ouvertes ou à venir.
-Donne 3 à 5 opportunités RÉELLES adaptées à CE profil.
-JSON: {{"opportunites":[{{"titre":"","organisation":"","type":"emploi|bourse|fellowship|formation","portail_officiel":"","financement":"total|partiel|aucun","deadline":"","deadline_iso":"","confiance":"haute|moyenne|faible","score_composite":0,"raison":""}}],"conseil_principal":""}}"""
-        result = await call_groq(system, prompt, temperature=0.15, max_tokens=1500)
-        footer = "⚠️ _Pistes générées par IA — à vérifier sur les sites officiels._"
+        # PAS de résultat web -> on N'INVENTE AUCUNE opportunité. On renvoie des PORTAILS OFFICIELS RÉELS
+        # (vérifiables) à consulter. C'est la garantie anti-hallucination.
+        veut_bourse = any(k in (str(domaine) + " " + str(cible) + " " + str(pays_cibles)).lower()
+                          for k in ("bourse", "étude", "etude", "master", "licence", "doctorat", "formation",
+                                    "universit", "scholarship", "fellowship", "campus"))
+        portals = _REAL_SCHOLARSHIP_PORTALS if veut_bourse else _REAL_JOB_PORTALS
+        result = {
+            "opportunites": [dict(p, confiance="officiel", score_composite=0,
+                                  raison="Portail officiel à consulter directement.") for p in portals[:6]],
+            "conseil_principal": ("Je n'ai pas pu charger de résultats en direct à l'instant — alors je ne t'invente "
+                                  "rien. Voici des portails OFFICIELS fiables : cherche-y ta cible, puis colle-moi un "
+                                  "lien précis et je l'analyse (admissibilité + comment postuler). Ou réessaie /veille dans un moment."),
+        }
+        footer = "✅ _Portails officiels réels (aucune opportunité inventée). Colle-moi un lien précis pour que je l'analyse._"
 
     opps = result.get("opportunites", [])
     _today_d = datetime.now(timezone.utc).date()

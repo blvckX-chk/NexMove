@@ -258,7 +258,7 @@ def test_flux_intention_dormante_captee_avant_cv():
     """Une intention forte tapée avant l'envoi du CV est mémorisée (pending_intent)."""
     session = {"user_id": "t-intent", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
                "onboarding_complete": False}
-    msg, session = _run(main.process_text_message(session, "je cherche une bourse de master"))
+    msg, session = _run(main.process_text_message(session, "comment postuler à une entreprise de la place"))
     assert session.get("pending_intent", "").startswith("/")   # intention mémorisée pour la fin de l'onboarding
     assert isinstance(msg, str) and len(msg) > 0                # une réponse est renvoyée (IA ou pitch de repli)
 
@@ -1512,3 +1512,23 @@ def test_preonboarding_route_direct(monkeypatch):
          "etape": "ATTENTE_CV", "profil": {}}
     msg, s = _run(main.process_text_message(s, "je veux postuler à campus france comment je fais"))
     assert "Campus France" in msg and "Envoie ton CV" in msg   # réponse utile + nudge CV
+
+# ── Anti-hallucination : repli sur portails réels (v2.71) ──
+def test_run_osint_fallback_portails_reels(monkeypatch):
+    async def empty_tav(q, n=10): return []
+    async def no_llm(*a, **k): raise AssertionError("call_groq ne doit PAS être appelé dans le repli (anti-invention)")
+    async def no_sem(*a, **k): return []
+    monkeypatch.setattr(main, "tavily_search", empty_tav)
+    monkeypatch.setattr(main, "call_groq", no_llm)
+    monkeypatch.setattr(main, "semantic_scores", no_sem)
+    r = _run(main.run_osint({"preferences": {"objectif": "bourse", "pays_cibles": "France"}}, "bourses master", "u"))
+    opps = r.get("opportunites", [])
+    assert 1 <= len(opps) <= 8
+    # toutes les opportunités du repli ont une URL RÉELLE (http) — aucune invention
+    assert all(str(o.get("url", "")).startswith("http") for o in opps)
+    titres = " ".join(o.get("titre", "") for o in opps)
+    assert "Campus France" in titres   # portail officiel connu
+
+def test_real_portals_sont_des_urls():
+    for p in main._REAL_SCHOLARSHIP_PORTALS + main._REAL_JOB_PORTALS:
+        assert p["url"].startswith("https://") and "." in p["organisation"]

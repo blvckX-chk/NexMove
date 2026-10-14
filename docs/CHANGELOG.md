@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.71 — Anti-hallucination (solution définitive)
+- **Les opportunités ne viennent plus JAMAIS de la mémoire du modèle** : uniquement de la recherche web
+  réelle (Tavily). Quand la recherche ne renvoie rien, le bot **n'invente plus** — il affiche des
+  **portails officiels vérifiables** (Campus France, Eiffel, DAAD, Erasmus Mundus, Chevening, Mastercard
+  Foundation, AUF, EduCanada / LinkedIn, Jobberman, ReliefWeb…) et propose de coller un lien à analyser.
+- Toute demande « trouver des bourses/offres » (même avant le CV) est **routée vers la recherche grounded**
+  (/mobilite), plus vers une réponse libre.
+- Prompts conversationnels verrouillés : interdiction absolue de citer une bourse/programme/entreprise/URL
+  précis sans source. Tests ajoutés (le repli n'appelle même pas le LLM).
+
 ## v2.70 — Conversation : excellence (intentions directes + titres propres)
 - Pré-onboarding : les intentions **claires et informatives** (Campus France, Canada, écoles, visa,
   logement, budget…) sont **traitées immédiatement** au lieu de reposer des questions évidentes
