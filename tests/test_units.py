@@ -1594,22 +1594,45 @@ def test_pack_quality_propre_ok():
 
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
-    filters, msg, send = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
+    filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
     assert filters["pays"] == "canada" and filters["tier"] == "premium"
-    assert send is True and msg == "Bonjour à tous"
+    assert send is True and msg == "Bonjour à tous" and tous is False
 
 def test_parse_broadcast_args_apercu():
-    filters, msg, send = main._parse_broadcast_args("objectif:emploi Session info samedi")
+    filters, msg, send, tous = main._parse_broadcast_args("objectif:emploi Session info samedi")
     assert filters["objectif"] == "emploi" and send is False and msg.startswith("Session")
 
+def test_parse_broadcast_args_tous():
+    _, _, _, tous = main._parse_broadcast_args("tous envoyer Coucou")
+    assert tous is True
+
 def test_broadcast_targets_filtre(monkeypatch):
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
     monkeypatch.setattr(main.session_manager, "list_all", lambda: [
-        {"user_id": "1", "chat_id": "1", "channel": "telegram",
+        {"user_id": "1", "chat_id": "1", "channel": "telegram", "derniere_activite": now,
          "profil": {"preferences": {"objectif": "etudier", "pays_cibles": "Canada"}}},
-        {"user_id": "2", "chat_id": "2", "channel": "whatsapp",
+        {"user_id": "2", "chat_id": "2", "channel": "whatsapp", "derniere_activite": now,
          "profil": {"preferences": {"objectif": "emploi", "pays_cibles": "France"}}},
-        {"user_id": "3", "chat_id": "", "channel": "telegram", "profil": {}},
+        {"user_id": "3", "chat_id": "", "channel": "telegram", "derniere_activite": now, "profil": {}},
     ])
     t = main._broadcast_targets({"pays": "canada"})
     assert len(t) == 1 and t[0]["user_id"] == "1"
     assert len(main._broadcast_targets({})) == 2  # celui sans chat_id est exclu
+
+def test_broadcast_targets_exclut_dormants(monkeypatch):
+    import datetime as _dt
+    vieux = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=90)).isoformat()
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [
+        {"user_id": "1", "chat_id": "1", "channel": "telegram", "derniere_activite": vieux, "profil": {}},
+    ])
+    assert len(main._broadcast_targets({})) == 0           # dormant exclu par défaut
+    assert len(main._broadcast_targets({}, actif_jours=0)) == 1  # inclus si fenêtre désactivée
+
+def test_scrub_outbound_placeholder():
+    out = main._scrub_outbound("Bonjour Madame [nom], je postule chez [entreprise] (XXX).")
+    assert "[nom]" not in out and "[entreprise]" not in out and "XXX" not in out
+
+def test_scrub_outbound_preserve_aide():
+    s = "Tape /mobilite <pays> ou /dossier <cible>"
+    assert main._scrub_outbound(s) == s   # la syntaxe d'aide ne doit PAS être touchée

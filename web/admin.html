@@ -97,6 +97,43 @@
     </table>
   </div>
 
+  <div id="bcwrap" hidden>
+    <h2>📣 Diffuser une annonce</h2>
+    <div class="card">
+      <div class="bar" style="margin-bottom:10px">
+        <input id="bc-obj" placeholder="objectif (ex. emploi)" style="min-width:150px">
+        <input id="bc-pays" placeholder="pays (ex. canada)" style="min-width:150px">
+        <input id="bc-tier" placeholder="tier (premium/free)" style="min-width:150px">
+        <input id="bc-canal" placeholder="canal (telegram/whatsapp)" style="min-width:170px">
+        <label class="muted" style="display:flex;align-items:center;gap:.3rem"><input type="checkbox" id="bc-tous" style="min-width:auto;width:auto"> inclure dormants</label>
+      </div>
+      <textarea id="bc-msg" placeholder="Ton message / ta publicité…" style="width:100%;min-height:90px;padding:.6rem .8rem;border:1.5px solid var(--bord);border-radius:10px;background:var(--carte);color:var(--texte);font:inherit"></textarea>
+      <div class="bar" style="margin-top:10px">
+        <button id="bc-preview" class="ghost">Aperçu (ne rien envoyer)</button>
+        <button id="bc-send">Envoyer</button>
+        <span id="bc-result" class="muted"></span>
+      </div>
+      <div class="muted" style="margin-top:8px">Sans filtre = tous les utilisateurs actifs (30 j). WhatsApp : envoi libre limité à la fenêtre de 24 h.</div>
+    </div>
+  </div>
+
+  <div id="bugwrap" hidden>
+    <h2>🐞 Bugs &amp; contacts <span class="pill" id="bug-count"></span></h2>
+    <table>
+      <thead><tr><th>Type</th><th>Utilisateur</th><th>Message</th><th>Quand</th></tr></thead>
+      <tbody id="bug-body"></tbody>
+    </table>
+    <div class="muted" style="margin-top:6px">Pour répondre : dans le bot, <code>/repondre &lt;user_id&gt; &lt;message&gt;</code>.</div>
+  </div>
+
+  <div id="diffwrap" hidden>
+    <h2>📜 Diffusions récentes</h2>
+    <table>
+      <thead><tr><th>Filtres</th><th>Message</th><th>Envoyés / cibles</th><th>Quand</th></tr></thead>
+      <tbody id="diff-body"></tbody>
+    </table>
+  </div>
+
   <div class="foot">
     Données agrégées (aucune info personnelle). Version <span id="ver">—</span> · maj <span id="ts">—</span>.<br>
     API : <code id="api-url"></code>. La clé reste dans ce navigateur (localStorage), elle n'est jamais partagée.
@@ -105,8 +142,11 @@
 
 <script>
   // À AJUSTER si ton sous-domaine API change :
-  var API = "https://api-nexmove.blvckunlimited.space/api/admin/stats";
+  var API_BASE = "https://api-nexmove.blvckunlimited.space/api/admin";
+  var API = API_BASE + "/stats";
   document.getElementById("api-url").textContent = API;
+  function adminKey(){ try { return (document.getElementById("key").value || "").trim(); } catch(e){ return ""; } }
+  function esc(s){ var d=document.createElement("div"); d.textContent = (s==null?"":String(s)); return d.innerHTML; }
 
   var keyInput = document.getElementById("key");
   var msg = document.getElementById("msg");
@@ -126,7 +166,8 @@
       if(!r.ok){ setMsg('<div class="err">Erreur '+r.status+'.</div>'); return; }
       var d = await r.json();
       setMsg("");
-      ["kpis","rates","chartwrap","splitwrap","codes","srcwrap"].forEach(function(id){ document.getElementById(id).hidden = false; });
+      ["kpis","rates","chartwrap","splitwrap","codes","srcwrap","bcwrap","bugwrap","diffwrap"].forEach(function(id){ document.getElementById(id).hidden = false; });
+      loadContacts();
       document.getElementById("k-users").textContent = num(d.users_total);
       document.getElementById("k-cv").textContent = num(d.cv_envoyes);
       document.getElementById("k-onb").textContent = num(d.onboarded);
@@ -175,6 +216,58 @@
       setMsg('<div class="err">Impossible de joindre l\'API. Vérifie que le tunnel tourne et l\'URL ci-dessous.</div>');
     }
   }
+  async function loadContacts(){
+    var key = adminKey(); if(!key) return;
+    try{
+      var r = await fetch(API_BASE + "/contacts", { headers: { "X-Forge-Nex-Key": key } });
+      if(!r.ok) return;
+      var d = await r.json();
+      var cb = document.getElementById("bug-body"); cb.innerHTML = "";
+      (d.contacts||[]).forEach(function(c){
+        var tr = document.createElement("tr");
+        var typ = c.bug ? '<span class="pill" style="background:color-mix(in srgb,#e11 14%,transparent);color:#e11">bug</span>' : '<span class="pill">contact</span>';
+        var when = (c.date||"").replace("T"," ").slice(5,16);
+        tr.innerHTML = "<td>"+typ+"</td><td>@"+esc(c.username||"x")+"<br><code>"+esc(c.user_id)+"</code></td><td>"+esc(c.message)+"</td><td class='muted'>"+esc(when)+"</td>";
+        cb.appendChild(tr);
+      });
+      document.getElementById("bug-count").textContent = (d.contacts||[]).length + " récents";
+      var db = document.getElementById("diff-body"); db.innerHTML = "";
+      (d.diffusions||[]).forEach(function(b){
+        var tr = document.createElement("tr");
+        var when = (b.date||"").replace("T"," ").slice(5,16);
+        tr.innerHTML = "<td class='muted'>"+esc(b.filtres)+"</td><td>"+esc(b.message)+"</td><td><strong>"+esc(b.envoyes)+"</strong> / "+esc(b.cibles)+(b.echecs?" <span style='color:#e11'>("+esc(b.echecs)+" échecs)</span>":"")+"</td><td class='muted'>"+esc(when)+"</td>";
+        db.appendChild(tr);
+      });
+    }catch(e){}
+  }
+
+  function bcPayload(send){
+    var p = { message: (document.getElementById("bc-msg").value||"").trim(), send: !!send,
+              inclure_dormants: document.getElementById("bc-tous").checked };
+    ["obj","pays","tier","canal"].forEach(function(k){
+      var v = (document.getElementById("bc-"+k).value||"").trim();
+      if(v){ p[k==="obj"?"objectif":k] = v; }
+    });
+    return p;
+  }
+  async function bcCall(send){
+    var key = adminKey(); var res = document.getElementById("bc-result");
+    var p = bcPayload(send);
+    if(!p.message){ res.textContent = "Message vide."; return; }
+    if(send && !confirm("Envoyer réellement cette annonce ?")) return;
+    res.textContent = send ? "Envoi en cours…" : "Calcul…";
+    try{
+      var r = await fetch(API_BASE + "/broadcast", { method:"POST",
+        headers: { "X-Forge-Nex-Key": key, "Content-Type":"application/json" }, body: JSON.stringify(p) });
+      if(!r.ok){ res.textContent = "Erreur "+r.status+"."; return; }
+      var d = await r.json();
+      if(d.preview){ res.textContent = "Aperçu : "+d.cibles+" destinataire(s) — "+JSON.stringify(d.par_canal); }
+      else { res.textContent = "✅ Envoyés : "+d.envoyes+" / "+d.cibles+" ("+d.echecs+" échecs)"; loadContacts(); }
+    }catch(e){ res.textContent = "Impossible de joindre l'API."; }
+  }
+  document.getElementById("bc-preview").addEventListener("click", function(){ bcCall(false); });
+  document.getElementById("bc-send").addEventListener("click", function(){ bcCall(true); });
+
   document.getElementById("load").addEventListener("click", load);
   document.getElementById("logout").addEventListener("click", function(){
     try{ localStorage.removeItem("nexmove_admin_key"); }catch(e){} keyInput.value=""; setMsg('<div class="muted">Clé oubliée.</div>');

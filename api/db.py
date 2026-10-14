@@ -350,6 +350,31 @@ class OppStore:
         con.close()
         return rows
 
+    def _ensure_broadcasts(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS broadcasts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, admin_id TEXT, filtres TEXT,
+            message TEXT, cibles INTEGER DEFAULT 0, envoyes INTEGER DEFAULT 0,
+            echecs INTEGER DEFAULT 0, created_at TEXT)""")
+        con.commit(); con.close()
+
+    def add_broadcast(self, admin_id, filtres: str, message: str, cibles: int, envoyes: int, echecs: int) -> int:
+        con = sqlite3.connect(self._path, timeout=10)
+        cur = con.execute(
+            "INSERT INTO broadcasts(admin_id,filtres,message,cibles,envoyes,echecs,created_at) VALUES(?,?,?,?,?,?,?)",
+            (str(admin_id or ""), str(filtres or "")[:400], str(message or "")[:2000],
+             int(cibles), int(envoyes), int(echecs), datetime.now(timezone.utc).isoformat()))
+        bid = cur.lastrowid
+        con.commit(); con.close()
+        return int(bid or 0)
+
+    def list_broadcasts(self, limit: int = 15) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("""SELECT id, admin_id, filtres, message, cibles, envoyes, echecs, created_at
+                              FROM broadcasts ORDER BY id DESC LIMIT ?""", (int(limit),)).fetchall()
+        con.close()
+        return rows
+
 
 class ProfileStore:
     """Persistance des profils par IDENTIFIANT (code de récupération).
@@ -701,6 +726,7 @@ session_manager = SessionManager()
 opp_store = OppStore()
 opp_store._ensure_feedback()
 opp_store._ensure_contacts()
+opp_store._ensure_broadcasts()
 profile_store = ProfileStore()
 usage_store = UsageStore()
 premium_store = PremiumStore()

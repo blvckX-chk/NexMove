@@ -16,7 +16,15 @@ Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'
 - **Diffusion admin ciblée** : `/diffuser` (`/broadcast`) envoie une annonce/publicité aux
   utilisateurs filtrés par profil (`objectif:` `pays:` `tier:` `canal:`). Aperçu du nombre de
   destinataires par défaut, envoi réel avec le mot `envoyer`. Note WhatsApp (fenêtre 24 h / modèles).
-- Tests ajoutés (QC sortie, parsing et ciblage diffusion). 261 tests au vert.
+  Par défaut **seuls les utilisateurs actifs (30 j)** sont ciblés (ajouter `tous` pour inclure les
+  dormants). Chaque diffusion est **journalisée** (`/diffuser_log`, table `broadcasts`).
+- **Filet anti-placeholder global** : `deliver_text` nettoie tout message sortant des placeholders
+  résiduels (`[nom]`, `[entreprise]`, `XXX`, `{{…}}`) — sans toucher la syntaxe d'aide `<…>`.
+- **Boucler le canal bug** : commande admin `/repondre <user_id> <message>` pour répondre
+  directement à un utilisateur suite à un `/bug` ou `/contact`.
+- **Panel web admin** : nouveaux blocs *Diffuser* (aperçu + envoi), *Bugs & contacts* et
+  *Diffusions récentes* dans `admin.html` (endpoints `/api/admin/contacts` et `/api/admin/broadcast`).
+- Tests ajoutés (QC sortie, parsing/ciblage/dormants diffusion, scrub placeholders). 265 tests au vert.
 
 ## v2.76 — CV ATS + CV graphique (au choix) + vérification de sortie
 - **Deux styles de CV** : `/cv ats` (sobre, lisible par les robots de tri), `/cv graphique`
