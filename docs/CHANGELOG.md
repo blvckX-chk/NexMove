@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.76 — CV ATS + CV graphique (au choix) + vérification de sortie
+- **Deux styles de CV** : `/cv ats` (sobre, lisible par les robots de tri), `/cv graphique`
+  (bandeau coloré, envoi direct) ou `/cv deux`. Le bot propose le choix (boutons) et à la fin de /creercv.
+  `build_cv_pdf(..., style=...)`.
+- **Vérification de sortie** : la génération CV/lettre (generate_pack) refait une passe si la lettre
+  est vide/trop courte avant envoi.
+
 ## v2.75 — Dashboard de traction + rédaction premium (optionnelle)
 - **Dashboard de traction** : /stats et le panel web affichent le FUNNEL (users → CV → onboardés →
   payants) + taux d'**activation**, **conversion**, **rétention 7j**, **inscriptions/jour (14j)**,

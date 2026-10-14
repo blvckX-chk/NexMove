@@ -22,7 +22,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib.colors import HexColor
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
 from reportlab.lib.enums import TA_JUSTIFY
 
 # OCR optionnel (CV scannés / images). Nécessite le binaire tesseract-ocr + pytesseract.
@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.75.0"
+VERSION         = "2.76.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1086,14 +1086,14 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
     nom = (profil.get("identite") or {}).get("nom") or data.get("nom") or "Candidat"
     try:
         comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
-        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps)
-        await deliver_file(session, f"CV_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV généré par NexMove")
+        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps, "ats")
+        await deliver_file(session, f"CV_ats_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV (format *ATS*, lisible par les robots de tri)")
     except Exception as e:
         logger.error(f"[cvbuild] pdf: {e}")
-    recap = (f"✅ *Profil créé* pour *{_md_clean(nom)}* — je t'ai généré un CV ci-dessus "
-             "(tu pourras l'adapter à chaque candidature avec /postuler).\n\n"
+    recap = (f"✅ *Profil créé* pour *{_md_clean(nom)}* — CV *ATS* généré ci-dessus.\n"
+             "🎨 Tu veux aussi une *version graphique* (pour un envoi direct au recruteur) ? Tape `/cv graphique` ou `/cv deux`.\n\n"
              "On continue avec tes préférences ? Réponds *Oui* 👇 (ou envoie un vrai CV pour l'affiner).")
-    session["_kb_options"] = [("✅ Oui, continuer", "onb:oui"), ("🔄 Recommencer", "onb:reset")]
+    session["_kb_options"] = [("✅ Oui, continuer", "onb:oui"), ("🎨 CV graphique", "act:cv_graphique"), ("🔄 Recommencer", "onb:reset")]
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     _push(session, "assistant", recap)
     return recap, session
@@ -1461,7 +1461,8 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
                "🖼️ */enpdf* — images/photos → PDF · 📄➡️🖼️ */enimages* — PDF → images PNG\n"
                "✂️ */decouper* <pages> — extraire des pages (ex : /decouper 1-3)\n"
                "🌍 */traduire* <texte> — traduire un texte (FR/EN)\n"
-               "📝 */creercv* — créer un CV · 🗓️ */timeline* — ta feuille de route en image\n"
+               "📝 */creercv* — créer un CV · 📄🎨 */cv* — ton CV en *ATS* ou *graphique* (ou les deux)\n"
+               "🗓️ */timeline* — ta feuille de route en image\n"
                "💎 *Premium* : 📄 */cv1page* (CV synthétique) · 🕶️ */anonymiser* (CV à l'aveugle)\n\n"
                "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser & /compresserimage sont tes amis._")
         up = _upsell_line(session, "tool")
@@ -1883,6 +1884,32 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     msg = "✅ *CV anonymisé* (nom et coordonnées masqués) — idéal pour une candidature à l'aveugle ou une CVthèque."
                 except Exception as e:
                     logger.error(f"[anonymiser] {e}"); msg = "😕 Génération impossible, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    # /cv : télécharger son CV en format ATS (robots de tri) ou graphique (envoi direct) — ou les deux.
+    if (low.startswith("/cv") and not low.startswith("/cv1page") and not low.startswith("/cvcondens")
+            and not low.startswith("/cvanonyme")):
+        profil = session.get("profil") or {}
+        arg = low.split(maxsplit=1)[1].strip() if len(low.split(maxsplit=1)) > 1 else ""
+        if not profil.get("identite"):
+            msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
+        elif arg in ("ats", "sobre", "robot", "texte"):
+            ok = await _deliver_cv(session, "ats")
+            msg = "✅ *CV ATS* envoyé — sobre, une colonne, lisible par les logiciels de tri des recruteurs." if ok else "😕 Génération impossible, réessaie."
+        elif arg in ("graphique", "graphic", "design", "designe", "designé", "joli"):
+            ok = await _deliver_cv(session, "graphic")
+            msg = "✅ *CV graphique* envoyé — mise en page soignée pour un envoi direct au recruteur." if ok else "😕 Génération impossible, réessaie."
+        elif arg in ("deux", "les deux", "2", "tous", "both"):
+            ok = await _deliver_cv(session, "deux")
+            msg = "✅ Tes *deux CV* sont envoyés : **ATS** (robots de tri) + **graphique** (envoi direct)." if ok else "😕 Génération impossible, réessaie."
+        else:
+            msg = ("📄 *Quel format de CV veux-tu ?*\n"
+                   "• *ATS* — sobre, lisible par les logiciels de tri (idéal pour postuler en ligne)\n"
+                   "• *Graphique* — mise en page soignée (idéal pour un envoi direct)\n\n"
+                   "Choisis ci-dessous, ou tape `/cv ats`, `/cv graphique` ou `/cv deux`.")
+            session["_kb_options"] = [("📄 CV ATS", "act:cv_ats"), ("🎨 CV graphique", "act:cv_graphique"),
+                                      ("📄🎨 Les deux", "act:cv_deux")]
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -3448,42 +3475,63 @@ def _condense_profil(profil: dict) -> dict:
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
 
-def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
+def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats") -> io.BytesIO:
+    """style='ats' : sobre, noir, une colonne, polices standard -> lisible par les robots de tri (ATS).
+    style='graphic' : bandeau coloré + titres de section en couleur -> pour un envoi direct / humain."""
+    graphic = (style == "graphic")
+    NOIR = HexColor("#111418")
+    accent = BLEU if graphic else NOIR
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
-    s_nom = ParagraphStyle("n", fontSize=19, leading=23, textColor=BLEU, fontName="Helvetica-Bold", spaceBefore=0, spaceAfter=5)
-    s_sous = ParagraphStyle("s", fontSize=11, leading=14, textColor=GRIS, fontName="Helvetica-Oblique", spaceAfter=6)
-    s_sec = ParagraphStyle("se", fontSize=11, textColor=BLEU, fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=4)
-    s_body = ParagraphStyle("b", fontSize=9.5, fontName="Helvetica", spaceAfter=3, leading=13)
-    s_bullet = ParagraphStyle("bu", fontSize=9.5, fontName="Helvetica", spaceAfter=2, leftIndent=12)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.7*cm, rightMargin=1.7*cm,
+                            topMargin=(0.9 if graphic else 1.5)*cm, bottomMargin=1.4*cm)
+    s_sec = ParagraphStyle("se", fontSize=11, textColor=accent, fontName="Helvetica-Bold", spaceBefore=11, spaceAfter=4)
+    s_body = ParagraphStyle("b", fontSize=9.6, textColor=NOIR, fontName="Helvetica", spaceAfter=3, leading=13)
+    s_bullet = ParagraphStyle("bu", fontSize=9.6, textColor=NOIR, fontName="Helvetica", spaceAfter=2, leftIndent=12)
     identite = profil.get("identite", {})
     formation = profil.get("formation", [])
     experience = profil.get("experience", [])
-    els = []
-    els.append(Paragraph(_xml(identite.get("nom", "Candidat")), s_nom))
-    if titre:
-        els.append(Paragraph(_xml(titre), s_sous))
     contacts = [x for x in [identite.get("email"), identite.get("telephone"), identite.get("localisation")] if x]
-    if contacts:
-        els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
-    els.append(HRFlowable(width="100%", thickness=1.5, color=BLEU, spaceBefore=6, spaceAfter=10))
+    nom = identite.get("nom", "Candidat")
+    els = []
+    if graphic:
+        s_nw = ParagraphStyle("nw", fontSize=21, leading=25, textColor=HexColor("#ffffff"), fontName="Helvetica-Bold")
+        s_sw = ParagraphStyle("sw", fontSize=10.5, leading=14, textColor=HexColor("#dde4ff"), fontName="Helvetica")
+        inner = [Paragraph(_xml(nom), s_nw)]
+        if titre:
+            inner.append(Paragraph(_xml(titre), s_sw))
+        if contacts:
+            inner.append(Paragraph(_xml(" · ".join(contacts)), s_sw))
+        band = Table([[inner]], colWidths=[doc.width])
+        band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), BLEU),
+                                  ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+                                  ("TOPPADDING", (0, 0), (-1, -1), 15), ("BOTTOMPADDING", (0, 0), (-1, -1), 15)]))
+        els.append(band); els.append(Spacer(1, 12))
+    else:
+        s_nom = ParagraphStyle("n", fontSize=19, leading=23, textColor=NOIR, fontName="Helvetica-Bold", spaceAfter=4)
+        s_sous = ParagraphStyle("s", fontSize=11, leading=14, textColor=NOIR, fontName="Helvetica", spaceAfter=4)
+        els.append(Paragraph(_xml(nom), s_nom))
+        if titre:
+            els.append(Paragraph(_xml(titre), s_sous))
+        if contacts:
+            els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
+        els.append(Spacer(1, 8))
     if resume:
         els.append(Paragraph("PROFIL", s_sec))
-        els.append(Paragraph(resume, s_body))
+        els.append(Paragraph(_xml(resume), s_body))
     if competences:
         els.append(Paragraph("COMPÉTENCES", s_sec))
-        els.append(Paragraph(" · ".join(competences[:16]), s_body))
+        els.append(Paragraph(_xml(" · ".join(competences[:16])), s_body))
     if experience:
         els.append(Paragraph("EXPÉRIENCE", s_sec))
         for exp in experience[:4]:
-            els.append(Paragraph(f"<b>{exp.get('poste','')}</b> — {exp.get('organisation','')}", s_body))
+            els.append(Paragraph(f"<b>{_xml(exp.get('poste',''))}</b> — {_xml(exp.get('organisation',''))}", s_body))
             for m in exp.get("missions", [])[:4]:
-                els.append(Paragraph(f"• {m}", s_bullet))
+                els.append(Paragraph("• " + _xml(m), s_bullet))
             els.append(Spacer(1, 4))
     if formation:
         els.append(Paragraph("FORMATION", s_sec))
         for f in formation[:3]:
-            els.append(Paragraph(f"<b>{f.get('diplome','')}</b> — {f.get('etablissement','')}", s_body))
+            els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> — {_xml(f.get('etablissement',''))}", s_body))
     doc.build(els)
     return buf
 
@@ -3555,6 +3603,25 @@ def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> i
         for f in form[:4]:
             p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} — {f.get('etablissement','')}"); r.bold = True
     buf = io.BytesIO(); d.save(buf); return buf
+
+async def _deliver_cv(session: dict, style: str = "ats") -> bool:
+    """Génère et envoie le CV dans le style demandé ('ats', 'graphic' ou 'deux'). Renvoie True si OK."""
+    profil = session.get("profil") or {}
+    if not profil.get("identite"):
+        return False
+    nom = _slug((profil.get("identite") or {}).get("nom") or "candidat")
+    comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
+    resume = profil.get("resume_profil", "")
+    styles = ["ats", "graphic"] if style in ("deux", "les deux", "2", "tous", "both") else [style]
+    ok = False
+    for st in styles:
+        try:
+            buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", resume, comps, st)
+            label = "ATS (lisible par les robots de tri)" if st == "ats" else "graphique (envoi direct au recruteur)"
+            ok = await deliver_file(session, f"CV_{st}_{nom}.pdf", buf.getvalue(), f"📄 Ton CV *{label}*") or ok
+        except Exception as e:
+            logger.error(f"[cv] {st}: {e}")
+    return ok
 
 def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
     d = _DocxDocument()
@@ -3728,6 +3795,12 @@ async def handle_action(session, data, callback_id=None):
             cmd = session.pop("pending_intent", "") or "/veille"
             msg, session = await process_text_message(session, cmd)
             await deliver_text(session, msg, with_menu=True)
+            return session
+        if act in ("cv_ats", "cv_graphique", "cv_deux"):
+            style = {"cv_ats": "ats", "cv_graphique": "graphic", "cv_deux": "deux"}[act]
+            ok = await _deliver_cv(session, style)
+            await deliver_text(session, "✅ Ton CV est prêt (ci-dessus)." if ok
+                               else "📄 Je dois d'abord connaître ton profil — envoie ton CV ou tape /creercv.", with_menu=True)
             return session
         if act in ("lien_postuler", "lien_chances", "lien_suivre"):
             cible = session.get("last_link_cible", "")
@@ -4309,7 +4382,16 @@ Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par 
 signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
 professionnel, phrases variées, pas de superlatifs creux.
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
-    return await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
+    pack = await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
+    # VÉRIFICATION DE SORTIE : une lettre vide/trop courte est refaite une fois avant d'être envoyée.
+    if isinstance(pack, dict) and len((pack.get("lettre_corps") or "").split()) < 60:
+        logger.info("[pack] lettre trop courte -> relance QC")
+        try:
+            pack = await call_groq(system, prompt + "\n\nIMPÉRATIF : lettre_corps doit faire 220-300 mots, non vide, "
+                                   "avec 2 faits concrets du profil.", temperature=0.5, max_tokens=1300, tier="quality")
+        except Exception as e:
+            logger.warning(f"[pack] relance QC: {e}")
+    return pack
 
 @app.post("/api/chat")
 async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):

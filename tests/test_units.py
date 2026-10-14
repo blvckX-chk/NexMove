@@ -1560,3 +1560,14 @@ def test_admin_stats_traction(monkeypatch):
     assert d["users_total"] == 3 and d["onboarded"] == 2 and d["payants_actifs"] == 1
     assert d["taux_activation"] == 67 and d["taux_conversion"] == 50
     assert len(d["inscriptions_14j"]) == 14 and d["par_canal"]["telegram"] == 2
+
+# ── CV ATS vs graphique (v2.76) ──
+def test_build_cv_pdf_styles():
+    profil = {"identite": {"nom": "Awa", "email": "a@x.co"},
+              "competences": {"techniques": ["Python"]},
+              "experience": [{"poste": "Dev", "organisation": "Acme", "missions": ["API"]}],
+              "formation": [{"diplome": "Licence", "etablissement": "UAC"}]}
+    for style in ("ats", "graphic"):
+        buf = main.build_cv_pdf(profil, "CV", "Résumé", ["Python", "React"], style)
+        data = buf.getvalue()
+        assert data[:4] == b"%PDF" and len(data) > 800
