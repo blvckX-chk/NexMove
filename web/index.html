@@ -222,6 +222,14 @@
   .reveal.in{opacity:1;transform:none}
   @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
 
+  /* Bandeau d'annonce (lancement Campus France) */
+  .annonce{background:linear-gradient(90deg,var(--bleu),#1e3a8a);color:#fff}
+  .annonce .wrap{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;justify-content:center;padding:10px 20px;font-size:.92rem;text-align:center}
+  .annonce strong{color:#fff}
+  .annonce a{color:#fff;font-weight:800;white-space:nowrap;border-bottom:2px solid rgba(255,255,255,.6)}
+  .annonce a:hover{border-color:#fff}
+  .pill-new{background:var(--ambre);color:#06281a;font-weight:800;font-size:.7rem;letter-spacing:.04em;text-transform:uppercase;padding:.15rem .55rem;border-radius:999px;flex:0 0 auto}
+
   /* Mobile : espacements plus serrés, boutons pleine largeur, pas de débordement */
   @media(max-width:560px){
     section{padding:44px 0}
@@ -258,6 +266,16 @@
 </header>
 
 <main id="top">
+
+  <!-- BANDEAU LANCEMENT : campagne Études en France (modifiable / supprimable) -->
+  <div class="annonce">
+    <div class="wrap">
+      <span class="pill-new">Nouveau</span>
+      <span>Campagne <strong>Études en France</strong> — prépare ton dossier Campus France, ta lettre et ton entretien avec NexMove.</span>
+      <a class="js-start" href="#">Démarrer gratuitement →</a>
+    </div>
+  </div>
+
   <!-- HERO -->
   <section class="hero">
     <div class="wrap">
