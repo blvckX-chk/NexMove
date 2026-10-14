@@ -1532,3 +1532,14 @@ def test_run_osint_fallback_portails_reels(monkeypatch):
 def test_real_portals_sont_des_urls():
     for p in main._REAL_SCHOLARSHIP_PORTALS + main._REAL_JOB_PORTALS:
         assert p["url"].startswith("https://") and "." in p["organisation"]
+
+# ── 4e fournisseur LLM : OpenRouter (dernier recours) (v2.72) ──
+def test_llm_providers_openrouter():
+    import llm
+    names = [p["name"] for p in llm._LLM_PROVIDERS]
+    assert "openrouter" in names and names[-1] == "openrouter"       # dernier recours
+    for n in ("cerebras", "groq", "gemini"):
+        assert n in names
+    orp = [p for p in llm._LLM_PROVIDERS if p["name"] == "openrouter"][0]
+    assert orp["api"] == "openai" and orp["url"].startswith("https://openrouter.ai")
+    assert llm.CEREBRAS_MODEL_FAST != "gemma-4-31b"                  # modèle invalide corrigé

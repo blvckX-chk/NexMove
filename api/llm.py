@@ -21,13 +21,18 @@ GROQ_API_KEY       = os.getenv("GROQ_API_KEY", "")
 GROQ_URL           = "https://api.groq.com/openai/v1/chat/completions"
 CEREBRAS_API_KEY   = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
+# OpenRouter : 4e fournisseur, DERNIER RECOURS (pay-as-you-go). Dormant tant que la clé n'est pas fournie.
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_MODEL_FAST     = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
 CEREBRAS_MODEL      = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
-CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "gemma-4-31b")
+# gemma-4-31b n'existe pas chez Cerebras -> le niveau "fast" échouait. Défaut sur un vrai petit modèle.
+CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "llama3.1-8b")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL_FAST   = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite")
+OPENROUTER_MODEL      = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
+OPENROUTER_MODEL_FAST = os.getenv("OPENROUTER_MODEL_FAST", "openai/gpt-oss-20b")
 
 # Pillow (utilisé par la vision) — import tolérant
 try:
@@ -47,6 +52,10 @@ _LLM_PROVIDERS = [
     {"name": "gemini", "url": f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
      "key": GEMINI_API_KEY, "model": GEMINI_MODEL, "model_fast": GEMINI_MODEL_FAST,
      "api": "gemini", "max_ctx": 1000000},
+    # DERNIER RECOURS (payant) : ne s'active que si OPENROUTER_API_KEY est défini -> le bot ne tombe jamais.
+    {"name": "openrouter", "url": "https://openrouter.ai/api/v1/chat/completions",
+     "key": OPENROUTER_API_KEY, "model": OPENROUTER_MODEL, "model_fast": OPENROUTER_MODEL_FAST,
+     "api": "openai", "max_ctx": 120000},
 ]
 _LLM_FALLBACK_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 

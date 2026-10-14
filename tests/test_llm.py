@@ -33,11 +33,11 @@ def test_cosine_zero_vecteur():
 
 # ------------------ Providers list & tier selection ------------------
 def test_llm_providers_bien_formes():
-    assert isinstance(llm._LLM_PROVIDERS, list) and len(llm._LLM_PROVIDERS) == 3
+    assert isinstance(llm._LLM_PROVIDERS, list) and len(llm._LLM_PROVIDERS) == 4
     for p in llm._LLM_PROVIDERS:
         assert set(("name", "url", "key", "model", "model_fast", "api", "max_ctx")).issubset(p)
     names = [p["name"] for p in llm._LLM_PROVIDERS]
-    assert names == ["cerebras", "groq", "gemini"]   # ordre = priorité de bascule
+    assert names == ["cerebras", "groq", "gemini", "openrouter"]   # ordre = priorité de bascule (openrouter = dernier recours)
 
 def test_llm_fallback_status_contient_429():
     # 429 et 5xx transitoires -> bascule vers le fournisseur suivant
