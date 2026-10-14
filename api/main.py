@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.73.0"
+VERSION         = "2.74.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -5250,6 +5250,9 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
             portails = LOCAL_JOB_SOURCES.get(local_pays, [])[:3]
             if portails:
                 query += " " + " OR ".join(p.split()[0] for p in portails)
+        # Emploi (international) : on fait remonter les grands job boards, dont LinkedIn.
+        if type_mot == "emploi" or objectif in ("travailler", "tous", "tout"):
+            query += " LinkedIn OR Indeed OR Glassdoor"
         grounded = await tavily_search(query, 10)
 
     if grounded:

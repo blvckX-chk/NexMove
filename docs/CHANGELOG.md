@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.74 — Bandeau Campus France + ciblage LinkedIn (OSINT temps réel)
+- **Vitrine** : bandeau de lancement « Campagne Études en France » au-dessus du hero (modifiable/supprimable).
+- **Recherche temps réel (OSINT/Tavily)** : pour les recherches d'EMPLOI, la requête fait désormais
+  remonter les grands job boards (LinkedIn, Indeed, Glassdoor) → plus d'offres LinkedIn dans les résultats.
+  (Rappel : LinkedIn est couvert via la recherche web live, pas d'API dédiée — impossible gratuitement.)
+
 ## v2.73 — Témoignages (vitrine) + nouvelles sources d'offres
 - **Vitrine** : section *Témoignages* (« Avis ») avec bouton « Laisser mon témoignage » (WhatsApp).
   ⚠️ Cartes d'exemple à remplacer par de VRAIS témoignages avant promotion.
