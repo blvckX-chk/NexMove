@@ -1571,3 +1571,45 @@ def test_build_cv_pdf_styles():
         buf = main.build_cv_pdf(profil, "CV", "Résumé", ["Python", "React"], style)
         data = buf.getvalue()
         assert data[:4] == b"%PDF" and len(data) > 800
+
+# ── Vérification de sortie générique des documents (v2.77) ──
+def test_pack_quality_detecte_placeholder():
+    bad = {"titre_poste": "Analyste SOC", "resume_professionnel": "Profil solide en cybersécurité réseau.",
+           "competences_mises_en_avant": ["SIEM"],
+           "lettre_corps": " ".join(["mot"] * 120) + " Madame [nom], je postule chez [entreprise]."}
+    issues = main._pack_quality_issues(bad, "Analyste SOC")
+    assert any("placeholder" in i for i in issues)
+
+def test_pack_quality_detecte_lettre_courte():
+    bad = {"titre_poste": "Dev", "resume_professionnel": "Développeuse Python full stack confirmée.",
+           "competences_mises_en_avant": ["Python"], "lettre_corps": "Trop court."}
+    issues = main._pack_quality_issues(bad, "Dev")
+    assert any("courte" in i for i in issues)
+
+def test_pack_quality_propre_ok():
+    good = {"titre_poste": "Analyste SOC", "resume_professionnel": "Analyste SOC junior formé au blue team avec de solides bases réseau.",
+            "competences_mises_en_avant": ["SIEM", "Python"],
+            "lettre_corps": " ".join(["phrase"] * 120)}
+    assert main._pack_quality_issues(good, "Analyste SOC") == []
+
+# ── Diffusion admin ciblée (v2.77) ──
+def test_parse_broadcast_args():
+    filters, msg, send = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
+    assert filters["pays"] == "canada" and filters["tier"] == "premium"
+    assert send is True and msg == "Bonjour à tous"
+
+def test_parse_broadcast_args_apercu():
+    filters, msg, send = main._parse_broadcast_args("objectif:emploi Session info samedi")
+    assert filters["objectif"] == "emploi" and send is False and msg.startswith("Session")
+
+def test_broadcast_targets_filtre(monkeypatch):
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: [
+        {"user_id": "1", "chat_id": "1", "channel": "telegram",
+         "profil": {"preferences": {"objectif": "etudier", "pays_cibles": "Canada"}}},
+        {"user_id": "2", "chat_id": "2", "channel": "whatsapp",
+         "profil": {"preferences": {"objectif": "emploi", "pays_cibles": "France"}}},
+        {"user_id": "3", "chat_id": "", "channel": "telegram", "profil": {}},
+    ])
+    t = main._broadcast_targets({"pays": "canada"})
+    assert len(t) == 1 and t[0]["user_id"] == "1"
+    assert len(main._broadcast_targets({})) == 2  # celui sans chat_id est exclu

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.76.0"
+VERSION         = "2.77.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -314,11 +314,21 @@ def _get_notif(session: dict) -> dict:
     return {"enabled": n.get("enabled", True), "freq": n.get("freq", "quotidien"), "jour": n.get("jour", "lundi")}
 
 # Persona partagée : conseiller d'orientation & mobilité internationale senior.
+# Règle anti-hallucination GÉNÉRALE — s'applique à TOUTES les conversations (pas seulement les offres).
+# Injectée dans chaque prompt conversationnel via CONSEILLER_PERSONA.
+_ANTI_INVENT = (
+    " RÈGLE ANTI-INVENTION (ABSOLUE, pour TOUTE réponse) : n'invente JAMAIS de fait précis — "
+    "dates limites, montants, frais, taux, noms de programmes/bourses/universités/entreprises, "
+    "coordonnées, URL, procédures ou chiffres. Si tu n'es pas certain d'un détail, dis-le franchement "
+    "et invite à vérifier sur la source officielle, au lieu de deviner. Tu peux citer des portails "
+    "ultra-connus et vérifiables (Campus France, DAAD, Erasmus Mundus, Chevening) sans en inventer les détails. "
+    "Mieux vaut une réponse honnête « à vérifier » qu'un faux renseignement.")
+
 CONSEILLER_PERSONA = (
     "Tu es un conseiller d'orientation et en mobilité internationale SENIOR (15 ans d'expérience), "
     "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
     "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
-    "et tu donnes toujours des étapes actionnables.")
+    "et tu donnes toujours des étapes actionnables." + _ANTI_INVENT)
 
 _NIVEAU_RANK = [
     (("doctorat", "phd", "ph.d", "doctorate"), 5),
@@ -419,6 +429,63 @@ def _quota_or_credit(session: dict, feature: str, limit: int) -> tuple[bool, boo
 def _credit_note(session: dict, used_credit: bool) -> str:
     return (f"\n\n🎟️ _1 crédit utilisé — il te reste {_credit_balance(session)} crédit·s._"
             if used_credit else "")
+
+def _broadcast_targets(filters: dict) -> list:
+    """Sélectionne les destinataires d'une diffusion admin selon le profil.
+    filters: {objectif, pays, tier, canal} (valeurs en minuscules, sous-chaîne tolérée).
+    Retourne une liste de dicts {user_id, chat_id, channel, username}."""
+    f_obj = (filters.get("objectif") or "").lower().strip()
+    f_pays = (filters.get("pays") or "").lower().strip()
+    f_tier = (filters.get("tier") or "").lower().strip()
+    f_canal = (filters.get("canal") or "").lower().strip()
+    out = []
+    seen = set()
+    for s in session_manager.list_all():
+        chat_id = s.get("chat_id"); canal = (s.get("channel") or "telegram").lower()
+        if not chat_id:
+            continue
+        prefs = ((s.get("profil") or {}).get("preferences") or {})
+        obj = str(prefs.get("objectif", "")).lower()
+        pays = str(prefs.get("pays_cibles", "")).lower()
+        tier = _user_tier(s)
+        if f_obj and f_obj not in obj:
+            continue
+        if f_pays and f_pays not in pays:
+            continue
+        if f_canal and f_canal != canal:
+            continue
+        if f_tier:
+            if f_tier in ("premium", "payant") and tier not in (("admin",) + _PREMIUM_TIERS):
+                continue
+            if f_tier in ("free", "gratuit") and tier != "free":
+                continue
+        key = (canal, str(chat_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"user_id": s.get("user_id"), "chat_id": str(chat_id),
+                    "channel": canal, "username": s.get("username", "")})
+    return out
+
+def _parse_broadcast_args(arg: str) -> tuple[dict, str, bool]:
+    """Découpe '/diffuser' : tokens filtre `clef:valeur`, mot-clé `envoyer`, reste = message.
+    Retourne (filters, message, do_send)."""
+    filters = {}; do_send = False; mots = []
+    for tok in (arg or "").split():
+        low = tok.lower()
+        if low in ("envoyer", "envoi", "send", "confirmer", "go"):
+            do_send = True
+        elif ":" in tok:
+            k, v = tok.split(":", 1)
+            k = k.lower().strip()
+            if k in ("objectif", "obj"): filters["objectif"] = v
+            elif k in ("pays", "pays_cibles"): filters["pays"] = v
+            elif k in ("tier", "niveau"): filters["tier"] = v
+            elif k in ("canal", "channel"): filters["canal"] = v
+            else: mots.append(tok)
+        else:
+            mots.append(tok)
+    return filters, " ".join(mots).strip(), do_send
 
 def _admin_stats() -> dict:
     """Dashboard de traction (commande /stats + panel web). Aucune donnée personnelle.
@@ -810,7 +877,7 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
             "💎 /offres · /premium <code> (abonnement) · 🎟️ /credits <code> (pack de crédits) · /monabo\n"
             "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
-            "/contact (nous joindre / rencontrer un conseiller) · /version\n\n"
+            "/contact (nous joindre / rencontrer un conseiller) · 🐞 /bug (signaler un souci) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
@@ -2147,7 +2214,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    if low.startswith("/contact") or low.startswith("/support") or low.startswith("/rencontrer") or low.startswith("/rdv"):
+    _is_bug = low.startswith("/bug") or low.startswith("/probleme") or low.startswith("/problème") or low.startswith("/signaler")
+    if (low.startswith("/contact") or low.startswith("/support") or low.startswith("/rencontrer")
+            or low.startswith("/rdv") or _is_bug):
         parts = t.split(maxsplit=1)
         message_user = parts[1].strip() if len(parts) > 1 else ""
         # Bloc "comment nous joindre" — toujours affiché
@@ -2157,17 +2226,26 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         if CONTACT_CALENDAR: contacts.append(f"📅 Prendre rendez-vous : {CONTACT_CALENDAR}")
         contact_bloc = "\n".join(contacts) if contacts else "_(canaux directs non configurés — utilise /contact <ton message>)_"
         if not message_user:
-            msg = ("💬 *Nous contacter*\n" + contact_bloc + "\n\n"
-                   "Ou écris ici : */contact ton message* — je le transmets à l'équipe.\n"
-                   "Envie d'échanger avec un conseiller ? */rencontrer <disponibilités>*.")
+            if _is_bug:
+                msg = ("🐞 *Signaler un bug*\n"
+                       "Décris le souci après la commande, ex : */bug le bot ne répond pas quand j'envoie mon CV*.\n"
+                       "Précise si possible : ce que tu faisais, ce qui s'est passé, et sur Telegram ou WhatsApp.\n\n"
+                       "Je transmets directement à l'équipe technique. Merci, ça aide à améliorer NexMove.")
+            else:
+                msg = ("💬 *Nous contacter*\n" + contact_bloc + "\n\n"
+                       "Ou écris ici : */contact ton message* — je le transmets à l'équipe.\n"
+                       "Un bug ? */bug ta description*.\n"
+                       "Envie d'échanger avec un conseiller ? */rencontrer <disponibilités>*.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         # Forward vers l'admin Telegram si configuré
         ok = False
+        kind = "🐞 Bug signalé" if _is_bug else "📨 Nouveau contact"
         if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
             uid = session.get("user_id"); uname = session.get("username", "utilisateur")
-            forward = (f"📨 *Nouveau contact NexMove*\n"
-                       f"👤 @{_md_clean(uname)} (`{uid}`)\n"
+            canal = session.get("channel", "?")
+            forward = (f"*{kind} NexMove*\n"
+                       f"👤 @{_md_clean(uname)} (`{uid}`) · {_md_clean(str(canal))}\n"
                        f"🕒 {datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}\n\n"
                        f"{_md_clean(message_user)[:2000]}")
             try:
@@ -2175,10 +2253,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             except Exception as e:
                 logger.error(f"[contact] forward: {e}")
         try:
-            opp_store.add_contact(session.get("user_id"), session.get("username"), message_user, ok)
+            tag = ("[BUG] " + message_user) if _is_bug else message_user
+            opp_store.add_contact(session.get("user_id"), session.get("username"), tag, ok)
         except Exception as e:
             logger.warning(f"[contact] log: {e}")
-        if ok:
+        if ok and _is_bug:
+            msg = "✅ Bug transmis à l'équipe technique. Merci, on regarde ça. Tu peux continuer à utiliser le bot normalement."
+        elif ok:
             msg = f"✅ Merci, ton message a été transmis à l'équipe. Nous te recontactons vite.\n\n{contact_bloc}"
         else:
             msg = ("📝 Message bien noté (enregistré, l'équipe le verra). Pour être recontacté rapidement, joins-nous directement :\n\n"
@@ -2202,6 +2283,66 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     ex = _md_clean(str(txt))[:120]
                     lignes.append(f"{flag} #{cid} · {when} · @{_md_clean(str(uname) or 'x')} (`{uid}`)\n   {ex}")
                 msg = "📇 *20 derniers messages /contact*\n\n" + "\n\n".join(lignes)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/diffuser") or low.startswith("/broadcast") or low.startswith("/annonce"):
+        # Diffusion d'un message/publicité ciblée par profil — RÉSERVÉ à l'admin.
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        arg = parts[1].strip() if len(parts) > 1 else ""
+        filters, message_bc, do_send = _parse_broadcast_args(arg)
+        if not message_bc:
+            msg = ("📣 *Diffuser une annonce ciblée*\n\n"
+                   "`/diffuser [filtres] <message>`\n"
+                   "Filtres (facultatifs) : `objectif:emploi` `pays:canada` `tier:premium|free` `canal:telegram|whatsapp`.\n"
+                   "Sans filtre = tous les utilisateurs.\n\n"
+                   "1) Aperçu (compte les destinataires, n'envoie rien) :\n"
+                   "`/diffuser pays:canada Nouvelle session d'info Campus France samedi`\n"
+                   "2) Envoi réel : ajoute le mot `envoyer` :\n"
+                   "`/diffuser pays:canada envoyer Nouvelle session d'info…`\n\n"
+                   "⚠️ WhatsApp : l'envoi libre ne marche que dans la fenêtre de 24 h après le dernier message du contact ; "
+                   "hors fenêtre il faut un modèle approuvé. Telegram n'a pas cette limite.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        targets = _broadcast_targets(filters)
+        par_canal = {}
+        for g in targets:
+            par_canal[g["channel"]] = par_canal.get(g["channel"], 0) + 1
+        resume_canal = ", ".join(f"{k}: {v}" for k, v in par_canal.items()) or "aucun"
+        flt_txt = ", ".join(f"{k}={v}" for k, v in filters.items()) or "aucun (tous)"
+        if not do_send:
+            apercu = []
+            for g in targets[:5]:
+                apercu.append(f"• @{_md_clean(str(g.get('username') or 'x'))} ({g['channel']})")
+            msg = (f"📣 *Aperçu de diffusion*\n"
+                   f"Filtres : {flt_txt}\n"
+                   f"Destinataires : *{len(targets)}* ({resume_canal})\n"
+                   + ("\n".join(apercu) + "\n" if apercu else "")
+                   + f"\n📝 Message :\n{_md_clean(message_bc)}\n\n"
+                   f"Pour envoyer réellement, relance avec le mot *envoyer*.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        # Envoi réel, paced pour éviter les limites de débit.
+        sent = 0; failed = 0
+        for g in targets:
+            try:
+                ok_s = await deliver_text({"channel": g["channel"], "chat_id": g["chat_id"]}, message_bc)
+                if ok_s:
+                    sent += 1
+                else:
+                    failed += 1
+            except Exception as e:
+                failed += 1
+                logger.warning(f"[diffuser] envoi {g.get('chat_id')}: {e}")
+            await asyncio.sleep(0.05)
+        logger.info(f"[diffuser] admin={session.get('user_id')} filtres={filters} envoyés={sent} échecs={failed}")
+        msg = (f"✅ Diffusion terminée.\n"
+               f"Filtres : {flt_txt}\n"
+               f"Envoyés : *{sent}* · Échecs : {failed} · Total ciblé : {len(targets)}")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4342,6 +4483,37 @@ JSON: {{"intro":"","points":[{{"titre":"","detail":"","lien":""}}],"checklist":[
         msg += "\n" + cta
     return msg
 
+# Marqueurs de « trou » laissés par le LLM dans un document (placeholders non remplis).
+_PLACEHOLDER_RE = re.compile(
+    r"\[(?:[^\]]{0,40})\]|\{\{[^}]*\}\}|<[^>]{0,40}>|\bXXX+\b|\b(?:votre entreprise|nom du poste|insérer|à compléter|lorem ipsum)\b",
+    re.IGNORECASE)
+
+def _pack_quality_issues(pack: dict, cible_desc: str = "") -> list:
+    """Vérification de sortie GÉNÉRIQUE d'un pack CV+lettre avant envoi.
+    Retourne la liste des problèmes détectés (vide = sortie saine)."""
+    issues = []
+    if not isinstance(pack, dict):
+        return ["réponse non structurée"]
+    corps = (pack.get("lettre_corps") or "").strip()
+    titre = (pack.get("titre_poste") or "").strip()
+    resume = (pack.get("resume_professionnel") or "").strip()
+    nmots = len(corps.split())
+    if nmots < 60:
+        issues.append("lettre vide ou trop courte")
+    elif nmots > 500:
+        issues.append("lettre beaucoup trop longue")
+    if not titre:
+        issues.append("titre de poste manquant")
+    if not resume or len(resume.split()) < 8:
+        issues.append("résumé professionnel manquant ou trop court")
+    for champ, val in (("lettre", corps), ("titre", titre), ("résumé", resume)):
+        if val and _PLACEHOLDER_RE.search(val):
+            issues.append(f"placeholder non rempli dans le {champ} (ex. [nom], XXX, à compléter)")
+    comp = pack.get("competences_mises_en_avant")
+    if isinstance(comp, list) and not [c for c in comp if str(c).strip()]:
+        issues.append("aucune compétence mise en avant")
+    return issues
+
 async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
     ident = profil.get("identite", {})
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:12]
@@ -4383,12 +4555,21 @@ signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMAT
 professionnel, phrases variées, pas de superlatifs creux.
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
     pack = await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
-    # VÉRIFICATION DE SORTIE : une lettre vide/trop courte est refaite une fois avant d'être envoyée.
-    if isinstance(pack, dict) and len((pack.get("lettre_corps") or "").split()) < 60:
-        logger.info("[pack] lettre trop courte -> relance QC")
+    # VÉRIFICATION DE SORTIE GÉNÉRIQUE : champ vide, trop court/long, ou placeholder non rempli
+    # -> on refait UNE fois avant d'envoyer au candidat.
+    issues = _pack_quality_issues(pack, cible_desc)
+    if issues:
+        logger.info(f"[pack] QC sortie: {issues} -> relance")
         try:
-            pack = await call_groq(system, prompt + "\n\nIMPÉRATIF : lettre_corps doit faire 220-300 mots, non vide, "
-                                   "avec 2 faits concrets du profil.", temperature=0.5, max_tokens=1300, tier="quality")
+            pack2 = await call_groq(
+                system,
+                prompt + "\n\nIMPÉRATIF : lettre_corps = 220-300 mots non vide, avec 2 faits concrets du profil. "
+                "titre_poste et resume_professionnel non vides. INTERDIT tout texte entre crochets [ ], toute mention "
+                "« à compléter », « XXX » ou « votre entreprise » : remplace par les vraies informations du profil et de la cible.",
+                temperature=0.5, max_tokens=1300, tier="quality")
+            # On ne garde la relance que si elle est au moins aussi propre que la première.
+            if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc)) <= len(issues):
+                pack = pack2
         except Exception as e:
             logger.warning(f"[pack] relance QC: {e}")
     return pack
