@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.69.0"
+VERSION         = "2.70.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -590,6 +590,11 @@ _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "ent
                   "compresserimage", "enimages", "cv1page", "anonymiser", "mescandidatures",
                   "timeline", "parrainage", "offres", "credits", "commentpostuler"}
 
+# Intentions informatives SÛRES à exécuter même avant d'avoir un profil (pas de CV requis).
+_PREONB_DIRECT = {"campusfrance", "canada", "procedure", "ecoles", "formations", "budget", "logement",
+                  "parcours", "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
+                  "entretien", "aide", "contact", "offres", "credits", "parrainage", "version"}
+
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
     plein = round(taille * min(done, total) / total)
@@ -827,6 +832,18 @@ def _type_label(typ):
     if any(k in tp for k in ("emploi", "job", "poste", "stage", "cdi", "cdd")):
         return "💼 EMPLOI"
     return "🌍 OPPORTUNITÉ"
+
+def _clean_opp_title(raw: str) -> str:
+    """Nettoie un titre d'opportunité : enlève les suffixes de site et séparateurs résiduels
+    (« M'inscrire au concours – | Bourses d'excellence » -> « Bourses d'excellence »)."""
+    s = _md_clean(str(raw or "")).strip(" -–—|·:")
+    parts = [p.strip() for p in re.split(r"\s*[|–—]\s*", s) if p.strip() and len(p.strip()) > 2]
+    if parts:
+        # on écarte les segments « d'action » (s'inscrire, postuler…) au profit du vrai nom
+        actions = ("inscrire", "postuler", "candidater", "appliquer", "apply", "register", "s'inscrire")
+        utiles = [p for p in parts if not any(a in p.lower() for a in actions)] or parts
+        s = max(utiles, key=len)
+    return s.strip(" -–—|·:")[:70] or "Opportunité"
 
 def _score_badge(score) -> str:
     """Note de compatibilité 0-100 -> '82% · Fort' (comme les offres notées de la vitrine)."""
@@ -3037,11 +3054,21 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             _push(session, "user", t)
             return await _cvbuild_start(session)
         _push(session, "user", t)
-        # 2) Intention forte captée au passage (déclenchée à la fin de l'onboarding) — sans bloquer la réponse.
+        # 2) Intention CLAIRE et informative (Campus France, Canada, écoles, visa…) : on la traite
+        #    DIRECTEMENT, même sans CV — inutile de reposer des questions dont la réponse est évidente
+        #    (« campus france » = la France). On invite ensuite doucement à envoyer le CV.
         intent_cmd = _free_text_to_command(low, t)
-        if intent_cmd and len(t) > 3:
-            session["pending_intent"] = intent_cmd
-        # 3) On répond VRAIMENT à sa question (RGPD, prix, fiabilité, « c'est quoi »… n'importe quoi) via l'IA.
+        if intent_cmd:
+            base = intent_cmd.split()[0].lstrip("/")
+            if base in _PREONB_DIRECT:
+                msg, session = await process_text_message(session, intent_cmd)
+                if not session.get("cv_parsed"):
+                    msg += "\n\n📄 _Envoie ton CV (PDF, Word ou image) — ou tape /creercv — pour que je personnalise tout ça à ton profil._"
+                session["derniere_activite"] = now
+                return msg, session
+            if len(t) > 3:
+                session["pending_intent"] = intent_cmd   # intention nécessitant le profil : relancée après l'onboarding
+        # 3) Sinon, on répond VRAIMENT à sa question (RGPD, prix, « c'est quoi »…) via l'IA, puis on nudge le CV.
         msg = await _preonboarding_reply(session, t)
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -4497,7 +4524,9 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
     system = ("Tu es " + CONSEILLER_PERSONA + " On te donne le CONTENU d'une page web (offre d'emploi, bourse, "
               "programme, formation...). Extrais l'opportunité et évalue l'adéquation avec le profil fourni. "
               "Si la page n'est PAS une opportunité, mets est_opportunite=false. Sois factuel, ne invente rien "
-              "(laisse vide si absent). Réponds en JSON strict.")
+              "(laisse vide si absent). Le \"titre\" doit être le VRAI NOM de l'opportunité (ex. « Bourses "
+              "d'excellence Québec métiers d'avenir »), PAS le titre de la page web ni un bouton comme "
+              "« S'inscrire au concours ». Réponds en JSON strict.")
     prompt = (f"PROFIL: {profil_txt}\n\nURL: {page['url']}\nTITRE: {page['title']}\n"
               f"CONTENU:\n{page['text']}\n\n"
               'JSON: {"est_opportunite":true,"titre":"","organisation":"","type":"emploi|bourse|fellowship|formation|stage",'
@@ -4518,7 +4547,7 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
                "Si c'en est une, copie-colle le texte de l'annonce et je l'analyse.")
         _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
         return msg, session
-    titre = _md_clean(str(r.get("titre") or page.get("title") or "Opportunité"))[:70]
+    titre = _clean_opp_title(r.get("titre") or page.get("title") or "Opportunité")
     msg = f"🔗 *{titre}*"
     orga = _md_clean(str(r.get("organisation") or ""))
     lieu = _md_clean(str(r.get("lieu") or ""))

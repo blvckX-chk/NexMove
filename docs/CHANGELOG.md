@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.70 — Conversation : excellence (intentions directes + titres propres)
+- Pré-onboarding : les intentions **claires et informatives** (Campus France, Canada, écoles, visa,
+  logement, budget…) sont **traitées immédiatement** au lieu de reposer des questions évidentes
+  (« campus france » = la France). Réponse utile d'abord, invitation au CV ensuite.
+- Analyse de lien : **titres nettoyés** (plus de « M'inscrire au concours – | … » ni de nom de site) ;
+  le LLM extrait le vrai nom de l'opportunité.
+- Tests ajoutés.
+
 ## v2.69 — Correctifs audit sécurité (SSRF + concurrence)
 - **Anti-SSRF** sur l'analyse de lien (`fetch_url_text`) : schémas http/https uniquement, **IP privées /
   loopback / link-local / réservées refusées** (résolution DNS vérifiée, anti-rebinding partiel),
