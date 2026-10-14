@@ -2,6 +2,30 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.77 — Signalement de bug, anti-hallucination généralisé, QC de sortie renforcé, diffusion ciblée
+- **Signaler un bug** : nouvelles commandes `/bug` (`/probleme`, `/signaler`) qui transmettent
+  directement le message à l'admin (Telegram) et le journalisent (`/contacts_log`). `/contact`,
+  `/support`, `/rencontrer` existaient déjà pour les retours généraux.
+- **Anti-hallucination GÉNÉRAL** : règle anti-invention (dates, montants, frais, noms de
+  programmes/universités/entreprises, URL, procédures) injectée dans TOUTES les réponses
+  conversationnelles via `CONSEILLER_PERSONA`, pas seulement la recherche d'offres. En cas de
+  doute, le bot le dit et renvoie vers la source officielle au lieu de deviner.
+- **Vérification de sortie renforcée** : `_pack_quality_issues` contrôle chaque document généré
+  (lettre non vide et de bonne longueur, titre et résumé présents, AUCUN placeholder type `[nom]`,
+  `XXX`, « à compléter », compétences non vides) et relance une fois la génération si besoin.
+- **Diffusion admin ciblée** : `/diffuser` (`/broadcast`) envoie une annonce/publicité aux
+  utilisateurs filtrés par profil (`objectif:` `pays:` `tier:` `canal:`). Aperçu du nombre de
+  destinataires par défaut, envoi réel avec le mot `envoyer`. Note WhatsApp (fenêtre 24 h / modèles).
+  Par défaut **seuls les utilisateurs actifs (30 j)** sont ciblés (ajouter `tous` pour inclure les
+  dormants). Chaque diffusion est **journalisée** (`/diffuser_log`, table `broadcasts`).
+- **Filet anti-placeholder global** : `deliver_text` nettoie tout message sortant des placeholders
+  résiduels (`[nom]`, `[entreprise]`, `XXX`, `{{…}}`) — sans toucher la syntaxe d'aide `<…>`.
+- **Boucler le canal bug** : commande admin `/repondre <user_id> <message>` pour répondre
+  directement à un utilisateur suite à un `/bug` ou `/contact`.
+- **Panel web admin** : nouveaux blocs *Diffuser* (aperçu + envoi), *Bugs & contacts* et
+  *Diffusions récentes* dans `admin.html` (endpoints `/api/admin/contacts` et `/api/admin/broadcast`).
+- Tests ajoutés (QC sortie, parsing/ciblage/dormants diffusion, scrub placeholders). 265 tests au vert.
+
 ## v2.76 — CV ATS + CV graphique (au choix) + vérification de sortie
 - **Deux styles de CV** : `/cv ats` (sobre, lisible par les robots de tri), `/cv graphique`
   (bandeau coloré, envoi direct) ou `/cv deux`. Le bot propose le choix (boutons) et à la fin de /creercv.
