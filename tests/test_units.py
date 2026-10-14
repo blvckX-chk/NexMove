@@ -258,7 +258,7 @@ def test_flux_intention_dormante_captee_avant_cv():
     """Une intention forte tapée avant l'envoi du CV est mémorisée (pending_intent)."""
     session = {"user_id": "t-intent", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
                "onboarding_complete": False}
-    msg, session = _run(main.process_text_message(session, "je cherche une bourse de master au Canada"))
+    msg, session = _run(main.process_text_message(session, "je cherche une bourse de master"))
     assert session.get("pending_intent", "").startswith("/")   # intention mémorisée pour la fin de l'onboarding
     assert isinstance(msg, str) and len(msg) > 0                # une réponse est renvoyée (IA ou pitch de repli)
 
@@ -1494,3 +1494,21 @@ def test_user_lock_dedup():
     import asyncio as _aio
     l1 = main._user_lock("u1"); l2 = main._user_lock("u1"); l3 = main._user_lock("u2")
     assert l1 is l2 and l1 is not l3 and isinstance(l1, _aio.Lock)
+
+# ── Excellence conversation (v2.70) : titre propre + routage pré-onboarding ──
+def test_clean_opp_title():
+    assert main._clean_opp_title("M'inscrire au concours – | Bourses d'excellence") == "Bourses d'excellence"
+    assert main._clean_opp_title("Développeur Python | Indeed") == "Développeur Python"
+    assert main._clean_opp_title("Postuler — Master IA Toulouse") == "Master IA Toulouse"
+    assert main._clean_opp_title("") == "Opportunité"
+
+def test_preonboarding_route_direct(monkeypatch):
+    # "campus france" avant le CV -> exécute /campusfrance directement (pas de questions évidentes)
+    async def fake_tav(q, n=6): return []
+    async def fake_groq(system, prompt, **kw): return {"intro": "Procédure Campus France.", "points": [], "checklist": [], "conseil": ""}
+    monkeypatch.setattr(main, "tavily_search", fake_tav)
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "pf", "chat_id": "1", "historique": [], "onboarding_complete": False,
+         "etape": "ATTENTE_CV", "profil": {}}
+    msg, s = _run(main.process_text_message(s, "je veux postuler à campus france comment je fais"))
+    assert "Campus France" in msg and "Envoie ton CV" in msg   # réponse utile + nudge CV
