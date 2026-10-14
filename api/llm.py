@@ -33,6 +33,8 @@ GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL_FAST   = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite")
 OPENROUTER_MODEL      = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_MODEL_FAST = os.getenv("OPENROUTER_MODEL_FAST", "openai/gpt-oss-20b")
+# Modèle PREMIUM optionnel pour la rédaction CV/lettre (tier="quality"). Ex : "anthropic/claude-3.5-sonnet".
+OPENROUTER_GENERATE_MODEL = os.getenv("OPENROUTER_GENERATE_MODEL", OPENROUTER_MODEL)
 
 # Pillow (utilisé par la vision) — import tolérant
 try:
@@ -112,11 +114,20 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
                     max_tokens: int = 1000, json_mode: bool = True, retries: int = 2,
                     tier: str = "smart") -> Any:
     """Routeur LLM multi-fournisseurs. tier="fast" = petit modèle (conversation) ;
-    tier="smart" (défaut) = 70B / haut de gamme (analyse, sélection, rédaction)."""
+    tier="smart" (défaut) = haut de gamme (analyse, sélection) ;
+    tier="quality" = passe par le modèle PREMIUM OpenRouter EN PREMIER (rédaction CV/lettre), sinon smart."""
     approx = (len(system_prompt) + len(user_prompt)) // 4 + max_tokens
     last = None
     tried = False
-    for prov in _LLM_PROVIDERS:
+    providers = _LLM_PROVIDERS
+    if tier == "quality":
+        if OPENROUTER_API_KEY:
+            gen = {"name": "openrouter-gen", "url": "https://openrouter.ai/api/v1/chat/completions",
+                   "key": OPENROUTER_API_KEY, "model": OPENROUTER_GENERATE_MODEL,
+                   "model_fast": OPENROUTER_GENERATE_MODEL, "api": "openai", "max_ctx": 120000}
+            providers = [gen] + _LLM_PROVIDERS
+        tier = "smart"   # fallback = qualité standard
+    for prov in providers:
         if not prov["key"]:
             continue
         if approx > prov["max_ctx"] * 0.95:
