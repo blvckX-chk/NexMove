@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.72 — 4e fournisseur LLM (OpenRouter) + fix modèle « fast »
+- **OpenRouter** ajouté en **dernier recours** (pay-as-you-go) : s'active dès que `OPENROUTER_API_KEY`
+  est dans le `.env` → le bot ne tombe jamais même si les 3 tiers gratuits saturent. Dormant sans la clé.
+- **Fix** : `CEREBRAS_MODEL_FAST` valait `gemma-4-31b` (modèle inexistant chez Cerebras) → le niveau
+  « fast » échouait en silence. Défaut corrigé sur `llama3.1-8b`.
+- Modèles OpenRouter réglables par env (`OPENROUTER_MODEL`, `OPENROUTER_MODEL_FAST`). Tests mis à jour.
+
 ## v2.71 — Anti-hallucination (solution définitive)
 - **Les opportunités ne viennent plus JAMAIS de la mémoire du modèle** : uniquement de la recherche web
   réelle (Tavily). Quand la recherche ne renvoie rien, le bot **n'invente plus** — il affiche des
