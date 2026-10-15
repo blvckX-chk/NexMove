@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.77.0"
+VERSION         = "2.77.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -339,6 +339,30 @@ _OUTBOUND_PH_RE = re.compile(
     r"adresse|employeur|destinataire|recruteur|programme|université|universite|école|ecole|montant|xxx+)\]"
     r"|\{\{[^}]{0,40}\}\}|\bXXX+\b",
     re.IGNORECASE)
+
+# Glyphes « carreau »/cases/symboles parasites que le LLM glisse parfois dans un document
+# (case à cocher, puce géométrique, caractère de remplacement) et qui s'affichent comme un petit
+# carré dans Word/PDF. On les retire du texte des documents générés (CV, lettre).
+_BOX_GLYPHS = "�☐☑☒■□▪▫◻◼◽◾◆◇●○•‣⁃⁌⁍∙◦❖⬛⬜"
+
+def _sanitize_doc_text(s: str) -> str:
+    """Nettoie le texte d'un document généré : retire les glyphes « carreau »/puces parasites,
+    le caractère de remplacement et les caractères de contrôle, sans toucher la ponctuation normale."""
+    if not s:
+        return s
+    out = []
+    for ch in str(s):
+        if ch in _BOX_GLYPHS:
+            continue
+        # caractères de contrôle (hors \n \t) et zone privée (glyphes « tofu »)
+        o = ord(ch)
+        if (o < 32 and ch not in "\n\t") or (0xE000 <= o <= 0xF8FF):
+            continue
+        out.append(ch)
+    cleaned = "".join(out)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" +([,.;:!?])", r"\1", cleaned)
+    return cleaned.strip()
 
 def _scrub_outbound(text: str) -> str:
     """Retire les placeholders résiduels d'un message sortant et nettoie la ponctuation orpheline."""
@@ -3720,6 +3744,8 @@ GRIS = HexColor("#546e7a")
 def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats") -> io.BytesIO:
     """style='ats' : sobre, noir, une colonne, polices standard -> lisible par les robots de tri (ATS).
     style='graphic' : bandeau coloré + titres de section en couleur -> pour un envoi direct / humain."""
+    titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
+    competences = [_sanitize_doc_text(c) for c in (competences or []) if _sanitize_doc_text(c)]
     graphic = (style == "graphic")
     NOIR = HexColor("#111418")
     accent = BLEU if graphic else NOIR
@@ -3785,6 +3811,7 @@ def _slug(s):
     return (s.strip().replace(" ", "_")[:40]) or "candidat"
 
 def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
+    objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
     ident = profil.get("identite", {})
@@ -3815,6 +3842,8 @@ _BLEU_RGB = (0x1a, 0x23, 0x7e)
 _GRIS_RGB = (0x54, 0x6e, 0x7a)
 
 def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
+    titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
+    competences = [_sanitize_doc_text(c) for c in (competences or []) if _sanitize_doc_text(c)]
     d = _DocxDocument()
     ident = profil.get("identite", {})
     p = d.add_paragraph(); r = p.add_run(ident.get("nom", "Candidat") or "Candidat")
@@ -3866,6 +3895,7 @@ async def _deliver_cv(session: dict, style: str = "ats") -> bool:
     return ok
 
 def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
+    objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     d = _DocxDocument()
     ident = profil.get("identite", {})
     p = d.add_paragraph(); r = p.add_run(ident.get("nom", "Candidat") or "Candidat"); r.bold = True
@@ -4611,6 +4641,8 @@ def _pack_quality_issues(pack: dict, cible_desc: str = "") -> list:
     for champ, val in (("lettre", corps), ("titre", titre), ("résumé", resume)):
         if val and _PLACEHOLDER_RE.search(val):
             issues.append(f"placeholder non rempli dans le {champ} (ex. [nom], XXX, à compléter)")
+        if val and any(g in val for g in _BOX_GLYPHS):
+            issues.append(f"symbole parasite (carré/case/puce) dans le {champ}")
     comp = pack.get("competences_mises_en_avant")
     if isinstance(comp, list) and not [c for c in comp if str(c).strip()]:
         issues.append("aucune compétence mise en avant")
@@ -4641,7 +4673,9 @@ async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi
               "écrit par la personne elle-même. INTERDIT : les tournures d'IA et clichés (« je suis convaincu que », "
               "« correspond parfaitement à mes aspirations », « dynamique et motivé », « c'est avec un grand "
               "intérêt », « fort de mon expérience »). Appuie CHAQUE argument sur un fait CONCRET du profil "
-              "(expérience, mission, diplôme, compétence réels ci-dessous) — jamais de généralités. JSON uniquement.")
+              "(expérience, mission, diplôme, compétence réels ci-dessous) — jamais de généralités. "
+              "Texte brut : AUCUN symbole de case/puce/carré (☐ □ ◻ ◆ • ▪) ni caractère spécial décoratif, "
+              "AUCUN champ à trous entre crochets. JSON uniquement.")
     prompt = f"""{consigne}
 CANDIDAT: {ident.get('nom','')}
 RÉSUMÉ: {resume}

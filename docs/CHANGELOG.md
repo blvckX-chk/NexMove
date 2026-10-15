@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.77.1 — Correctif « symbole carreau » dans les documents + 1er vrai témoignage
+- **Bug corrigé** : un petit symbole « carré/case » (☐ □ ◻ ◆, puces, caractère de remplacement)
+  pouvait apparaître dans le CV ou la lettre générés. `_sanitize_doc_text` nettoie désormais tout
+  document produit (CV ATS/graphique, lettre PDF & Word), le QC de sortie le détecte et relance,
+  et le prompt de génération interdit explicitement ces symboles.
+- **Vitrine** : les témoignages d'exemple (fictifs) sont retirés ; remplacés par le **premier vrai
+  retour d'utilisateur** (verbatim, anonymisé) + une carte d'invitation pour les suivants.
+
 ## v2.77 — Signalement de bug, anti-hallucination généralisé, QC de sortie renforcé, diffusion ciblée
 - **Signaler un bug** : nouvelles commandes `/bug` (`/probleme`, `/signaler`) qui transmettent
   directement le message à l'admin (Telegram) et le journalisent (`/contacts_log`). `/contact`,
