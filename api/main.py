@@ -38,7 +38,7 @@ except Exception:
     pytesseract = None
 _OCR_IMPORTED = bool(pytesseract and Image)
 
-# Export Word (.docx) optionnel — python-docx est pur Python (aucune dépendance système).
+# Export Word (.docx) optionnel · python-docx est pur Python (aucune dépendance système).
 try:
     from docx import Document as _DocxDocument
     from docx.shared import Pt as _DocxPt, RGBColor as _DocxRGB
@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.77.1"
+VERSION         = "2.77.3"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -171,7 +171,7 @@ ADZUNA_APP_KEY  = os.getenv("ADZUNA_APP_KEY", "")
 ADZUNA_COUNTRIES = [c.strip().lower() for c in os.getenv("ADZUNA_COUNTRY", "fr,ca,be,gb,de").split(",") if c.strip()][:8]
 # Requêtes de secours si aucun mot-clé utilisateur n'est disponible.
 ADZUNA_QUERIES  = [q.strip() for q in os.getenv("ADZUNA_QUERIES", "developpeur,data,ingenieur").split(",") if q.strip()]
-# Veille : par défaut, la collecte NE lance PAS un appel LLM (osint Tavily) par utilisateur — sinon les
+# Veille : par défaut, la collecte NE lance PAS un appel LLM (osint Tavily) par utilisateur · sinon les
 # quotas gratuits explosent (429) avec beaucoup de testeurs. Le digest s'appuie sur le pool de sources
 # (RSS + Adzuna + EURAXESS + arbeitnow) matché par profil. L'osint complet reste dispo à la demande (/mobilite).
 COLLECT_OSINT_PER_USER = os.getenv("COLLECT_OSINT_PER_USER", "0").lower() in ("1", "true", "yes", "on")
@@ -191,7 +191,7 @@ api_key_header = APIKeyHeader(name="X-Forge-Nex-Key", auto_error=False)
 
 async def verify_api_key(api_key: str = Security(api_key_header)):
     if not FORGE_NEX_API_KEY:
-        logger.warning("FORGE_NEX_API_KEY non configurée — mode dev")
+        logger.warning("FORGE_NEX_API_KEY non configurée · mode dev")
         return True
     if not api_key or not secrets.compare_digest(api_key, FORGE_NEX_API_KEY):
         raise HTTPException(status_code=401, detail="Clé API invalide")
@@ -290,7 +290,7 @@ from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cac
                 profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store)
 
 
-# (Embeddings/vision : voir llm.py — PR-B)
+# (Embeddings/vision : voir llm.py · PR-B)
 
 ETAPE_INSTRUCTIONS = {
     "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
@@ -314,10 +314,10 @@ def _get_notif(session: dict) -> dict:
     return {"enabled": n.get("enabled", True), "freq": n.get("freq", "quotidien"), "jour": n.get("jour", "lundi")}
 
 # Persona partagée : conseiller d'orientation & mobilité internationale senior.
-# Règle anti-hallucination GÉNÉRALE — s'applique à TOUTES les conversations (pas seulement les offres).
+# Règle anti-hallucination GÉNÉRALE · s'applique à TOUTES les conversations (pas seulement les offres).
 # Injectée dans chaque prompt conversationnel via CONSEILLER_PERSONA.
 _ANTI_INVENT = (
-    " RÈGLE ANTI-INVENTION (ABSOLUE, pour TOUTE réponse) : n'invente JAMAIS de fait précis — "
+    " RÈGLE ANTI-INVENTION (ABSOLUE, pour TOUTE réponse) : n'invente JAMAIS de fait précis · "
     "dates limites, montants, frais, taux, noms de programmes/bourses/universités/entreprises, "
     "coordonnées, URL, procédures ou chiffres. Si tu n'es pas certain d'un détail, dis-le franchement "
     "et invite à vérifier sur la source officielle, au lieu de deviner. Tu peux citer des portails "
@@ -328,7 +328,10 @@ CONSEILLER_PERSONA = (
     "Tu es un conseiller d'orientation et en mobilité internationale SENIOR (15 ans d'expérience), "
     "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
     "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
-    "et tu donnes toujours des étapes actionnables." + _ANTI_INVENT)
+    "et tu donnes toujours des étapes actionnables."
+    " STYLE : écris comme un humain, simplement. N'utilise JAMAIS de tiret cadratin (—) ni demi-cadratin (–) :"
+    " remplace-les par une virgule, un deux-points ou une phrase courte. Évite les formules toutes faites."
+    + _ANTI_INVENT)
 
 # Filet de sécurité SORTIE : neutralise les placeholders non remplis qui auraient échappé
 # au QC (ex. « Madame [nom] », « chez [entreprise] », « XXX »). Volontairement ÉTROIT pour ne pas
@@ -475,7 +478,7 @@ def _quota_or_credit(session: dict, feature: str, limit: int) -> tuple[bool, boo
     return False, False, 0
 
 def _credit_note(session: dict, used_credit: bool) -> str:
-    return (f"\n\n🎟️ _1 crédit utilisé — il te reste {_credit_balance(session)} crédit·s._"
+    return (f"\n\n🎟️ _1 crédit utilisé · il te reste {_credit_balance(session)} crédit·s._"
             if used_credit else "")
 
 def _broadcast_targets(filters: dict, actif_jours: int = 30) -> list:
@@ -641,7 +644,7 @@ def _apply_premium(session: dict, tier: str, days: int) -> str:
 
 def _quota_exceeded_msg(feature_label: str) -> str:
     return (f"🚦 Tu as atteint ta *limite gratuite du jour* pour {feature_label}.\n\n"
-            "💎 *Passe en Premium* pour un accès *illimité* tout de suite — tape /offres.\n"
+            "💎 *Passe en Premium* pour un accès *illimité* tout de suite · tape /offres.\n"
             "🎁 _Tarif de lancement : -40% (durée limitée)._\n"
             "_Ou réessaie demain : la limite se recharge chaque jour._")
 
@@ -670,27 +673,27 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
     if tier in _PREMIUM_TIERS:
         if tier == "premium":
             return secrets.choice([
-                "⭐ Tu profites du Premium. Le pack *Pro* débloque encore plus de volume et de priorité — /offres.",
-                "💎 Membre Premium : besoin d'un accompagnement renforcé ? Découvre le *Pro* — /offres.",
+                "⭐ Tu profites du Premium. Le pack *Pro* débloque encore plus de volume et de priorité · /offres.",
+                "💎 Membre Premium : besoin d'un accompagnement renforcé ? Découvre le *Pro* · /offres.",
             ])
         return ""  # pro / vip : on ne sollicite pas
     perk = _profile_perk(session)   # bénéfice personnalisé selon l'objectif du profil
     nudges = {
         "quota": [
-            "💎 Les membres *Premium* n'ont *aucune limite*. Passe au niveau supérieur — /offres. " + _LAUNCH_OFFER,
-            "⛔ Ne t'arrête pas en si bon chemin : *Premium* = illimité, tout de suite — /offres.",
+            "💎 Les membres *Premium* n'ont *aucune limite*. Passe au niveau supérieur · /offres. " + _LAUNCH_OFFER,
+            "⛔ Ne t'arrête pas en si bon chemin : *Premium* = illimité, tout de suite · /offres.",
         ],
         "tool": [
-            "💡 En *Premium*, tes documents et outils sont *illimités* et prioritaires — /offres.",
-            "🚀 Tu aimes la boîte à outils ? *Premium* débloque tout, sans limite — /offres.",
+            "💡 En *Premium*, tes documents et outils sont *illimités* et prioritaires · /offres.",
+            "🚀 Tu aimes la boîte à outils ? *Premium* débloque tout, sans limite · /offres.",
         ],
         "success": [
-            f"🎯 Beau travail ! *Premium* débloque {perk} — /offres.",
-            "🔓 Ce n'est qu'un aperçu — *Premium* ouvre tout le potentiel de NexMove — /offres. " + _LAUNCH_OFFER,
+            f"🎯 Beau travail ! *Premium* débloque {perk} · /offres.",
+            "🔓 Ce n'est qu'un aperçu · *Premium* ouvre tout le potentiel de NexMove · /offres. " + _LAUNCH_OFFER,
         ],
         "generic": [
-            f"💎 Avec *Premium* : {perk} — /offres. " + _LAUNCH_OFFER,
-            "⭐ De plus en plus de candidats préparent leur avenir avec NexMove. *Premium* pour aller plus vite — /offres.",
+            f"💎 Avec *Premium* : {perk} · /offres. " + _LAUNCH_OFFER,
+            "⭐ De plus en plus de candidats préparent leur avenir avec NexMove. *Premium* pour aller plus vite · /offres.",
         ],
     }
     return secrets.choice(nudges.get(moment, nudges["generic"]))
@@ -702,7 +705,7 @@ _CV_FILENAME_NOISE = {"cv", "resume", "résumé", "resumé", "curriculum", "vita
                       "img", "image", "portfolio", "profil", "profile", "candidature", "maj"}
 
 def _name_from_filename(filename: str) -> str:
-    """Devine un nom à partir du nom de fichier du CV — repli quand l'OCR/LLM ne trouve pas le nom
+    """Devine un nom à partir du nom de fichier du CV · repli quand l'OCR/LLM ne trouve pas le nom
     (ex. « CV_Judicael.pdf » -> « Judicael », « cv-jean-dupont.pdf » -> « Jean Dupont »)."""
     base = (filename or "").rsplit("/", 1)[-1].rsplit(".", 1)[0]
     base = re.sub(r"[_\-.+]+", " ", base)
@@ -776,12 +779,12 @@ def _progress_bar(done: int, total: int, taille: int = 8) -> str:
 
 # Source unique de vérité de l'onboarding : champ -> (question, choix cliquables).
 # L'ORDRE et l'INCLUSION des questions sont calculés dynamiquement (_build_pref_plan) selon
-# les réponses déjà données — onboarding ADAPTATIF (ex. pas de nationalité/passeport ni de
+# les réponses déjà données · onboarding ADAPTATIF (ex. pas de nationalité/passeport ni de
 # financement d'études pour un simple stage/job LOCAL).
 PREF_FIELDS: dict[str, tuple[str, Optional[list]]] = {
     "objectif":            ("🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)",
                             ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"]),
-    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… — ou ton *propre pays* pour des offres locales, ou « tous »)",
+    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… · ou ton *propre pays* pour des offres locales, ou « tous »)",
                             None),
     "nationalite":         ("🛂 Quelle est ta nationalité (pays du passeport) ?", None),
     "financement":         ("💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?",
@@ -791,7 +794,7 @@ PREF_FIELDS: dict[str, tuple[str, Optional[list]]] = {
                             ["Français", "Anglais", "Les deux"]),
     "niveau":              ("🎓 Ton niveau ? (étudiant / professionnel)",
                             ["Étudiant", "Professionnel"]),
-    "mots_cles":           ("🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau — ou « aucun »)", None),
+    "mots_cles":           ("🔑 Des mots-clés à cibler ?\n(ex : cybersécurité, cloud, réseau · ou « aucun »)", None),
 }
 # Compat : quelques helpers/tests attendent encore ces noms (dérivés de la source ci-dessus).
 PREF_QUESTIONS = [(f, q) for f, (q, _c) in PREF_FIELDS.items()]
@@ -839,7 +842,7 @@ def _build_pref_plan(prefs: dict) -> list[str]:
     plan += ["langues_opportunite", "niveau", "mots_cles"]
     return plan
 
-# B1 — pré-remplissage des préférences à partir du CV (réduit le nombre de questions).
+# B1 · pré-remplissage des préférences à partir du CV (réduit le nombre de questions).
 _PREF_LABELS = {"mots_cles": "tes domaines/compétences", "langues_opportunite": "ta langue de travail"}
 
 def _prefill_prefs_from_cv(session: dict) -> list[str]:
@@ -922,12 +925,12 @@ def valider_pref(field: str, value: str) -> tuple[bool, str]:
     # Champs libres (nationalite, pays_cibles, mots_cles) : on accepte tout texte non-commande.
     return True, ""
 
-AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
+AIDE_TXT = ("🧭 *NexMove · que veux-tu faire ?*\n\n"
             "🔎 *Trouver des opportunités*\n"
             "/veille · /mobilite <pays ou domaine> · 🔔 /alerte <mot-clé>\n\n"
             "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
             "/campusfrance · /parcours · /ecoles <domaine> · /logement <ville> · /entretien\n"
-            "🧭 Bloqué sur une plateforme ? /guide — envoie une *capture d'écran*, je te guide.\n\n"
+            "🧭 Bloqué sur une plateforme ? /guide · envoie une *capture d'écran*, je te guide.\n\n"
             "🌍 *Autres destinations*\n"
             "/canada · /procedure <pays> (Belgique, Allemagne, Suisse, Luxembourg, Pays-Bas…)\n"
             "/eligibilite <cible> · /budget <ville>\n\n"
@@ -947,19 +950,19 @@ AIDE_TXT = ("🧭 *NexMove — que veux-tu faire ?*\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
 TUTO_TXT = ("📖 *Guide NexMove*\n\n"
-            "*1. Ton profil* — envoie ton *CV (PDF, Word ou image)*. Je l'analyse, puis je te pose quelques questions "
+            "*1. Ton profil* · envoie ton *CV (PDF, Word ou image)*. Je l'analyse, puis je te pose quelques questions "
             "(objectif, pays, financement, langue…).\n\n"
             "*2. Trouver des opportunités*\n"
-            "• /veille — je cherche des offres RÉELLES adaptées à ton profil.\n"
-            "• /mobilite <pays ou domaine> — recherche ciblée (ex : /mobilite France bourse master).\n\n"
+            "• /veille · je cherche des offres RÉELLES adaptées à ton profil.\n"
+            "• /mobilite <pays ou domaine> · recherche ciblée (ex : /mobilite France bourse master).\n\n"
             "*3. Études en France* 🇫🇷\n"
-            "• /campusfrance — la procédure, les bourses (Eiffel…) et les documents.\n"
-            "• /parcours — suis ton avancement étape par étape jusqu'au départ (/etape pour valider une étape).\n"
-            "• /formations <domaine> — des formations/certifs pour te démarquer.\n\n"
+            "• /campusfrance · la procédure, les bourses (Eiffel…) et les documents.\n"
+            "• /parcours · suis ton avancement étape par étape jusqu'au départ (/etape pour valider une étape).\n"
+            "• /formations <domaine> · des formations/certifs pour te démarquer.\n\n"
             "*4. Candidater*\n"
-            "• /dossier <cible> — la *liste des documents requis* + je génère ton *CV* et ton *projet d'études*.\n"
-            "• /postuler <cible> — juste le *CV adapté* + la *lettre de motivation*.\n\n"
-            "*5. Suivi* — /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
+            "• /dossier <cible> · la *liste des documents requis* + je génère ton *CV* et ton *projet d'études*.\n"
+            "• /postuler <cible> · juste le *CV adapté* + la *lettre de motivation*.\n\n"
+            "*5. Suivi* · /status, et je te notifie automatiquement des nouvelles opportunités.\n\n"
             "Prêt ? Envoie ton *CV (PDF, Word ou image)* pour démarrer. 🚀")
 
 CF_STAGES = [
@@ -1105,12 +1108,12 @@ _WELCOME_PITCH = (
     "🧭 *NexMove, c'est quoi ?*\n"
     "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n"
     "Je suis ton assistant IA de *mobilité et d'orientation* (Afrique de l'Ouest & international). Concrètement :\n"
-    "• 🔎 je trouve de *vraies* opportunités — emplois, stages, bourses, fellowships — *locales et à l'étranger* ;\n"
+    "• 🔎 je trouve de *vraies* opportunités · emplois, stages, bourses, fellowships · *locales et à l'étranger* ;\n"
     "• 🎓 je t'accompagne *pas à pas* (études en France/Campus France, Canada, visa…) ;\n"
     "• 📄 je prépare tes *dossiers* : CV, lettre de motivation, projet d'études ;\n"
     "• 🧭 je te *guide* sur les plateformes (/guide + capture d'écran) et t'entraîne aux *entretiens* (/simulation).\n\n"
     "👉 Pour des conseils *personnalisés*, envoie-moi ton *CV* (PDF, Word ou image).\n"
-    "📝 *Pas encore de CV ?* Tape /creercv — je t'en crée un en 5 questions."
+    "📝 *Pas encore de CV ?* Tape /creercv · je t'en crée un en 5 questions."
 )
 
 async def _preonboarding_reply(session: dict, t: str) -> str:
@@ -1121,7 +1124,7 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "d'Afrique de l'Ouest (Bénin…). L'utilisateur n'a PAS encore créé son profil. Réponds DIRECTEMENT "
         "et honnêtement à sa question, quelle qu'elle soit, en français, en TUTOYANT, ton chaleureux et concret.\n"
         "Faits à connaître :\n"
-        "- Ce que tu fais : trouver de VRAIES opportunités (emplois, stages, bourses, fellowships — locales ET "
+        "- Ce que tu fais : trouver de VRAIES opportunités (emplois, stages, bourses, fellowships · locales ET "
         "à l'étranger), préparer CV/lettre/projet d'études, guider pas à pas (Campus France, Canada, visa), "
         "coacher les entretiens.\n"
         "- Gratuit pour commencer ; des options avancées sont en abonnement Premium.\n"
@@ -1129,14 +1132,14 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "ne sont pas revendues ; il peut TOUT effacer quand il veut avec /supprimer (droit à l'effacement).\n"
         "- Pour démarrer : envoyer son CV (PDF, Word ou image), ou /creercv s'il n'en a pas.\n"
         "DÉSAMBIGUÏSATION : si son intention est VAGUE (ex. « je veux partir », « aide-moi », « je cherche "
-        "quelque chose »), ne suppose pas — pose UNE seule question de clarification précise et utile "
+        "quelque chose »), ne suppose pas · pose UNE seule question de clarification précise et utile "
         "(études ou travail ? quel pays ou objectif ?) avant d'aller plus loin.\n"
         "RÈGLE ABSOLUE ANTI-INVENTION : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL "
         "précis de toi-même. Si on te demande de TROUVER des opportunités/bourses/offres, ne donne AUCUN nom : "
         "réponds que tu vas lancer une recherche sur des sources RÉELLES et invite à envoyer le CV (ou dis « je cherche »). "
         "Tu peux seulement mentionner des portails ultra-connus et vérifiables (Campus France, DAAD, Erasmus Mundus, "
         "Chevening) SANS inventer de détail ni d'URL.\n"
-        "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) — sans forcer, sans répéter "
+        "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) · sans forcer, sans répéter "
         "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON).\n\n"
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
         + _recent_dialogue(session, 4)
@@ -1175,7 +1178,7 @@ CVBUILD_STEPS = [
     ("nom",         "👤 Comment t'appelles-tu ? (*prénom et nom*)"),
     ("formation",   "🎓 Ton *dernier diplôme* (ou celui en cours) ? Précise le domaine, l'établissement et l'année.\n_ex : Licence informatique, UAC Cotonou, 2024_"),
     ("experience",  "💼 As-tu des *expériences, stages ou projets* ? Décris-les brièvement.\n_(tape « aucune » si tu débutes)_"),
-    ("competences", "🛠️ Tes *compétences principales* ? _(ex : Python, réseaux, gestion de projet — séparées par des virgules)_"),
+    ("competences", "🛠️ Tes *compétences principales* ? _(ex : Python, réseaux, gestion de projet · séparées par des virgules)_"),
     ("langues",     "🌐 Quelles *langues* parles-tu et à quel niveau ? _(ex : français natif, anglais B2)_"),
 ]
 
@@ -1184,7 +1187,7 @@ async def _cvbuild_start(session: dict) -> tuple[str, dict]:
     session["cvbuild_step"] = 0
     session["cvbuild_data"] = {}
     session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
-    msg = ("📝 *Créons ton CV ensemble* — 5 petites questions, puis je te génère un CV et j'analyse ton profil.\n"
+    msg = ("📝 *Créons ton CV ensemble* · 5 petites questions, puis je te génère un CV et j'analyse ton profil.\n"
            "_Tape /annuler pour arrêter._\n\n" + CVBUILD_STEPS[0][1])
     _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     return msg, session
@@ -1223,7 +1226,7 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
         await deliver_file(session, f"CV_ats_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV (format *ATS*, lisible par les robots de tri)")
     except Exception as e:
         logger.error(f"[cvbuild] pdf: {e}")
-    recap = (f"✅ *Profil créé* pour *{_md_clean(nom)}* — CV *ATS* généré ci-dessus.\n"
+    recap = (f"✅ *Profil créé* pour *{_md_clean(nom)}* · CV *ATS* généré ci-dessus.\n"
              "🎨 Tu veux aussi une *version graphique* (pour un envoi direct au recruteur) ? Tape `/cv graphique` ou `/cv deux`.\n\n"
              "On continue avec tes préférences ? Réponds *Oui* 👇 (ou envoie un vrai CV pour l'affiner).")
     session["_kb_options"] = [("✅ Oui, continuer", "onb:oui"), ("🎨 CV graphique", "act:cv_graphique"), ("🔄 Recommencer", "onb:reset")]
@@ -1283,7 +1286,7 @@ async def _sim_llm(session: dict, answer: str) -> dict:
     key = session.get("sim_type", "campus")
     label, focus = _SIM_TYPES.get(key, _SIM_TYPES["campus"])
     cible = session.get("sim_cible", "")
-    cible_txt = (f" Poste/offre visé précisément : « {cible} » — tire TES questions de cette cible." if cible else "")
+    cible_txt = (f" Poste/offre visé précisément : « {cible} » · tire TES questions de cette cible." if cible else "")
     hist = session.get("sim_history", [])
     contexte = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist[-4:] if h.get("a"))
     if answer:
@@ -1345,11 +1348,11 @@ async def _simulation_start(session: dict, arg: str) -> tuple[str, dict]:
     session["sim_history"] = []
     session["tool_mode"] = None; session["guide_mode"] = False
     label, _f = _SIM_TYPES[key]
-    titre = f"{label} — {cible[:40]}" if cible else label
+    titre = f"{label} · {cible[:40]}" if cible else label
     r = await _sim_llm(session, "")
     q = (r.get("question") or "").strip() or _sim_fallback_q(session)
     session["sim_history"] = [{"q": q}]
-    msg = (f"🎤 *Simulation — {titre}*\nJe te pose {SIM_MAX_Q} questions, réponds naturellement (écrit ou vocal). "
+    msg = (f"🎤 *Simulation · {titre}*\nJe te pose {SIM_MAX_Q} questions, réponds naturellement (écrit ou vocal). "
            "Je note chaque réponse sur 10 et te propose une version améliorée.\n"
            "_Tape /terminer pour t'arrêter et recevoir ton bilan._\n\n"
            f"❓ {q}")
@@ -1389,7 +1392,7 @@ async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
         session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
         entete = (bloc + "\n" if bloc else "")
         note_globale = f"🏆 *Score global : {score}/10*\n\n" if score else ""
-        msg = (f"{entete}🎬 *Fin de la simulation — bilan :*\n\n{note_globale}{debrief}\n\n"
+        msg = (f"{entete}🎬 *Fin de la simulation · bilan :*\n\n{note_globale}{debrief}\n\n"
                "🔁 Refaire : /simulation · 📄 Prépare ton dossier : /dossier <cible> · 🎯 /entretien pour les conseils.")
         _push(session, "assistant", msg)
         return msg, session
@@ -1397,7 +1400,7 @@ async def _simulation_turn(session: dict, answer: str) -> tuple[str, dict]:
     hist.append({"q": q}); session["sim_history"] = hist
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     reste = SIM_MAX_Q - session["sim_count"]
-    msg = (bloc + "\n" if bloc else "") + f"❓ *Question {session['sim_count'] + 1}/{SIM_MAX_Q}* — {q}\n_(encore {reste})_"
+    msg = (bloc + "\n" if bloc else "") + f"❓ *Question {session['sim_count'] + 1}/{SIM_MAX_Q}* · {q}\n_(encore {reste})_"
     _push(session, "assistant", msg)
     return msg, session
 
@@ -1495,7 +1498,7 @@ def _conversation_context(session: dict) -> str:
         if lbl:
             ligne += f" → PROCHAINE ÉTAPE proposée : {lbl} ({cmd})"
         lignes.append(ligne)
-    return "\n".join(lignes) if lignes else "(aucune info encore — l'utilisateur débute)"
+    return "\n".join(lignes) if lignes else "(aucune info encore · l'utilisateur débute)"
 
 def _recent_dialogue(session: dict, n: int = 4) -> str:
     """Les derniers échanges, pour que le bot se souvienne de ce qu'il vient de dire/demander."""
@@ -1564,11 +1567,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         msg = ("👋 *Bienvenue sur NexMove !*\n"
                "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n\n"
                "Voici comment ça marche :\n"
-               "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* — j'analyse ton profil.\n"
+               "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* · j'analyse ton profil.\n"
                "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
                "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
                "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*\n"
-               "📝 Pas encore de CV ? Tape /creercv — je t'en crée un. (ou /tuto pour le guide)")
+               "📝 Pas encore de CV ? Tape /creercv · je t'en crée un. (ou /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -1582,20 +1585,20 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         return TUTO_TXT, session
 
     if low.startswith("/outils") or low.startswith("/boiteaoutils") or low.startswith("/tools"):
-        msg = ("🧰 *Ta boîte à outils NexMove* — pour des dossiers nickel, sans quitter la messagerie :\n\n"
-               "📄 */postuler* <cible> — CV + lettre + projet adaptés (PDF & Word)\n"
-               "🔗 *Colle un lien* d'offre/bourse/programme — j'analyse admissibilité + comment postuler\n"
-               "🧭 */commentpostuler* <cible> — *comment candidater* (e-mail/formulaire prêt à copier)\n"
-               "🗂️ */dossier* <cible> — ton dossier de candidature complet\n"
-               "🔎 */extraire* — récupérer le *texte* d'un PDF/scan/photo (OCR)\n"
-               "🗜️ */compresser* <Ko> — alléger un *PDF* trop lourd\n"
-               "🖼️🗜️ */compresserimage* <Ko> — alléger une *photo/image*\n"
-               "🔗 */fusionner* — regrouper plusieurs PDF en un seul\n"
-               "🖼️ */enpdf* — images/photos → PDF · 📄➡️🖼️ */enimages* — PDF → images PNG\n"
-               "✂️ */decouper* <pages> — extraire des pages (ex : /decouper 1-3)\n"
-               "🌍 */traduire* <texte> — traduire un texte (FR/EN)\n"
-               "📝 */creercv* — créer un CV · 📄🎨 */cv* — ton CV en *ATS* ou *graphique* (ou les deux)\n"
-               "🗓️ */timeline* — ta feuille de route en image\n"
+        msg = ("🧰 *Ta boîte à outils NexMove* · pour des dossiers nickel, sans quitter la messagerie :\n\n"
+               "📄 */postuler* <cible> · CV + lettre + projet adaptés (PDF & Word)\n"
+               "🔗 *Colle un lien* d'offre/bourse/programme · j'analyse admissibilité + comment postuler\n"
+               "🧭 */commentpostuler* <cible> · *comment candidater* (e-mail/formulaire prêt à copier)\n"
+               "🗂️ */dossier* <cible> · ton dossier de candidature complet\n"
+               "🔎 */extraire* · récupérer le *texte* d'un PDF/scan/photo (OCR)\n"
+               "🗜️ */compresser* <Ko> · alléger un *PDF* trop lourd\n"
+               "🖼️🗜️ */compresserimage* <Ko> · alléger une *photo/image*\n"
+               "🔗 */fusionner* · regrouper plusieurs PDF en un seul\n"
+               "🖼️ */enpdf* · images/photos → PDF · 📄➡️🖼️ */enimages* · PDF → images PNG\n"
+               "✂️ */decouper* <pages> · extraire des pages (ex : /decouper 1-3)\n"
+               "🌍 */traduire* <texte> · traduire un texte (FR/EN)\n"
+               "📝 */creercv* · créer un CV · 📄🎨 */cv* · ton CV en *ATS* ou *graphique* (ou les deux)\n"
+               "🗓️ */timeline* · ta feuille de route en image\n"
                "💎 *Premium* : 📄 */cv1page* (CV synthétique) · 🕶️ */anonymiser* (CV à l'aveugle)\n\n"
                "_Astuce : la plupart des portails limitent la taille des fichiers → /compresser & /compresserimage sont tes amis._")
         up = _upsell_line(session, "tool")
@@ -1627,7 +1630,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
 
     if low.startswith("/simulation") or low.startswith("/simuler") or low.startswith("/entrainement"):
         if not session.get("onboarding_complete"):
-            msg = "📄 Fais d'abord /start et envoie ton CV — la simulation s'adapte à ton profil."
+            msg = "📄 Fais d'abord /start et envoie ton CV · la simulation s'adapte à ton profil."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         ok, used_credit, _ = _quota_or_credit(session, "sim", FREE_SIM_DAILY)
@@ -1652,7 +1655,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             comp = (profil.get("competences", {}).get("techniques", []))[:4]
             sources = "\n".join(
                 f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:200]}"
-                for s in grounded[:6]) if grounded else "(pas de résultat web — n'invente aucune date ni URL précise ; reste sur les grandes étapes et renvoie vers campusfrance.org)"
+                for s in grounded[:6]) if grounded else "(pas de résultat web · n'invente aucune date ni URL précise ; reste sur les grandes étapes et renvoie vers campusfrance.org)"
             system = ("Tu es conseiller Campus France. Explique clairement la procédure 'Études en France' pour un "
                       "étudiant africain francophone. Base les dates/étapes sur les résultats web fournis. "
                       "N'INVENTE jamais une date, un montant ou une URL : en cas de doute, dis de vérifier sur campusfrance.org. JSON uniquement.")
@@ -1664,7 +1667,7 @@ Explique la procédure Études en France (inscription, étapes, bourses, documen
 JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadline":"","conseil":""}}"""
             r = await call_groq(system, prompt, temperature=0.1, max_tokens=1300)
             etapes, bourses, docs = r.get("etapes", []), r.get("bourses", []), r.get("documents", [])
-            msg = "🇫🇷 *Campus France — Études en France*\n━━━━━━━━━━━━━━━━━━\n\n"
+            msg = "🇫🇷 *Campus France · Études en France*\n━━━━━━━━━━━━━━━━━━\n\n"
             if r.get("deadline"):
                 msg += f"📅 *Calendrier :* {_md_clean(r['deadline'])}\n\n"
             if etapes:
@@ -1677,11 +1680,11 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg += f"💡 {_md_clean(r['conseil'])}\n\n"
             msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n\n"
             msg += ("✍️ *Je t'accompagne pas à pas :*\n"
-                    "• /ecoles <domaine> — trouver les bonnes écoles\n"
-                    "• /parcours — suivre tes étapes jusqu'au départ ✈️\n"
-                    "• /entretien — préparer l'entretien Campus France / visa\n"
-                    "• /logement <ville> — te loger sans arnaque\n"
-                    "• /dossier <programme> — monter le dossier (CV + projet)")
+                    "• /ecoles <domaine> · trouver les bonnes écoles\n"
+                    "• /parcours · suivre tes étapes jusqu'au départ ✈️\n"
+                    "• /entretien · préparer l'entretien Campus France / visa\n"
+                    "• /logement <ville> · te loger sans arnaque\n"
+                    "• /dossier <programme> · monter le dossier (CV + projet)")
         except Exception as e:
             logger.error(f"campusfrance: {e}")
             msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
@@ -1731,11 +1734,11 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         domaine = parts[1].strip() if len(parts) > 1 else (prefs.get("mots_cles") or (profil.get("formation") or [{}])[0].get("domaine", "") or "ton domaine")
         pays = prefs.get("pays_cibles") or "France"
         if not profil.get("identite"):
-            msg = "📄 Fais d'abord /start puis envoie ton CV — je cible ensuite les écoles adaptées."
+            msg = "📄 Fais d'abord /start puis envoie ton CV · je cible ensuite les écoles adaptées."
         else:
             try:
                 msg = await conseil_grounded(profil,
-                    f"🏫 *Écoles & programmes — {_md_clean(domaine)}*",
+                    f"🏫 *Écoles & programmes · {_md_clean(domaine)}*",
                     f"meilleures écoles universités programmes {domaine} {pays} admission candidature 2026 étudiant international",
                     "Recommande 4 à 6 écoles/programmes RÉELS et ADAPTÉS au profil (niveau, domaine, budget/bourse), du plus accessible au plus sélectif, avec pour chacun comment et quand postuler.",
                     cta="Ensuite : /dossier <programme> (préparer le dossier) · /logement <ville> · /entretien.")
@@ -1750,7 +1753,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         ville = parts[1].strip() if len(parts) > 1 else ((profil.get("preferences", {}) or {}).get("pays_cibles") or "France")
         try:
             msg = await conseil_grounded(profil,
-                f"🏠 *Logement étudiant — {_md_clean(ville)}*",
+                f"🏠 *Logement étudiant · {_md_clean(ville)}*",
                 f"logement étudiant {ville} CROUS résidence universitaire garant Visale plateforme fiable budget arnaque 2026",
                 "Explique concrètement comment trouver un logement étudiant abordable et ÉVITER LES ARNAQUES : CROUS/résidences, plateformes fiables, dispositif garant Visale, budget réaliste, pièces à préparer, délais.",
                 cta="🔎 Commence tôt, les logements partent vite. /entretien pour la suite.")
@@ -1765,7 +1768,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         sujet = parts[1].strip() if len(parts) > 1 else "Campus France et visa"
         try:
             msg = await conseil_grounded(profil,
-                f"🎤 *Préparation entretien — {_md_clean(sujet)}*",
+                f"🎤 *Préparation entretien · {_md_clean(sujet)}*",
                 f"questions entretien {sujet} Campus France Institut Français entretien visa étudiant conseils réponses 2026",
                 "Prépare l'utilisateur à l'entretien (Campus France/Institut Français et/ou entretien visa type Capago/VFS). Donne 5 à 7 QUESTIONS TYPES avec, pour chacune, une PISTE de réponse ADAPTÉE à son profil, plus les erreurs à éviter et la posture attendue (projet cohérent, financement, retour au pays).",
                 cta="Cible si besoin : /entretien visa Capago · /entretien Campus France.")
@@ -1776,13 +1779,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/compatibilite") or low.startswith("/compatibilité") or low.startswith("/match"):
         if not session.get("onboarding_complete"):
-            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) — j'évalue ensuite ta compatibilité."
+            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) · j'évalue ensuite ta compatibilité."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
         if not cible:
-            msg = ("🧩 *Compatibilité poste* — je note ta correspondance *compétence par compétence*.\n"
+            msg = ("🧩 *Compatibilité poste* · je note ta correspondance *compétence par compétence*.\n"
                    "Ex : `/compatibilite Développeur Python junior` · `/match Data analyst Cotonou`.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
@@ -1806,7 +1809,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             _quota_bump(session, "score")
             g = int(r.get("global", 0) or 0)
             lab = "Excellent" if g >= 80 else ("Bon" if g >= 60 else ("Moyen" if g >= 40 else "Faible"))
-            msg = f"🧩 *Compatibilité :* {_md_clean(cible)[:55]}\n🎯 *{g}/100* — _{lab}_\n"
+            msg = f"🧩 *Compatibilité :* {_md_clean(cible)[:55]}\n🎯 *{g}/100* · _{lab}_\n"
             for c in (r.get("competences") or [])[:8]:
                 nom = _md_clean(str(c.get("nom", "")))[:26]; pct = int(c.get("pct", 0) or 0)
                 if nom:
@@ -1821,7 +1824,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if used_credit:
                 msg += _credit_note(session, True)
             elif not _is_premium(session):
-                msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui — illimité en Premium : /offres.)_"
+                msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui · illimité en Premium : /offres.)_"
         except Exception as e:
             logger.error(f"compatibilite: {e}"); msg = "😕 Analyse indisponible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -1829,13 +1832,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/chances") or low.startswith("/monscore"):
         if not session.get("onboarding_complete"):
-            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) — j'évalue ensuite tes chances."
+            msg = "📄 Fais d'abord ton profil (envoie ton CV ou /creercv) · j'évalue ensuite tes chances."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
         if not cible:
-            msg = ("🎯 *Score d'admissibilité* — j'estime tes chances pour une cible précise.\n"
+            msg = ("🎯 *Score d'admissibilité* · j'estime tes chances pour une cible précise.\n"
                    "Ex : `/chances master informatique en France` · `/chances visa étudiant Canada` · "
                    "`/chances bourse Eiffel` · `/chances emploi data analyst Cotonou`.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -1876,7 +1879,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if used_credit:
                 msg += _credit_note(session, True)
             elif not _is_premium(session):
-                msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui — illimité en Premium : /offres.)_"
+                msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui · illimité en Premium : /offres.)_"
         except Exception as e:
             logger.error(f"chances: {e}"); msg = "😕 Estimation indisponible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -1884,7 +1887,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/canada"):
         if not profil.get("identite"):
-            msg = "📄 Fais d'abord /start puis envoie ton CV — je détermine ensuite la meilleure voie Canada pour toi."
+            msg = "📄 Fais d'abord /start puis envoie ton CV · je détermine ensuite la meilleure voie Canada pour toi."
         else:
             try:
                 rounds = await fetch_ircc_rounds(6)      # rondes réelles (open data IRCC, cache 6 h)
@@ -1892,15 +1895,15 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 consigne = ("Détermine la ou les VOIES canadiennes les plus adaptées à CE profil et explique-les par étapes : "
                      "permis d'études (attestation provinciale/PAL, preuve de fonds à jour) si étudiant ; PGWP puis Entrée "
                      "express / RP si diplômé/travailleur ; PEQ/Arrima Québec si visé Québec (avantage francophone). "
-                     "IMPORTANT — Entrée express : mentionne les *rondes fondées sur les catégories* d'IRCC (invitations "
+                     "IMPORTANT · Entrée express : mentionne les *rondes fondées sur les catégories* d'IRCC (invitations "
                      "à CRS plus BAS pour ces catégories prioritaires) et dis si le profil est éligible : francophones "
                      "hors Québec (NCLC 7+ en français), santé, métiers spécialisés, STIM, transports, éducation, "
                      "agriculture. Sois HONNÊTE sur les conditions (fonds, langue, points CRS, expérience canadienne).")
                 if rounds_txt:
-                    consigne += ("\n\nDONNÉES RÉELLES à jour (dernières rondes Entrée express IRCC — cite-les et "
+                    consigne += ("\n\nDONNÉES RÉELLES à jour (dernières rondes Entrée express IRCC · cite-les et "
                                  f"appuie-toi dessus pour dire quelles catégories tirent en ce moment) :\n{rounds_txt}")
                 msg = await conseil_grounded(profil,
-                    "🇨🇦 *Immigration Canada — voies adaptées à ton profil*",
+                    "🇨🇦 *Immigration Canada · voies adaptées à ton profil*",
                     f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
                     consigne,
                     cta="Ensuite : /dossier <programme canadien> · /entretien visa · /logement <ville>.")
@@ -1921,7 +1924,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     target *= 1024
                 target = max(100, min(20000, target))
         session["compress_target"] = target
-        msg = (f"🗜️ *Compression PDF* — cible ≈ {target} Ko.\n\n"
+        msg = (f"🗜️ *Compression PDF* · cible ≈ {target} Ko.\n\n"
                "Envoie-moi maintenant le *PDF* à alléger (CV, relevé, passeport scanné…). "
                "Je te renvoie une version plus légère pour tes soumissions en ligne.\n"
                "_Astuce : /compresser 500 pour viser 500 Ko._")
@@ -1949,13 +1952,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             msg = "✂️ Indique les pages à garder : */decouper 1-3,5*\nPuis envoie le PDF."
         else:
             _tool_clear(session.get("user_id")); session["tool_mode"] = "split"; session["split_spec"] = spec
-            msg = f"✂️ *Découpe.* Envoie maintenant le *PDF* — je garde les pages *{spec}*."
+            msg = f"✂️ *Découpe.* Envoie maintenant le *PDF* · je garde les pages *{spec}*."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     if low.startswith("/extraire") or low.startswith("/ocr") or low.startswith("/extraire-texte"):
         _tool_clear(session.get("user_id")); session["tool_mode"] = "extract"
-        msg = ("🔎 *Extraire le texte.*\nEnvoie un *PDF* ou une *image/photo* (même scannée) — "
+        msg = ("🔎 *Extraire le texte.*\nEnvoie un *PDF* ou une *image/photo* (même scannée) · "
                "je t'en ressors le *texte copiable*.\n_/annuler pour arrêter._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -1968,15 +1971,15 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 target = max(30, min(5000, int(d)))
         session["imgcompress_target"] = target or 300
         _tool_clear(session.get("user_id")); session["tool_mode"] = "imgcompress"
-        msg = (f"🖼️🗜️ *Alléger une image* — cible ≈ {session['imgcompress_target']} Ko.\n\n"
-               "Envoie la *photo/image* (photo d'identité, justificatif scanné…) — je te la renvoie plus légère.\n"
+        msg = (f"🖼️🗜️ *Alléger une image* · cible ≈ {session['imgcompress_target']} Ko.\n\n"
+               "Envoie la *photo/image* (photo d'identité, justificatif scanné…) · je te la renvoie plus légère.\n"
                "_Astuce : /compresserimage 200 pour viser 200 Ko._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     if low.startswith("/enimages") or low.startswith("/pdfimages") or low.startswith("/pdf2img"):
         _tool_clear(session.get("user_id")); session["tool_mode"] = "pdf2img"
-        msg = ("📄➡️🖼️ *PDF en images.*\nEnvoie le *PDF* — je te renvoie chaque page en *PNG* (dans un .zip).\n"
+        msg = ("📄➡️🖼️ *PDF en images.*\nEnvoie le *PDF* · je te renvoie chaque page en *PNG* (dans un .zip).\n"
                "_/annuler pour arrêter._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -1995,7 +1998,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps)
                     nom = (profil.get("identite") or {}).get("nom") or "Candidat"
                     await deliver_file(session, f"CV_1page_{_slug(nom)}.pdf", buf.getvalue(), "📄 Ton CV condensé (1 page)")
-                    msg = "✅ Voici ton *CV condensé* — parfait quand un recruteur veut du synthétique."
+                    msg = "✅ Voici ton *CV condensé* · parfait quand un recruteur veut du synthétique."
                 except Exception as e:
                     logger.error(f"[cv1page] {e}"); msg = "😕 Génération impossible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2014,13 +2017,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     comps = (ap.get("competences", {}).get("techniques", []) + ap.get("competences", {}).get("outils", []))[:14]
                     buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps)
                     await deliver_file(session, "CV_anonyme.pdf", buf.getvalue(), "🕶️ Ton CV anonymisé")
-                    msg = "✅ *CV anonymisé* (nom et coordonnées masqués) — idéal pour une candidature à l'aveugle ou une CVthèque."
+                    msg = "✅ *CV anonymisé* (nom et coordonnées masqués) · idéal pour une candidature à l'aveugle ou une CVthèque."
                 except Exception as e:
                     logger.error(f"[anonymiser] {e}"); msg = "😕 Génération impossible, réessaie."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    # /cv : télécharger son CV en format ATS (robots de tri) ou graphique (envoi direct) — ou les deux.
+    # /cv : télécharger son CV en format ATS (robots de tri) ou graphique (envoi direct) · ou les deux.
     if (low.startswith("/cv") and not low.startswith("/cv1page") and not low.startswith("/cvcondens")
             and not low.startswith("/cvanonyme")):
         profil = session.get("profil") or {}
@@ -2029,17 +2032,17 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
         elif arg in ("ats", "sobre", "robot", "texte"):
             ok = await _deliver_cv(session, "ats")
-            msg = "✅ *CV ATS* envoyé — sobre, une colonne, lisible par les logiciels de tri des recruteurs." if ok else "😕 Génération impossible, réessaie."
+            msg = "✅ *CV ATS* envoyé · sobre, une colonne, lisible par les logiciels de tri des recruteurs." if ok else "😕 Génération impossible, réessaie."
         elif arg in ("graphique", "graphic", "design", "designe", "designé", "joli"):
             ok = await _deliver_cv(session, "graphic")
-            msg = "✅ *CV graphique* envoyé — mise en page soignée pour un envoi direct au recruteur." if ok else "😕 Génération impossible, réessaie."
+            msg = "✅ *CV graphique* envoyé · mise en page soignée pour un envoi direct au recruteur." if ok else "😕 Génération impossible, réessaie."
         elif arg in ("deux", "les deux", "2", "tous", "both"):
             ok = await _deliver_cv(session, "deux")
             msg = "✅ Tes *deux CV* sont envoyés : **ATS** (robots de tri) + **graphique** (envoi direct)." if ok else "😕 Génération impossible, réessaie."
         else:
             msg = ("📄 *Quel format de CV veux-tu ?*\n"
-                   "• *ATS* — sobre, lisible par les logiciels de tri (idéal pour postuler en ligne)\n"
-                   "• *Graphique* — mise en page soignée (idéal pour un envoi direct)\n\n"
+                   "• *ATS* · sobre, lisible par les logiciels de tri (idéal pour postuler en ligne)\n"
+                   "• *Graphique* · mise en page soignée (idéal pour un envoi direct)\n\n"
                    "Choisis ci-dessous, ou tape `/cv ats`, `/cv graphique` ou `/cv deux`.")
             session["_kb_options"] = [("📄 CV ATS", "act:cv_ats"), ("🎨 CV graphique", "act:cv_graphique"),
                                       ("📄🎨 Les deux", "act:cv_deux")]
@@ -2053,7 +2056,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             score = _sim_global_score(session)
             session["sim_mode"] = False
             note_globale = f"🏆 *Score global : {score}/10*\n\n" if score else ""
-            msg = (f"🎬 *Simulation terminée — bilan :*\n\n{note_globale}{debrief}\n\n"
+            msg = (f"🎬 *Simulation terminée · bilan :*\n\n{note_globale}{debrief}\n\n"
                    "🔁 Refaire : /simulation · 📄 /dossier <cible> · 🎯 /entretien.")
             _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
@@ -2097,9 +2100,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         ville = parts[1].strip() if len(parts) > 1 else ((profil.get("preferences", {}) or {}).get("pays_cibles") or "France")
         try:
             msg = await conseil_grounded(profil,
-                f"💶 *Budget & coût de la vie — {_md_clean(ville)}*",
+                f"💶 *Budget & coût de la vie · {_md_clean(ville)}*",
                 f"coût de la vie étudiant {ville} loyer transport nourriture budget mensuel preuve de ressources visa 2026",
-                "Donne un budget mensuel étudiant réaliste (loyer, nourriture, transport, santé, divers) en euros — et l'ordre de grandeur en FCFA — puis rappelle le montant de RESSOURCES à justifier pour le visa/Campus France si connu.",
+                "Donne un budget mensuel étudiant réaliste (loyer, nourriture, transport, santé, divers) en euros · et l'ordre de grandeur en FCFA · puis rappelle le montant de RESSOURCES à justifier pour le visa/Campus France si connu.",
                 cta="Ensuite : /eligibilite <programme> · /compresser (justificatifs).")
         except Exception as e:
             logger.error(f"budget: {e}"); msg = "😕 Estimation budget indisponible, réessaie."
@@ -2111,13 +2114,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
         if not profil.get("identite"):
-            msg = "📄 Fais d'abord /start puis envoie ton CV — je compare ensuite ton profil aux exigences."
+            msg = "📄 Fais d'abord /start puis envoie ton CV · je compare ensuite ton profil aux exigences."
         elif not cible:
             msg = "🎯 Précise la cible : */eligibilite <programme ou bourse>*\nEx : /eligibilite Bourse Eiffel master."
         else:
             try:
                 msg = await conseil_grounded(profil,
-                    f"🎯 *Éligibilité — {_md_clean(cible)}*",
+                    f"🎯 *Éligibilité · {_md_clean(cible)}*",
                     f"{cible} conditions éligibilité critères admission prérequis dossier requis 2026",
                     "Compare HONNÊTEMENT le profil aux exigences réelles : dis s'il est éligible / limite / non éligible, liste précisément ce qui MANQUE et comment le combler. Pas de faux espoirs.",
                     cta="Prêt ? /dossier <cible> pour monter le dossier.")
@@ -2155,11 +2158,11 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                    "Ex : /procedure Belgique · /procedure Allemagne · /procedure Suisse · /procedure Luxembourg · /procedure Pays-Bas.\n\n"
                    "🇫🇷 France : /campusfrance  ·  🇨🇦 Canada : /canada")
         elif not profil.get("identite"):
-            msg = "📄 Fais d'abord /start puis envoie ton CV — je route selon ton profil."
+            msg = "📄 Fais d'abord /start puis envoie ton CV · je route selon ton profil."
         else:
             try:
                 msg = await conseil_grounded(profil,
-                    f"🌍 *{_md_clean(pays)} — études & immigration (selon ton profil)*",
+                    f"🌍 *{_md_clean(pays)} · études & immigration (selon ton profil)*",
                     f"{pays} étudier travailler immigration étudiant permis visa bourse programme officiel procédure {(profil.get('preferences', {}) or {}).get('objectif','')} 2026",
                     f"Explique la ou les VOIES OFFICIELLES adaptées à CE profil pour {pays} (études : université + permis étudiant + preuve de fonds ; travail : permis/visa et programmes officiels). Étapes concrètes, conditions honnêtes, organismes RÉELS.",
                     cta="Ensuite : /ecoles · /budget <ville> · /dossier <programme> · /entretien.")
@@ -2170,27 +2173,27 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     # --- Procédures françaises PARALLÈLES à Campus France (grosse demande du terrain) ---
     _FR_PROCS = {
-        "parcoursup":   ("🎓 *Parcoursup — 1ʳᵉ année Licence/BUT/BTS/CPGE en France*",
+        "parcoursup":   ("🎓 *Parcoursup · 1ʳᵉ année Licence/BUT/BTS/CPGE en France*",
                          "Parcoursup 2026 candidature calendrier étudiant international vœux formations sélectives non sélectives dossier",
                          "Explique CLAIREMENT Parcoursup pour un étudiant international : qui est concerné (bac étranger), calendrier de la campagne EN COURS (inscription, vœux, réponses), types de formations, dossier (bulletins, lettre de motivation par vœu, projet), lien avec Études en France quand nécessaire.",
                          "Ensuite : /ecoles <domaine> · /dossier Parcoursup <formation> · /entretien."),
-        "monmaster":    ("📘 *MonMaster — candidatures Master en France*",
+        "monmaster":    ("📘 *MonMaster · candidatures Master en France*",
                          "MonMaster 2026 candidature master université France calendrier étudiant international dossier lettre projet",
                          "Explique la plateforme MonMaster pour candidater en M1 : calendrier RÉEL en cours, nombre de vœux, critères, différences avec Études en France (Campus France reste souvent obligatoire pour les étudiants hors UE), pièces à préparer.",
                          "Ensuite : /ecoles master <domaine> · /dossier MonMaster <mention> · /campusfrance."),
-        "ecandidat":    ("🧾 *eCandidat — candidatures directes université (procédure parallèle)*",
+        "ecandidat":    ("🧾 *eCandidat · candidatures directes université (procédure parallèle)*",
                          "eCandidat 2026 procédure université France candidature directe étudiant international dossier",
                          "Explique eCandidat : quelles universités l'utilisent, quand cette voie remplace/complète Campus France (procédure blanche vs procédure Études en France), calendrier propre à chaque université, dossier type.",
                          "Ensuite : /ecoles <domaine> · /dossier eCandidat <université> · /campusfrance."),
-        "dap":          ("📜 *DAP — Demande d'Admission Préalable (1ʳᵉ année licence hors UE)*",
+        "dap":          ("📜 *DAP · Demande d'Admission Préalable (1ʳᵉ année licence hors UE)*",
                          "DAP demande admission préalable Campus France 2026 calendrier hors UE licence université France dossier",
                          "Explique la DAP (obligatoire pour candidater en L1 hors UE via Études en France) : qui est concerné, calendrier, épreuves de langue (TCF-DAP/DELF B2), pièces, différences avec Parcoursup.",
                          "Ensuite : /campusfrance · /dossier DAP · /entretien."),
-        "visa":         ("🛂 *Visa étudiant France — phase consulaire (VFS/Capago)*",
+        "visa":         ("🛂 *Visa étudiant France · phase consulaire (VFS/Capago)*",
                          "visa étudiant France VFS Capago 2026 rendez-vous dépôt pièces preuves ressources OFII validation",
                          "Détaille la phase CONSULAIRE APRÈS Campus France : prise de rendez-vous VFS/Capago, pièces à préparer, preuve de ressources (montant à jour), délais, retrait du visa, validation OFII à l'arrivée.",
                          "Ensuite : /budget <ville> · /logement <ville> · /entretien visa."),
-        "recours":      ("⚖️ *Recours — refus Campus France ou refus de visa*",
+        "recours":      ("⚖️ *Recours · refus Campus France ou refus de visa*",
                          "recours refus Campus France refus visa étudiant France 2026 procédure appel commission délais",
                          "Explique HONNÊTEMENT les recours possibles : recours gracieux auprès de Campus France, recours contentieux, refus de visa (Commission de recours contre les décisions de refus de visa d'entrée en France), délais impératifs, pièces à joindre. Reste réaliste sur les chances.",
                          "En parallèle : /procedure Belgique · /procedure Allemagne · /canada."),
@@ -2206,7 +2209,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         titre, query, consigne, cta = _FR_PROCS[_cmd_proc]
         profil = session.get("profil", {}) or {}
         if not profil.get("identite"):
-            msg = f"📄 Fais d'abord /start puis envoie ton CV — j'adapte ensuite {_cmd_proc} à ton profil."
+            msg = f"📄 Fais d'abord /start puis envoie ton CV · j'adapte ensuite {_cmd_proc} à ton profil."
         else:
             try:
                 msg = await conseil_grounded(profil, titre, query, consigne, cta=cta)
@@ -2272,7 +2275,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         if GEMINI_API_KEY: flags.append("Vision")
         if ADZUNA_APP_ID and ADZUNA_APP_KEY: flags.append("Adzuna")
         flags.append("Remote (RemoteOK/Remotive/Jobicy)")
-        msg = (f"🧭 *NexMove — version {VERSION}*\n"
+        msg = (f"🧭 *NexMove · version {VERSION}*\n"
                f"🤖 IA : {prov}\n"
                f"🧩 Modules : {' · '.join(flags) or 'base'}\n"
                f"📚 {len(SOURCE_FEEDS)} sources de veille · 6 procédures FR parallèles (Parcoursup, MonMaster, eCandidat, DAP, Visa, Recours).\n\n"
@@ -2285,12 +2288,12 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             or low.startswith("/rdv") or _is_bug):
         parts = t.split(maxsplit=1)
         message_user = parts[1].strip() if len(parts) > 1 else ""
-        # Bloc "comment nous joindre" — toujours affiché
+        # Bloc "comment nous joindre" · toujours affiché
         contacts = []
         if CONTACT_WHATSAPP: contacts.append(f"📱 WhatsApp : {CONTACT_WHATSAPP}")
         if CONTACT_EMAIL:    contacts.append(f"✉️ Email : {CONTACT_EMAIL}")
         if CONTACT_CALENDAR: contacts.append(f"📅 Prendre rendez-vous : {CONTACT_CALENDAR}")
-        contact_bloc = "\n".join(contacts) if contacts else "_(canaux directs non configurés — utilise /contact <ton message>)_"
+        contact_bloc = "\n".join(contacts) if contacts else "_(canaux directs non configurés · utilise /contact <ton message>)_"
         if not message_user:
             if _is_bug:
                 msg = ("🐞 *Signaler un bug*\n"
@@ -2299,7 +2302,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                        "Je transmets directement à l'équipe technique. Merci, ça aide à améliorer NexMove.")
             else:
                 msg = ("💬 *Nous contacter*\n" + contact_bloc + "\n\n"
-                       "Ou écris ici : */contact ton message* — je le transmets à l'équipe.\n"
+                       "Ou écris ici : */contact ton message* · je le transmets à l'équipe.\n"
                        "Un bug ? */bug ta description*.\n"
                        "Envie d'échanger avec un conseiller ? */rencontrer <disponibilités>*.")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2334,7 +2337,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         return msg, session
 
     if low.startswith("/contacts_log") or low.startswith("/contacts-log") or low.startswith("/messages_log"):
-        # Historique des /contact — RÉSERVÉ à l'admin
+        # Historique des /contact · RÉSERVÉ à l'admin
         if not ADMIN_CHAT_ID or str(session.get("chat_id") or "") != str(ADMIN_CHAT_ID):
             msg = "🔒 Commande réservée à l'administrateur."
         else:
@@ -2353,7 +2356,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         return msg, session
 
     if low.startswith("/repondre") or low.startswith("/répondre") or low.startswith("/reply"):
-        # Répondre directement à un utilisateur (suite à un /bug ou /contact) — RÉSERVÉ à l'admin.
+        # Répondre directement à un utilisateur (suite à un /bug ou /contact) · RÉSERVÉ à l'admin.
         if not _is_admin(session):
             msg = "🔒 Commande réservée à l'administrateur."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2382,14 +2385,14 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             logger.warning(f"[repondre] {e}")
         msg = (f"✅ Réponse envoyée à @{_md_clean(str(dest.get('username') or 'x'))} (`{_md_clean(cible_uid)}`)."
                if envoi_ok else
-               f"⚠️ Échec de l'envoi à `{_md_clean(cible_uid)}` (canal {dest.get('channel','?')} — "
+               f"⚠️ Échec de l'envoi à `{_md_clean(cible_uid)}` (canal {dest.get('channel','?')} · "
                "l'utilisateur a peut-être bloqué le bot, ou fenêtre WhatsApp 24 h dépassée).")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     if ((low.startswith("/diffuser") and not low.startswith("/diffuser_log"))
             or low.startswith("/broadcast") or low.startswith("/annonce")) and not low.startswith("/diffusions"):
-        # Diffusion d'un message/publicité ciblée par profil — RÉSERVÉ à l'admin.
+        # Diffusion d'un message/publicité ciblée par profil · RÉSERVÉ à l'admin.
         if not _is_admin(session):
             msg = "🔒 Commande réservée à l'administrateur."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2495,7 +2498,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             r = await call_groq(system, prompt, temperature=0.2, max_tokens=1300)
             forms = r.get("formations", [])
             forms = sorted(forms, key=lambda f: 0 if "gratuit" in str(f.get("cout", "")).lower() else 1)
-            msg = f"🎓 *Formations pour te distinguer — {_md_clean(domaine)[:40]}*\n━━━━━━━━━━━━━━━━━━\n\n"
+            msg = f"🎓 *Formations pour te distinguer · {_md_clean(domaine)[:40]}*\n━━━━━━━━━━━━━━━━━━\n\n"
             for i, f in enumerate(forms[:5], 1):
                 titre = _md_clean(f.get("titre", ""))[:60]
                 org = _md_clean(f.get("organisme", ""))
@@ -2532,7 +2535,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             recap = _resume_prefs(profil.get("preferences", {}) or {}).replace(
                 "\n\nTout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.", "")
             msg = (f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\n\n" + recap +
-                   "\n\n✏️ *Pour corriger*, écris `champ: valeur` — ex. `objectif: travailler`, "
+                   "\n\n✏️ *Pour corriger*, écris `champ: valeur` · ex. `objectif: travailler`, "
                    "`pays: Canada`, `langue: anglais`, `mots-clés: data, python`.")
         else:
             msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV (PDF, Word ou image)."
@@ -2591,23 +2594,23 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
     if low.startswith("/monabo") or low.startswith("/monabonnement") or low.startswith("/statut"):
         tier = _user_tier(session)
         if tier == "admin":
-            msg = "👑 *Statut : Admin* — accès illimité."
+            msg = "👑 *Statut : Admin* · accès illimité."
         elif tier in _PREMIUM_TIERS:
             exp = session.get("premium_until", "")[:10]
-            msg = (f"💎 *Abonnement {_TIER_LABEL.get(tier, tier)}* — actif jusqu'au *{exp}*.\n"
+            msg = (f"💎 *Abonnement {_TIER_LABEL.get(tier, tier)}* · actif jusqu'au *{exp}*.\n"
                    "Accès illimité (CV, /guide, /simulation) + alertes étendues.\n"
                    "_Pense à réactiver un code avant l'échéance pour ne pas perdre l'accès._")
         else:
             msg = ("🆓 *Statut : Gratuit.*\nTu profites des bases (1 CV/jour, veille à la demande, 1 alerte…).\n\n"
                    "💎 Passe en Premium pour l'illimité : tape /offres, puis active ton code avec /premium.")
-        msg += f"\n🎟️ Crédits : *{_credit_balance(session)}* (1 crédit = 1 action hors quota — /credits)."
+        msg += f"\n🎟️ Crédits : *{_credit_balance(session)}* (1 crédit = 1 action hors quota · /credits)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
     if low.startswith("/offres") or low.startswith("/tarifs") or low.startswith("/abonnement"):
         msg = ("💎 *Passe au niveau supérieur*\n\n"
-               "*Premium* — CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
-               "*Pro* — tout Premium + sources premium, alertes illimitées, relecture.\n\n"
+               "*Premium* · CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
+               "*Pro* · tout Premium + sources premium, alertes illimitées, relecture.\n\n"
                "🎟️ *Pas envie d'abonnement ?* Prends un *pack de crédits* : 1 crédit = 1 action (CV, score, "
                "simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas → /credits.\n\n"
                "👉 Récupère ton code, puis tape */premium TON-CODE* (abonnement) ou */credits TON-CODE* (pack).\n"
@@ -2622,7 +2625,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         lien = f"https://t.me/{BOT_USERNAME}?start={code}" if BOT_USERNAME else ""
         msg = ("🎁 *Parraine, gagne du Premium !*\n"
                f"Invite *{REFERRAL_GOAL}* amis qui créent leur profil → *{REFERRAL_REWARD_DAYS} jours Premium* offerts (à chaque palier).\n\n"
-               + (f"🔗 Ton lien à partager : {lien}\n" if lien else f"Ton code : *{code}* — ton ami tape */start {code}* au 1er message.\n")
+               + (f"🔗 Ton lien à partager : {lien}\n" if lien else f"Ton code : *{code}* · ton ami tape */start {code}* au 1er message.\n")
                + f"\n✅ Filleuls validés : *{n}* · plus que *{reste}* pour la prochaine récompense.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -2685,7 +2688,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         pc = d["premium_codes"]; cc = d["credit_codes"]
         spark = "".join("▁▂▃▄▅▆▇█"[min(7, p["n"])] for p in d.get("inscriptions_14j", []))
         canal = " · ".join(f"{k}:{v}" for k, v in (d.get("par_canal") or {}).items())
-        lignes = [f"📊 *NexMove — traction* (v{d['version']})",
+        lignes = [f"📊 *NexMove · traction* (v{d['version']})",
                   f"👥 Utilisateurs : *{d['users_total']}*",
                   f"📈 *Funnel :* CV {d['cv_envoyes']} → onboardés {d['onboarded']} → payants *{d['payants_actifs']}*",
                   f"⚡ Activation : *{d['taux_activation']}%* · Conversion : *{d['taux_conversion']}%* · Rétention 7j : *{d['taux_retention_7j']}%*",
@@ -2695,12 +2698,12 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             lignes.append(f"📲 Canal : {canal}")
         if d.get("par_objectif"):
             lignes.append("🎯 Objectifs : " + " · ".join(f"{k} {v}" for k, v in d["par_objectif"].items()))
-        lignes += [f"💎 Codes Premium — libres : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
-                   f"🎟️ Codes crédits — libres : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
+        lignes += [f"💎 Codes Premium · libres : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
+                   f"🎟️ Codes crédits · libres : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
         if d["sources_marketing"]:
             lignes.append("\n*Top sources :*")
             for r in d["sources_marketing"][:8]:
-                lignes.append(f"• `{r['source']}` — {r['total']} users · {r['paid']} payants")
+                lignes.append(f"• `{r['source']}` · {r['total']} users · {r['paid']} payants")
         lignes.append("\n_Détail attribution : /srcstats · Panel web : nexmove.blvckunlimited.space/admin.html_")
         msg = "\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2718,7 +2721,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             lignes = []
             for r in stats[:25]:
                 tx = f"{round(100*r['onboarded']/r['total'])}%" if r["total"] else "0%"
-                lignes.append(f"• `{r['source']}` — {r['total']} users · {r['onboarded']} onbo. ({tx}) · {r['paid']} payants")
+                lignes.append(f"• `{r['source']}` · {r['total']} users · {r['onboarded']} onbo. ({tx}) · {r['paid']} payants")
             msg = ("📊 *Attribution par source* (liens `?start=src_...`)\n" + "\n".join(lignes) +
                    "\n\n_Convention : `src_<persona>_<canal>` (ex. src_etu_tt, src_dip_wa)._")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -2756,7 +2759,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 session["etape"] = "ACTIF"; session["onboarding_complete"] = True
                 session["cv_parsed"] = True; session["recovery_code"] = code
                 nom = (profil.get("identite") or {}).get("nom") or "—"
-                msg = (f"✅ *Profil restauré* ({_md_clean(code)}) — content de te revoir, {_md_clean(nom)} !\n\n"
+                msg = (f"✅ *Profil restauré* ({_md_clean(code)}) · content de te revoir, {_md_clean(nom)} !\n\n"
                        + _resume_prefs(profil.get("preferences", {}) or {})
                        + "\n\nTape /veille pour tes opportunités, ou /menu.")
                 session["_show_menu"] = True
@@ -2809,15 +2812,15 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 pack = await generate_pack(profil, cible_desc, type_cible)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
                 cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
-                ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté — {cible_desc[:60]}")
-                ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation — {cible_desc[:60]}")
+                ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté · {cible_desc[:60]}")
+                ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation · {cible_desc[:60]}")
                 if _DOCX_OK:
                     try:
                         cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
                         await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
                         await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
                     except Exception as de:
@@ -2894,7 +2897,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                     mode = str(r.get("mode", "") or "").lower()
                     mode_lbl = {"email": "📧 Candidature par e-mail", "formulaire": "📝 Formulaire en ligne",
                                 "plateforme": "🌐 Plateforme de recrutement"}.get(mode, "✉️ Candidature")
-                    msg = f"🧭 *Comment postuler — {_md_clean(cible)[:60]}*\n{mode_lbl}\n"
+                    msg = f"🧭 *Comment postuler · {_md_clean(cible)[:60]}*\n{mode_lbl}\n"
                     dest = str(r.get("destinataire", "") or "").strip()
                     if dest:
                         msg += f"\n📧 *Destinataire :* {dest}"
@@ -2951,14 +2954,14 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 CANDIDAT: {ident.get('nom','')}, résumé: {profil.get('resume_profil','')}, compétences: {comp}
 SOURCES WEB:
 {sources}
-DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()}. Si l'édition de la campagne est passée, indique la PROCHAINE échéance — jamais une date déjà passée.
+DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()}. Si l'édition de la campagne est passée, indique la PROCHAINE échéance · jamais une date déjà passée.
 Donne la liste EXHAUSTIVE des documents requis, ce qui est à traduire/légaliser, la deadline si connue,
 des conseils, et une lettre/projet d'études (corps 250-320 mots, paragraphes séparés par une ligne vide).
 Donne aussi la deadline au format ISO (deadline_iso: "AAAA-MM-JJ") si une date précise et À VENIR est connue, sinon "".
 JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":"","conseils":["..."],"objet":"","corps":""}}"""
                 r = await call_groq(system, prompt, temperature=0.2, max_tokens=1700)
                 docs = r.get("documents", [])
-                msg = f"🗂️ *Dossier — {_md_clean(cible_desc)}*\n━━━━━━━━━━━━━━━━━━\n\n"
+                msg = f"🗂️ *Dossier · {_md_clean(cible_desc)}*\n━━━━━━━━━━━━━━━━━━\n\n"
                 if r.get("deadline"):
                     msg += f"📅 *Deadline :* {_md_clean(r['deadline'])}\n\n"
                 if docs:
@@ -2969,7 +2972,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                     msg += "💡 *Conseils :*\n" + "\n".join(f"• {_md_clean(c)}" for c in r["conseils"][:5]) + "\n\n"
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
                 cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""))
                 nom = _slug(ident.get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
@@ -2977,7 +2980,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if _DOCX_OK:
                     try:
                         cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études — {cible_desc}", r.get("corps", ""))
+                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""))
                         await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 CV Word (modifiable)")
                         await deliver_file(session, f"Projet_{nom}.docx", pr_dx.getvalue(), "📝 Projet Word (modifiable)")
                     except Exception as de:
@@ -3004,7 +3007,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 msg = ("🔔 *Tes alertes mots-clés :*\n" + "\n".join(f"• {_md_clean(a)}" for a in alertes)
                        + "\n\nAjouter : /alerte <mot> · Retirer : /alerte off <mot>")
             else:
-                msg = ("🔔 *Alertes mots-clés* — sois prévenu·e en priorité quand une offre contient TES mots-clés.\n\n"
+                msg = ("🔔 *Alertes mots-clés* · sois prévenu·e en priorité quand une offre contient TES mots-clés.\n\n"
                        "Ex : /alerte cybersécurité · /alerte bourse master\nRetirer : /alerte off <mot>")
         elif low_arg in ("off", "clear", "reset", "vider", "stop"):
             session["alertes"] = []
@@ -3062,7 +3065,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         cf = int(session.get("cf_stage", 0) or 0)
         deadlines = opp_store.list_candidatures(session.get("user_id"))
         prenom = ((session.get("profil", {}) or {}).get("identite", {}) or {}).get("nom", "") or ""
-        titre = f"Feuille de route — {prenom.split()[0]}" if prenom.strip() else "Ma feuille de route Campus France"
+        titre = f"Feuille de route · {prenom.split()[0]}" if prenom.strip() else "Ma feuille de route Campus France"
         try:
             png = await asyncio.to_thread(render_timeline_png, CF_STAGES, cf, titre, deadlines)
             if png:
@@ -3079,7 +3082,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if low.startswith("/mescandidatures") or low.startswith("/candidatures") or low.startswith("/suivi") or low.startswith("/pipeline"):
         cands = opp_store.list_candidatures_full(session.get("user_id"))
         if not cands:
-            msg = ("🗂️ *Tes candidatures* — vide pour l'instant.\n"
+            msg = ("🗂️ *Tes candidatures* · vide pour l'instant.\n"
                    "Prépare un dossier avec /dossier <cible> ou /postuler <cible> : il apparaîtra ici, et tu suivras son avancement.")
         else:
             # Vue PIPELINE : regroupées par statut, dans l'ordre d'avancement.
@@ -3113,7 +3116,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         reste = t.split(maxsplit=1)
         corps = reste[1].strip() if len(reste) > 1 else ""
         # Séparateur cible / note : " : " en priorité, sinon " | " ou " - ".
-        sep = next((s for s in (" : ", " | ", " — ", " - ") if s in corps), None)
+        sep = next((s for s in (" : ", " | ", " · ", " - ") if s in corps), None)
         cible, note = ("", "")
         if sep:
             cible, note = corps.split(sep, 1)
@@ -3150,7 +3153,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             _tier = _user_tier(session)
             _tier_line = (f"Abonnement : 💎 {_TIER_LABEL.get(_tier, _tier)}"
                           + (f" (jusqu'au {session.get('premium_until','')[:10]})" if _tier in _PREMIUM_TIERS else "")
-                          ) if _tier != "free" else "Abonnement : 🆓 Gratuit — /offres pour l'illimité"
+                          ) if _tier != "free" else "Abonnement : 🆓 Gratuit · /offres pour l'illimité"
             msg = ("📊 *Ton statut NexMove*\nProfil : ✅ actif\n"
                    f"{_tier_line}\n"
                    f"Objectif : {prefs.get('objectif','—')} · Pays : {prefs.get('pays_cibles','—')}\n\n")
@@ -3159,7 +3162,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 msg += "🗂️ *Tes dossiers :*\n"
                 for (cible, deadline, statut) in cands[:8]:
                     d = f" · 📅 {_md_clean(deadline)}" if deadline else ""
-                    msg += f"• {_md_clean(cible)[:55]} — _{statut}_{d}\n"
+                    msg += f"• {_md_clean(cible)[:55]} · _{statut}_{d}\n"
                 msg += "\n"
             else:
                 msg += "🗂️ Aucun dossier en cours. Lance /dossier <cible> pour en préparer un.\n\n"
@@ -3178,7 +3181,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         return msg, session
 
     if low.startswith("/stop") or low in ("stop", "stop relances", "arreter", "arrêter", "unsubscribe"):
-        # Opt-out global des messages proactifs (relances + digest) — conformité.
+        # Opt-out global des messages proactifs (relances + digest) · conformité.
         session["relances_off"] = True
         n = _get_notif(session); n["enabled"] = False; session["notif"] = n
         msg = ("🔕 *C'est noté.* Je ne t'enverrai plus de rappels ni de messages automatiques.\n"
@@ -3365,7 +3368,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                     msg += _render_scored_offers(top, 3)
                     _attach_feedback(session, top)
                 else:
-                    msg += "\nJe scrute déjà le web — tape /veille dans un instant."
+                    msg += "\nJe scrute déjà le web · tape /veille dans un instant."
             except Exception as e:
                 logger.error(f"auto-veille: {e}")
                 msg += "\nTape /veille pour tes premières opportunités."
@@ -3375,7 +3378,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             pending = session.get("pending_intent", "")
             if pending:
                 label = pending.split()[0].lstrip("/").capitalize()
-                msg += f"\n\n📌 Tu m'avais demandé quelque chose au début — clique ci-dessous pour que je m'en occupe (ou tape *{pending.split()[0]}*)."
+                msg += f"\n\n📌 Tu m'avais demandé quelque chose au début · clique ci-dessous pour que je m'en occupe (ou tape *{pending.split()[0]}*)."
                 session["_kb_options"] = [("▶️ " + label, "act:pending")]
             code = session.get("recovery_code")
             if code:
@@ -3404,7 +3407,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             return await _cvbuild_start(session)
         _push(session, "user", t)
         # 2) Intention CLAIRE et informative (Campus France, Canada, écoles, visa…) : on la traite
-        #    DIRECTEMENT, même sans CV — inutile de reposer des questions dont la réponse est évidente
+        #    DIRECTEMENT, même sans CV · inutile de reposer des questions dont la réponse est évidente
         #    (« campus france » = la France). On invite ensuite doucement à envoyer le CV.
         intent_cmd = _free_text_to_command(low, t)
         if intent_cmd:
@@ -3412,7 +3415,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             if base in _PREONB_DIRECT:
                 msg, session = await process_text_message(session, intent_cmd)
                 if not session.get("cv_parsed"):
-                    msg += "\n\n📄 _Envoie ton CV (PDF, Word ou image) — ou tape /creercv — pour que je personnalise tout ça à ton profil._"
+                    msg += "\n\n📄 _Envoie ton CV (PDF, Word ou image) · ou tape /creercv · pour que je personnalise tout ça à ton profil._"
                 session["derniere_activite"] = now
                 return msg, session
             if len(t) > 3:
@@ -3429,7 +3432,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t); _push(session, "assistant", edited); session["derniere_activite"] = now
         return edited, session
 
-    # Utilisateur actif — langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
+    # Utilisateur actif · langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
     # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.
     cmd = _free_text_to_command(low, t)
     if cmd:
@@ -3439,7 +3442,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     dialogue = _recent_dialogue(session, 4)
     system = f"""Tu es NexMove. {CONSEILLER_PERSONA}
 
-CE QUE TU SAIS DÉJÀ (contexte mémorisé — ne le redemande JAMAIS) :
+CE QUE TU SAIS DÉJÀ (contexte mémorisé · ne le redemande JAMAIS) :
 {contexte}
 
 DIALOGUE RÉCENT (souviens-toi de ce que tu viens de dire) :
@@ -3461,7 +3464,7 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<r
     if action in _VALID_INTENTS:
         arg = str(r.get("argument", "") or "").strip()
         return await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
-    message = (r.get("message") or "Je suis là pour t'aider — dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…).").strip()
+    message = (r.get("message") or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…).").strip()
     _push(session, "user", t); _push(session, "assistant", message)
     session["derniere_activite"] = now
     return message, session
@@ -3553,7 +3556,7 @@ def extract_text_image(img_bytes: bytes) -> str:
         logger.warning(f"[img-ocr] {e}")
         return ""
 
-# (analyze_cv_image_vision : voir llm.py — PR-B)
+# (analyze_cv_image_vision : voir llm.py · PR-B)
 
 def pdf_to_b64(buf: io.BytesIO) -> str:
     buf.seek(0)
@@ -3792,14 +3795,14 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style
     if experience:
         els.append(Paragraph("EXPÉRIENCE", s_sec))
         for exp in experience[:4]:
-            els.append(Paragraph(f"<b>{_xml(exp.get('poste',''))}</b> — {_xml(exp.get('organisation',''))}", s_body))
+            els.append(Paragraph(f"<b>{_xml(exp.get('poste',''))}</b> · {_xml(exp.get('organisation',''))}", s_body))
             for m in exp.get("missions", [])[:4]:
                 els.append(Paragraph("• " + _xml(m), s_bullet))
             els.append(Spacer(1, 4))
     if formation:
         els.append(Paragraph("FORMATION", s_sec))
         for f in formation[:3]:
-            els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> — {_xml(f.get('etablissement',''))}", s_body))
+            els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> · {_xml(f.get('etablissement',''))}", s_body))
     doc.build(els)
     return buf
 
@@ -3865,14 +3868,14 @@ def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> i
     if exp:
         section("Expérience")
         for e in exp[:5]:
-            p = d.add_paragraph(); r = p.add_run(f"{e.get('poste','')} — {e.get('organisation','')}"); r.bold = True
+            p = d.add_paragraph(); r = p.add_run(f"{e.get('poste','')} · {e.get('organisation','')}"); r.bold = True
             for m in (e.get("missions", []) or [])[:4]:
                 d.add_paragraph(str(m), style="List Bullet")
     form = profil.get("formation", [])
     if form:
         section("Formation")
         for f in form[:4]:
-            p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} — {f.get('etablissement','')}"); r.bold = True
+            p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} · {f.get('etablissement','')}"); r.bold = True
     buf = io.BytesIO(); d.save(buf); return buf
 
 async def _deliver_cv(session: dict, style: str = "ats") -> bool:
@@ -3967,7 +3970,7 @@ def get_menu(session, key):
             ("ℹ️ Version", "act:version"),
             ("🗑️ Effacer données", "act:supprimer"),
             ("⬅️ Retour", "m:root")])
-    return ("🧭 *NexMove* — que veux-tu faire ?", [
+    return ("🧭 *NexMove* · que veux-tu faire ?", [
         ("🔎 Trouver", "m:find"), ("🇫🇷 Procédures", "m:cf"),
         ("📄 Candidater", "m:apply"), ("🎓 Formations", "act:formations"),
         ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
@@ -4073,7 +4076,7 @@ async def handle_action(session, data, callback_id=None):
             style = {"cv_ats": "ats", "cv_graphique": "graphic", "cv_deux": "deux"}[act]
             ok = await _deliver_cv(session, style)
             await deliver_text(session, "✅ Ton CV est prêt (ci-dessus)." if ok
-                               else "📄 Je dois d'abord connaître ton profil — envoie ton CV ou tape /creercv.", with_menu=True)
+                               else "📄 Je dois d'abord connaître ton profil · envoie ton CV ou tape /creercv.", with_menu=True)
             return session
         if act in ("lien_postuler", "lien_chances", "lien_suivre"):
             cible = session.get("last_link_cible", "")
@@ -4087,7 +4090,7 @@ async def handle_action(session, data, callback_id=None):
                     session_manager.set(session.get("user_id"), session)
                 except Exception as e:
                     logger.error(f"lien_suivre: {e}")
-                await deliver_text(session, f"🗂️ *{cible}* ajoutée à ton suivi — tape /mescandidatures.", with_menu=True)
+                await deliver_text(session, f"🗂️ *{cible}* ajoutée à ton suivi · tape /mescandidatures.", with_menu=True)
                 return session
             cmd = ("/commentpostuler " if act == "lien_postuler" else "/chances ") + cible
             msg, session = await process_text_message(session, cmd)
@@ -4128,7 +4131,7 @@ def _tl_wrap(text: str, n: int = 46) -> list:
 def render_timeline_png(stages, current_idx: int, title: str = "Ma feuille de route",
                         deadlines=None) -> bytes:
     """Rend une frise verticale (PNG) : étapes faites/en cours/à venir + échéances.
-    Fonction pure (renvoie des octets PNG) — testable hors réseau."""
+    Fonction pure (renvoie des octets PNG) · testable hors réseau."""
     if not _PIL_OK:
         return b""
     W = 900
@@ -4170,7 +4173,7 @@ def render_timeline_png(stages, current_idx: int, title: str = "Ma feuille de ro
         for (cible, dl, statut) in deadlines[:8]:
             txt = f"• {str(cible)[:48]}"
             if dl:
-                txt += f"  —  {dl}"
+                txt += f"  ·  {dl}"
             if statut:
                 txt += f"  ({statut})"
             d.text((pad + 6, y), txt, fill=muted, font=f_small)
@@ -4191,7 +4194,7 @@ async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
         await deliver_text(session, "📸 Envoie une *capture d'écran* (image JPG/PNG) de l'écran où tu es bloqué·e. "
                                     "_Tape /annuler pour quitter le mode guidage._")
         return
-    # Quota gratuit (option coûteuse : vision) — admin illimité.
+    # Quota gratuit (option coûteuse : vision) · admin illimité.
     ok, _ = _quota_check(session, "guide", FREE_GUIDE_DAILY)
     if not ok:
         await deliver_text(session, _quota_exceeded_msg("le guidage par capture d'écran"))
@@ -4312,7 +4315,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         return
     if used_credit:
         session_manager.set(uid, session)   # persiste le débit du crédit
-        await deliver_text(session, "🎟️ Limite gratuite atteinte — j'utilise *1 crédit* pour analyser ton CV.")
+        await deliver_text(session, "🎟️ Limite gratuite atteinte · j'utilise *1 crédit* pour analyser ton CV.")
     fn = (filename or "cv").lower()
     is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
     is_docx = fn.endswith((".docx", ".dotx"))
@@ -4325,7 +4328,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf"):
         elif is_docx:
             cv_text = await asyncio.to_thread(extract_text_docx, pdf_bytes)
         elif is_image:
-            # 1) Vision Gemini (le mieux sur photos) — renvoie DIRECTEMENT le JSON profil
+            # 1) Vision Gemini (le mieux sur photos) · renvoie DIRECTEMENT le JSON profil
             mime = "image/png" if fn.endswith(".png") else ("image/webp" if fn.endswith(".webp") else "image/jpeg")
             profil_from_vision = await analyze_cv_image_vision(pdf_bytes, mime)
             if not profil_from_vision:
@@ -4368,7 +4371,7 @@ Document: {cv_text[:6000]}"""
             profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
         except Exception as e:
             logger.error(f"[cv] analyse LLM échouée: {e}")
-            await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute — je m'en occupe dès que possible.")
+            await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute · je m'en occupe dès que possible.")
             return
     if not isinstance(profil, dict) or not profil:
         await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
@@ -4382,7 +4385,7 @@ Document: {cv_text[:6000]}"""
         await deliver_text(session, f"❌ Ce document n'a pas été accepté : {raison}.\n\nEnvoie ton *CV* (formation, expériences, compétences) en PDF pour démarrer.")
         logger.info(f"[cv] {session.get('channel')} document rejeté (non-CV)")
         return
-    # Diplôme principal en premier (le plus élevé/récent) — sinon le bot retenait la licence au lieu du master
+    # Diplôme principal en premier (le plus élevé/récent) · sinon le bot retenait la licence au lieu du master
     profil["formation"] = _sort_formations(profil.get("formation"))
     nom = (profil.get("identite", {}).get("nom") or "").strip()
     if not nom or nom.upper() in ("N/A", "NA", "-", "—"):
@@ -4398,14 +4401,14 @@ Document: {cv_text[:6000]}"""
             dip = (f.get("diplome", "") or "").strip()
             etab = (f.get("etablissement", "") or "").strip()
             an = (f.get("annee", "") or "").strip()
-            ligne = dip + (f" — {etab}" if etab else "") + (f" ({an})" if an else "")
+            ligne = dip + (f" · {etab}" if etab else "") + (f" ({an})" if an else "")
             if ligne.strip():
                 lignes_f.append("   • " + _md_clean(ligne))
         formation_txt = "\n".join(lignes_f) if lignes_f else "   • _non précisé_"
         if len(forms) > 3:
             formation_txt += f"\n   • _(+{len(forms) - 3} autre·s)_"
     else:
-        formation_txt = "   • _Aucune formation détectée dans ton CV — dis-le-moi si c'est une erreur._"
+        formation_txt = "   • _Aucune formation détectée dans ton CV · dis-le-moi si c'est une erreur._"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
     message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
     bilan = profil.get("bilan", {}) or {}
@@ -4460,7 +4463,7 @@ def _extract_incoming(channel, raw):
             d = raw.get("document", {})
             doc = {"id": d.get("id"), "filename": d.get("filename", "cv.pdf")}
         elif t == "image":
-            # Photo directe (WhatsApp) — traitée comme un CV en image via vision Gemini
+            # Photo directe (WhatsApp) · traitée comme un CV en image via vision Gemini
             im = raw.get("image", {})
             ext = ".png" if "png" in (im.get("mime_type") or "") else ".jpg"
             doc = {"id": im.get("id"), "filename": f"cv{ext}"}
@@ -4536,7 +4539,7 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
         ok, _ = _quota_check(session, "voice", FREE_VOICE_DAILY)
         if not ok:
             await deliver_text(session, _quota_exceeded_msg("les messages vocaux")
-                               + "\n\n💎 Les abonnés ont les vocaux *illimités* — tape /offres.")
+                               + "\n\n💎 Les abonnés ont les vocaux *illimités* · tape /offres.")
             return
         audio = await _download_doc(channel, doc)
         transcript = await transcribe_audio(audio, doc.get("mime", "audio/ogg")) if audio else ""
@@ -4580,17 +4583,17 @@ def _profil_txt_court(profil: dict) -> str:
             f"financement={prefs.get('financement','')}, type poste={prefs.get('type_emploi','')}")
 
 async def conseil_grounded(profil: dict, titre_aff: str, tavily_query: str, consigne: str, cta: str = "") -> str:
-    """Conseil personnalisé façon conseiller senior, ancré sur le web (Tavily) — réutilisé par
+    """Conseil personnalisé façon conseiller senior, ancré sur le web (Tavily) · réutilisé par
     /ecoles, /logement, /entretien, /canada. Liens réels uniquement, jamais d'échéance passée."""
     grounded = await tavily_search(tavily_query, 6)
     sources = "\n".join(f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:180]}"
-                        for s in grounded[:6]) if grounded else "(pas de résultat web — n'utilise que des organismes/plateformes RÉELS et connus, sans inventer d'URL)"
+                        for s in grounded[:6]) if grounded else "(pas de résultat web · n'utilise que des organismes/plateformes RÉELS et connus, sans inventer d'URL)"
     system = (CONSEILLER_PERSONA + " " + consigne +
               " Ne cite QUE des organismes, plateformes ou écoles RÉELS (jamais d'URL inventée). JSON uniquement.")
     prompt = f"""PROFIL: {_profil_txt_court(profil)}
 SOURCES WEB:
 {sources}
-DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()} — n'indique jamais une échéance déjà passée.
+DATE DU JOUR: {datetime.now(timezone.utc).date().isoformat()} · n'indique jamais une échéance déjà passée.
 JSON: {{"intro":"","points":[{{"titre":"","detail":"","lien":""}}],"checklist":["..."],"conseil":""}}"""
     r = await call_groq(system, prompt, temperature=0.2, max_tokens=1400)
     msg = f"{titre_aff}\n━━━━━━━━━━━━━━━━━━\n"
@@ -4602,7 +4605,7 @@ JSON: {{"intro":"","points":[{{"titre":"","detail":"","lien":""}}],"checklist":[
             continue
         msg += f"• *{ti}*"
         if p.get("detail"):
-            msg += f" — {_md_clean(p['detail'])}"
+            msg += f" · {_md_clean(p['detail'])}"
         lien = str(p.get("lien", "") or "").replace("*", "").replace("`", "").strip()
         if lien:
             msg += f"\n  🔗 {lien}"
@@ -4673,8 +4676,9 @@ async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi
               "écrit par la personne elle-même. INTERDIT : les tournures d'IA et clichés (« je suis convaincu que », "
               "« correspond parfaitement à mes aspirations », « dynamique et motivé », « c'est avec un grand "
               "intérêt », « fort de mon expérience »). Appuie CHAQUE argument sur un fait CONCRET du profil "
-              "(expérience, mission, diplôme, compétence réels ci-dessous) — jamais de généralités. "
+              "(expérience, mission, diplôme, compétence réels ci-dessous) · jamais de généralités. "
               "Texte brut : AUCUN symbole de case/puce/carré (☐ □ ◻ ◆ • ▪) ni caractère spécial décoratif, "
+              "AUCUN tiret cadratin (—) ni demi-cadratin (–) · ponctuation française normale uniquement, "
               "AUCUN champ à trous entre crochets. JSON uniquement.")
     prompt = f"""{consigne}
 CANDIDAT: {ident.get('nom','')}
@@ -4755,7 +4759,7 @@ async def chat_cv(file: UploadFile = File(...), user_id: str = Form("unknown"), 
     logger.info(f"[chat-cv] user={user_id} chat_in={chat_id!r} chat_resolved={session.get('chat_id')!r} file={file.filename!r}")
     if not _valid_id(session.get("chat_id")):
         # n8n n'a fourni AUCUN identifiant exploitable -> impossible de répondre. On l'indique clairement.
-        logger.error("[chat-cv] aucun chat_id/user_id valide reçu de n8n (nœud fichier à corriger) — réponse impossible.")
+        logger.error("[chat-cv] aucun chat_id/user_id valide reçu de n8n (nœud fichier à corriger) · réponse impossible.")
         return {"ok": False, "error": "no_valid_chat_id"}
     fn = (file.filename or "").lower()
     ct = (file.content_type or "").lower()
@@ -4796,11 +4800,11 @@ async def generate_documents(request: GenerateDocumentsRequest, _auth: bool = De
     titre = offre.get("title", offre.get("titre", "Poste"))
     entreprise = offre.get("company", offre.get("entreprise", "Organisation"))
     type_cible = "bourse" if str(offre.get("type", "")).lower() in ("bourse", "fellowship", "scholarship") else "emploi"
-    cible_desc = f"{titre} — {entreprise}"
+    cible_desc = f"{titre} · {entreprise}"
     pack = await generate_pack(profil, cible_desc, type_cible)
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
     cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
-    lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature — {cible_desc}", pack.get("lettre_corps", ""))
+    lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
     nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
     return {"success": True, "user_id": request.user_id,
             "cv_pdf_base64": pdf_to_b64(cv_buf), "cv_filename": f"CV_{nom}.pdf",
@@ -5065,7 +5069,7 @@ SOURCE_CATALOG = [
     {"url": "https://www.opportunitiesforyouth.org/feed/",     "type": "fellowship", "scope": "both"},
     {"url": "https://youthop.com/feed/",                       "type": "fellowship", "scope": "both"},
     {"url": "https://mladiinfo.eu/feed/",                      "type": "bourse",     "scope": "intl"},
-    # Bourses & mobilité internationales (études France/Europe/Canada) — A3
+    # Bourses & mobilité internationales (études France/Europe/Canada) · A3
     {"url": "https://scholarship-positions.com/feed/",         "type": "bourse",     "scope": "intl"},
     {"url": "https://www.opportunitiescircle.com/feed/",       "type": "bourse",     "scope": "both"},
     {"url": "https://www.scholarshipsads.com/feed/",           "type": "bourse",     "scope": "both"},
@@ -5075,7 +5079,7 @@ SOURCE_CATALOG = [
     # Emplois (télétravail international, sans clé)
     {"url": "https://weworkremotely.com/remote-jobs.rss",     "type": "emploi",     "scope": "both"},
     {"url": "https://remotive.com/remote-jobs/feed",          "type": "emploi",     "scope": "both"},
-    # Humanitaire / ONG (emplois & consultances) — activable via ENABLE_RELIEFWEB=1
+    # Humanitaire / ONG (emplois & consultances) · activable via ENABLE_RELIEFWEB=1
     {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
      "active_env": "ENABLE_RELIEFWEB"},
 ]
@@ -5125,7 +5129,7 @@ def _format_ircc_rounds(rounds: list) -> str:
             det.append(f"CRS {r['crs']}")
         if r.get("invitations"):
             det.append(f"{r['invitations']} invitations")
-        suffix = f" — {', '.join(det)}" if det else ""
+        suffix = f" · {', '.join(det)}" if det else ""
         d = f" ({r['date']})" if r.get("date") else ""
         lignes.append(f"• {_md_clean(cat)}{suffix}{d}")
     return "\n".join(lignes[:6])
@@ -5240,7 +5244,7 @@ async def fetch_arbeitnow() -> list:
             desc = re.sub(r"\s+", " ", desc).strip()[:300]
             tags = ", ".join((j.get("tags") or [])[:5])
             if titre and url:
-                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": url,
                             "resume": (desc or tags)[:300], "type": "emploi", "date": ""})
         return out
     except Exception as e:
@@ -5248,7 +5252,7 @@ async def fetch_arbeitnow() -> list:
         return []
 
 async def fetch_remoteok() -> list:
-    """RemoteOK — offres 100% télétravail, international, sans clé API. https://remoteok.com/api
+    """RemoteOK · offres 100% télétravail, international, sans clé API. https://remoteok.com/api
     Pertinent pour un candidat local qui veut travailler pour l'étranger sans partir (scope=both)."""
     try:
         r = await http().get("https://remoteok.com/api", headers={"User-Agent": _BROWSER_UA},
@@ -5267,7 +5271,7 @@ async def fetch_remoteok() -> list:
             desc = re.sub(r"\s+", " ", desc).strip()[:300]
             tags = ", ".join((j.get("tags") or [])[:5])
             if titre and url:
-                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": url,
                             "resume": (desc or tags)[:300], "type": "emploi", "scope": "both",
                             "date": (j.get("date") or "")[:10]})
         return out[:30]
@@ -5276,7 +5280,7 @@ async def fetch_remoteok() -> list:
         return []
 
 async def fetch_remotive() -> list:
-    """Remotive — offres télétravail (tech & non-tech), sans clé API. https://remotive.com/api/remote-jobs"""
+    """Remotive · offres télétravail (tech & non-tech), sans clé API. https://remotive.com/api/remote-jobs"""
     try:
         r = await http().get("https://remotive.com/api/remote-jobs", params={"limit": 40},
                              headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
@@ -5290,7 +5294,7 @@ async def fetch_remotive() -> list:
             desc = re.sub("<[^>]+>", " ", j.get("description") or "")
             desc = re.sub(r"\s+", " ", desc).strip()[:300]
             if titre and url:
-                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": url,
                             "resume": desc, "type": "emploi", "scope": "both",
                             "date": (j.get("publication_date") or "")[:10]})
         return out
@@ -5299,7 +5303,7 @@ async def fetch_remotive() -> list:
         return []
 
 async def fetch_jobicy() -> list:
-    """Jobicy — offres télétravail internationales, sans clé API. https://jobicy.com/api/v2/remote-jobs"""
+    """Jobicy · offres télétravail internationales, sans clé API. https://jobicy.com/api/v2/remote-jobs"""
     try:
         r = await http().get("https://jobicy.com/api/v2/remote-jobs", params={"count": 40},
                              headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
@@ -5313,7 +5317,7 @@ async def fetch_jobicy() -> list:
             desc = re.sub("<[^>]+>", " ", j.get("jobExcerpt") or j.get("jobDescription") or "")
             desc = re.sub(r"\s+", " ", desc).strip()[:300]
             if titre and url:
-                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": url,
                             "resume": desc, "type": "emploi", "scope": "both",
                             "date": (j.get("pubDate") or "")[:10]})
         return out
@@ -5322,7 +5326,7 @@ async def fetch_jobicy() -> list:
         return []
 
 async def fetch_himalayas() -> list:
-    """Himalayas — offres 100% télétravail (international), sans clé API. https://himalayas.app/jobs/api"""
+    """Himalayas · offres 100% télétravail (international), sans clé API. https://himalayas.app/jobs/api"""
     try:
         r = await http().get("https://himalayas.app/jobs/api", params={"limit": 40},
                              headers={"User-Agent": _BROWSER_UA}, timeout=15.0, follow_redirects=True)
@@ -5336,7 +5340,7 @@ async def fetch_himalayas() -> list:
             desc = re.sub("<[^>]+>", " ", j.get("excerpt") or j.get("description") or "")
             desc = re.sub(r"\s+", " ", desc).strip()[:300]
             if titre and url:
-                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": url,
                             "resume": desc, "type": "emploi", "scope": "both", "date": ""})
         return out
     except Exception as e:
@@ -5344,7 +5348,7 @@ async def fetch_himalayas() -> list:
         return []
 
 async def fetch_themuse(pages: int = 1) -> list:
-    """The Muse — offres (US/EU, tech & non-tech), API publique sans clé. https://www.themuse.com/api/public/jobs"""
+    """The Muse · offres (US/EU, tech & non-tech), API publique sans clé. https://www.themuse.com/api/public/jobs"""
     out = []
     try:
         for page in range(max(1, pages)):
@@ -5360,7 +5364,7 @@ async def fetch_themuse(pages: int = 1) -> list:
                 desc = re.sub("<[^>]+>", " ", j.get("contents") or "")
                 desc = re.sub(r"\s+", " ", desc).strip()[:280]
                 if titre and url:
-                    out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": url,
+                    out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": url,
                                 "resume": (f"{locs} · " if locs else "") + desc, "type": "emploi",
                                 "scope": "both", "date": (j.get("publication_date") or "")[:10]})
         return out
@@ -5387,7 +5391,7 @@ async def fetch_adzuna(query: str, country: str = "fr") -> list:
             comp = ((j.get("company") or {}).get("display_name") or "").strip()
             desc = re.sub(r"\s+", " ", j.get("description") or "").strip()[:300]
             if titre and link:
-                out.append({"titre": f"{titre} — {comp}" if comp else titre, "url": link,
+                out.append({"titre": f"{titre} · {comp}" if comp else titre, "url": link,
                             "resume": desc, "type": "emploi", "date": (j.get("created") or "")[:10]})
         return out
     except Exception as e:
@@ -5567,7 +5571,7 @@ def _pays_from_nat(nat: str) -> str:
             return v
     return ""
 
-# Portails d'emploi LOCAUX réels (vérifiés) par pays — pour ancrer la veille locale sans flux RSS.
+# Portails d'emploi LOCAUX réels (vérifiés) par pays · pour ancrer la veille locale sans flux RSS.
 # Complétable via env LOCAL_SOURCES_EXTRA_<PAYS> (ex. LOCAL_SOURCES_EXTRA_BENIN=site1.com,site2.com).
 LOCAL_JOB_SOURCES = {
     "Bénin": ["emploibenin.com", "jobbenin.com", "offresdemplois.bj", "talentsplusafrique.com",
@@ -5626,20 +5630,20 @@ def _attach_feedback(session, opps):
         session["_feedback_kb"] = kb
 
 # Portails RÉELS et vérifiables, utilisés UNIQUEMENT en repli quand la recherche web ne renvoie rien.
-# Objectif : ne jamais inventer d'opportunité — on oriente vers des sources officielles.
+# Objectif : ne jamais inventer d'opportunité · on oriente vers des sources officielles.
 _REAL_SCHOLARSHIP_PORTALS = [
-    {"titre": "Campus France — études & bourses en France", "url": "https://www.campusfrance.org", "type": "formation", "organisation": "campusfrance.org"},
+    {"titre": "Campus France · études & bourses en France", "url": "https://www.campusfrance.org", "type": "formation", "organisation": "campusfrance.org"},
     {"titre": "Bourses d'excellence Eiffel (master/doctorat)", "url": "https://www.campusfrance.org/fr/eiffel-programme-bourses-excellence", "type": "bourse", "organisation": "campusfrance.org"},
-    {"titre": "DAAD — bourses pour l'Allemagne", "url": "https://www.daad.de/fr/", "type": "bourse", "organisation": "daad.de"},
-    {"titre": "Erasmus Mundus — masters conjoints (bourse complète)", "url": "https://www.eacea.ec.europa.eu/scholarships/erasmus-mundus-catalogue_en", "type": "bourse", "organisation": "ec.europa.eu"},
-    {"titre": "Chevening — bourses Royaume-Uni", "url": "https://www.chevening.org", "type": "bourse", "organisation": "chevening.org"},
+    {"titre": "DAAD · bourses pour l'Allemagne", "url": "https://www.daad.de/fr/", "type": "bourse", "organisation": "daad.de"},
+    {"titre": "Erasmus Mundus · masters conjoints (bourse complète)", "url": "https://www.eacea.ec.europa.eu/scholarships/erasmus-mundus-catalogue_en", "type": "bourse", "organisation": "ec.europa.eu"},
+    {"titre": "Chevening · bourses Royaume-Uni", "url": "https://www.chevening.org", "type": "bourse", "organisation": "chevening.org"},
     {"titre": "Mastercard Foundation Scholars", "url": "https://mastercardfdn.org/all/scholars/", "type": "bourse", "organisation": "mastercardfdn.org"},
-    {"titre": "AUF — Agence universitaire de la Francophonie", "url": "https://www.auf.org/les_services/appels-offre/", "type": "bourse", "organisation": "auf.org"},
-    {"titre": "EduCanada — bourses d'études au Canada", "url": "https://www.educanada.ca/scholarships-bourses/", "type": "bourse", "organisation": "educanada.ca"},
+    {"titre": "AUF · Agence universitaire de la Francophonie", "url": "https://www.auf.org/les_services/appels-offre/", "type": "bourse", "organisation": "auf.org"},
+    {"titre": "EduCanada · bourses d'études au Canada", "url": "https://www.educanada.ca/scholarships-bourses/", "type": "bourse", "organisation": "educanada.ca"},
 ]
 _REAL_JOB_PORTALS = [
     {"titre": "LinkedIn Emplois", "url": "https://www.linkedin.com/jobs/", "type": "emploi", "organisation": "linkedin.com"},
-    {"titre": "RemoteOK — emplois 100% télétravail", "url": "https://remoteok.com", "type": "emploi", "organisation": "remoteok.com"},
+    {"titre": "RemoteOK · emplois 100% télétravail", "url": "https://remoteok.com", "type": "emploi", "organisation": "remoteok.com"},
     {"titre": "Jobberman (Afrique de l'Ouest)", "url": "https://www.jobberman.com", "type": "emploi", "organisation": "jobberman.com"},
     {"titre": "ReliefWeb Jobs (ONG / humanitaire)", "url": "https://reliefweb.int/jobs", "type": "emploi", "organisation": "reliefweb.int"},
     {"titre": "Emploi Bénin", "url": "https://www.emploibenin.com", "type": "emploi", "organisation": "emploibenin.com"},
@@ -5711,7 +5715,7 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                 s["_sim"] = sim
             grounded = sorted(grounded, key=lambda s: s.get("_sim", 0.0), reverse=True)
         grounded = grounded[:8]
-        sources_txt = "\n".join(f"[{i}] {s.get('title','')} — {(s.get('content','') or '')[:200]}"
+        sources_txt = "\n".join(f"[{i}] {s.get('title','')} · {(s.get('content','') or '')[:200]}"
                                 for i, s in enumerate(grounded))
         system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale). On te fournit des "
                   "RÉSULTATS WEB numérotés. Choisis UNIQUEMENT ceux vraiment PERTINENTS pour le PARCOURS RÉEL du "
@@ -5756,7 +5760,7 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                     o["score_composite"] = max(0, min(100, (o.get("score_composite") or 0) + d))
         clean.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
         result["opportunites"] = clean
-        footer = "🌐 _Sources web réelles — vérifie l'éligibilité et la deadline sur chaque lien._"
+        footer = "🌐 _Sources web réelles · vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
         # PAS de résultat web -> on N'INVENTE AUCUNE opportunité. On renvoie des PORTAILS OFFICIELS RÉELS
         # (vérifiables) à consulter. C'est la garantie anti-hallucination.
@@ -5767,7 +5771,7 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         result = {
             "opportunites": [dict(p, confiance="officiel", score_composite=0,
                                   raison="Portail officiel à consulter directement.") for p in portals[:6]],
-            "conseil_principal": ("Je n'ai pas pu charger de résultats en direct à l'instant — alors je ne t'invente "
+            "conseil_principal": ("Je n'ai pas pu charger de résultats en direct à l'instant · alors je ne t'invente "
                                   "rien. Voici des portails OFFICIELS fiables : cherche-y ta cible, puis colle-moi un "
                                   "lien précis et je l'analyse (admissibilité + comment postuler). Ou réessaie /veille dans un moment."),
         }
@@ -5799,7 +5803,7 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         opps.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
     titre_aff = _md_clean(domaine)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
-    msg = f"🌍 *NexMove — {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
+    msg = f"🌍 *NexMove · {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
     if n_alertes:
         msg += f"🔔 *{n_alertes} offre(s) correspondent à tes alertes !*\n"
     if pays_detecte:
@@ -5954,7 +5958,7 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         chat2 = s2.get("chat_id") if s2 else None
         if not chat2:
             continue
-        rmsg = (f"⏰ *Rappel deadline — J-{days}*\n🗂️ {_md_clean(cible)[:70]}\n📅 {diso}\n\n"
+        rmsg = (f"⏰ *Rappel deadline · J-{days}*\n🗂️ {_md_clean(cible)[:70]}\n📅 {diso}\n\n"
                 "Finalise ton dossier ! /dossier pour régénérer, /status pour suivre.")
         if s2 and await deliver_text(s2, rmsg):
             opp_store.mark_reminder(cid, applicable)
@@ -5962,14 +5966,14 @@ async def notify(_auth: bool = Depends(verify_api_key)):
     logger.info(f"[notify] users_notifies={notified} rappels={rappels}")
     return {"ok": True, "users_notifies": notified, "rappels_deadline": rappels}
 
-# B2 — cadence des relances par palier (heures d'inactivité avant une relance). Admin : jamais.
+# B2 · cadence des relances par palier (heures d'inactivité avant une relance). Admin : jamais.
 _RELANCE_HOURS = {"premium": 24, "pro": 24, "vip": 48, "free": 72}
 
 @app.post("/api/relances")
 async def relances(_auth: bool = Depends(verify_api_key)):
-    """B2 — Relances des utilisateurs décrochés/inactifs, cadence selon le palier (_RELANCE_HOURS).
+    """B2 · Relances des utilisateurs décrochés/inactifs, cadence selon le palier (_RELANCE_HOURS).
     Telegram UNIQUEMENT (gratuit) ; WhatsApp exclu (coûts/templates). Opt-out via /stop.
-    À appeler ~1x/jour (cron) — la fenêtre par palier évite le spam."""
+    À appeler ~1x/jour (cron) · la fenêtre par palier évite le spam."""
     now = datetime.now(timezone.utc)
     sent = 0
     for s in session_manager.list_all():
@@ -6037,7 +6041,7 @@ async def _bg_route(channel, user_id, chat_id, username, update):
 
 @app.post("/webhook/telegram")
 async def telegram_webhook(request: Request):
-    """Webhook Telegram NATIF — supprime la dépendance à n8n pour le bot Telegram.
+    """Webhook Telegram NATIF · supprime la dépendance à n8n pour le bot Telegram.
     Pointer Telegram ici : setWebhook url=https://TON-DOMAINE/webhook/telegram (voir /setwebhook admin)."""
     # Sécurité : si un secret est configuré, Telegram doit le renvoyer dans l'en-tête.
     if TELEGRAM_WEBHOOK_SECRET and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != TELEGRAM_WEBHOOK_SECRET:
@@ -6232,20 +6236,20 @@ async def selfcheck(alert: int = 1, _auth: bool = Depends(verify_api_key)):
         now_ok = res["ok"]
         if prev is None or bool(prev) != now_ok:
             if not now_ok:
-                await _alert_admin("🚨 *NexMove — panne détectée*\n- " + "\n- ".join(res["problems"]))
+                await _alert_admin("🚨 *NexMove · panne détectée*\n- " + "\n- ".join(res["problems"]))
             elif prev is not None:
-                await _alert_admin("✅ *NexMove — service rétabli.* Tout est revenu à la normale.")
+                await _alert_admin("✅ *NexMove · service rétabli.* Tout est revenu à la normale.")
         cache.set("_health_ok", 1 if now_ok else 0, ttl=6 * 3600)
     return res
 
 
 @app.on_event("startup")
 async def _startup_alert():
-    """Prévient l'admin quand l'API (re)démarre — utile pour repérer les redémarrages/coupures."""
+    """Prévient l'admin quand l'API (re)démarre · utile pour repérer les redémarrages/coupures."""
     try:
         if (_ADMIN_IDS or ADMIN_CHAT_ID) and TELEGRAM_TOKEN and not cache.get("_startup_ping"):
             cache.set("_startup_ping", 1, ttl=90)   # évite le doublon entre les 2 workers uvicorn
-            await _alert_admin(f"✅ *NexMove en ligne* — v{VERSION} vient de démarrer.")
+            await _alert_admin(f"✅ *NexMove en ligne* · v{VERSION} vient de démarrer.")
     except Exception as e:
         logger.warning(f"startup alert: {e}")
 

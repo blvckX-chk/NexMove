@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.77.3 — Zéro tiret cadratin (anti-marqueur IA) + en-tête épuré
+- **Vitrine** : suppression de tous les tirets cadratins/demi-cadratins restants ; en-tête réduit à 4 liens ciblés (Fonctions, Tarifs, Testeurs, Soutenir) pour une UX plus claire, orientée présentation/financement.
+- **Bot** : règle de style imposée au LLM (aucun tiret cadratin dans les réponses générées) + remplacement des 230 séparateurs " — " des messages par un point médian, sans toucher à la logique de parsing (regex de titres, marqueurs de champ vide préservés).
+
 ## v2.77.2 — Programme testeurs sur la vitrine
 - Nouvelle section **Testeurs** : rejoindre le groupe WhatsApp des testeurs, demander un code Premium en message privé, et donner ses retours (/bug, /contact). Lien du groupe + CTA. Places limitées.
 
