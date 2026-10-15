@@ -1636,3 +1636,25 @@ def test_scrub_outbound_placeholder():
 def test_scrub_outbound_preserve_aide():
     s = "Tape /mobilite <pays> ou /dossier <cible>"
     assert main._scrub_outbound(s) == s   # la syntaxe d'aide ne doit PAS être touchée
+
+# ── Nettoyage des glyphes « carreau » dans les documents (v2.77.1) ──
+def test_sanitize_doc_text_retire_carreau():
+    for g in ("☐", "□", "�", "◆", "▪"):
+        out = main._sanitize_doc_text(f"Madame, je postule {g} pour ce poste.")
+        assert g not in out and "postule" in out and "poste" in out
+
+def test_sanitize_doc_text_preserve_texte():
+    s = "Je m'appelle Awa, j'ai 5 ans d'expérience en cybersécurité."
+    assert main._sanitize_doc_text(s) == s
+
+def test_pack_quality_detecte_carreau():
+    bad = {"titre_poste": "Analyste", "resume_professionnel": "Analyste SOC junior formé au blue team réseau.",
+           "competences_mises_en_avant": ["SIEM"],
+           "lettre_corps": " ".join(["mot"] * 120) + " ☐"}
+    assert any("parasite" in i or "symbole" in i for i in main._pack_quality_issues(bad))
+
+def test_build_letter_docx_sans_carreau():
+    profil = {"identite": {"nom": "Awa", "email": "a@x.co"}}
+    buf = main.build_letter_docx(profil, "Candidature ☐", "Madame, □ je postule pour ce poste.")
+    data = buf.getvalue()
+    assert data[:2] == b"PK" and len(data) > 500  # docx = zip valide
