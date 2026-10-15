@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.77.2 — Programme testeurs sur la vitrine
+- Nouvelle section **Testeurs** : rejoindre le groupe WhatsApp des testeurs, demander un code Premium en message privé, et donner ses retours (/bug, /contact). Lien du groupe + CTA. Places limitées.
+
 ## v2.77.1 — Correctif « symbole carreau » dans les documents + 1er vrai témoignage
 - **Bug corrigé** : un petit symbole « carré/case » (☐ □ ◻ ◆, puces, caractère de remplacement)
   pouvait apparaître dans le CV ou la lettre générés. `_sanitize_doc_text` nettoie désormais tout
