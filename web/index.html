@@ -33,25 +33,29 @@
 <style>
   /* THÈME CLAIR (par défaut) */
   :root{
-    --bleu:#2F5BFF; --bleu2:#3a5bd0; --ambre:#FFB020;
+    --bleu:#1B52B0; --bleu2:#123E86; --ambre:#E0A020;
     --bg:#f7f9fc; --bg2:#eef2f9; --carte:#ffffff; --carte2:#eef2fb;
     --txt:#121a33; --gris:#59637d; --bord:#e4e9f2; --bord2:#d4dcea;
-    --ok:#16b57a; --headerbg:rgba(255,255,255,.82); --rayon:16px;
+    --ok:#16b57a; --headerbg:rgba(255,255,255,.88); --rayon:16px;
+    --ombre:0 12px 34px rgba(18,34,74,.10); --ombre-sm:0 6px 18px rgba(18,34,74,.08);
+    --or:#E0A020; --terre:#C2410C; --vert:#0E7A4F;
   }
   /* THÈME SOMBRE clarifié (bleu nuit doux, pas noir) */
   :root[data-theme="dark"]{
-    --bleu2:#6b86ff;
+    --bleu:#3f6fd6; --bleu2:#6b86ff;
     --bg:#0f1629; --bg2:#141d33; --carte:#1a2440; --carte2:#223058;
     --txt:#eef2fb; --gris:#aab4cf; --bord:#283654; --bord2:#324169;
-    --ok:#30d98c; --headerbg:rgba(15,22,41,.82);
+    --ok:#30d98c; --headerbg:rgba(15,22,41,.86);
+    --ombre:0 14px 34px rgba(0,0,0,.35); --ombre-sm:0 6px 18px rgba(0,0,0,.28);
   }
   /* Auto : suit la préférence du navigateur, sauf si l'utilisateur a choisi en clair */
   @media (prefers-color-scheme:dark){
     :root:not([data-theme="light"]){
-      --bleu2:#6b86ff;
+      --bleu:#3f6fd6; --bleu2:#6b86ff;
       --bg:#0f1629; --bg2:#141d33; --carte:#1a2440; --carte2:#223058;
       --txt:#eef2fb; --gris:#aab4cf; --bord:#283654; --bord2:#324169;
-      --ok:#30d98c; --headerbg:rgba(15,22,41,.82);
+      --ok:#30d98c; --headerbg:rgba(15,22,41,.86);
+      --ombre:0 14px 34px rgba(0,0,0,.35); --ombre-sm:0 6px 18px rgba(0,0,0,.28);
     }
   }
   *{box-sizing:border-box}
@@ -64,10 +68,10 @@
   .btn{display:inline-flex;align-items:center;gap:.5rem;border:0;cursor:pointer;font-weight:700;font-size:1rem;
     padding:.85rem 1.4rem;border-radius:12px;transition:transform .14s,box-shadow .14s,background .14s}
   .btn:active{transform:translateY(1px)}
-  .btn-amb{background:var(--ambre);color:#0b1226;box-shadow:0 10px 30px rgba(255,176,32,.28)}
-  .btn-amb:hover{transform:translateY(-2px);box-shadow:0 14px 36px rgba(255,176,32,.4)}
-  .btn-blue{background:var(--bleu);color:#fff;box-shadow:0 10px 30px rgba(47,91,255,.4)}
-  .btn-blue:hover{transform:translateY(-2px)}
+  .btn-amb{background:var(--bleu);color:#fff;box-shadow:var(--ombre-sm)}
+  .btn-amb:hover{transform:translateY(-2px);background:var(--bleu2)}
+  .btn-blue{background:var(--bleu);color:#fff;box-shadow:var(--ombre-sm)}
+  .btn-blue:hover{transform:translateY(-2px);background:var(--bleu2)}
   .btn-ghost{background:transparent;color:var(--txt);border:1.5px solid var(--bord2);font-weight:600}
   .btn-ghost:hover{border-color:var(--bleu);color:var(--bleu)}
 
@@ -96,18 +100,25 @@
 
   /* Hero */
   .hero{position:relative;padding:60px 0 40px;overflow:hidden}
+  /* fond apaisé : voile bleu léger (plus de halo éblouissant) */
   .hero::before{content:"";position:absolute;inset:-30% -20% auto -20%;height:620px;z-index:0;pointer-events:none;
-    background:radial-gradient(55% 60% at 22% 15%,rgba(47,91,255,.28),transparent 60%),
-               radial-gradient(45% 55% at 88% 5%,rgba(255,176,32,.16),transparent 60%)}
+    background:radial-gradient(60% 60% at 20% 12%,rgba(27,82,176,.10),transparent 62%)}
+  /* motif géométrique africain (losanges, inspiration adinkra/kente) visible mais léger */
+  /* motif présent sur toute la page : couche FIXE derrière le contenu (suit le défilement) */
+  .motif{position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.15;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='54' height='54'%3E%3Cg fill='none' stroke-width='1.3'%3E%3Cpath d='M27 3 51 27 27 51 3 27Z' stroke='%231B52B0'/%3E%3Cpath d='M27 15 39 27 27 39 15 27Z' stroke='%23E0A020'/%3E%3C/g%3E%3C/svg%3E");
+    background-size:54px 54px}
+  /* bandeau tissé (kente) — signature africaine à plat, sans néon */
+  .kente{height:6px;width:100%;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='8'%3E%3Cpath d='M0 8 8 0 16 8Z' fill='%231B52B0'/%3E%3Cpath d='M16 8 24 0 32 8Z' fill='%23E0A020'/%3E%3Cpath d='M32 8 40 0 48 8Z' fill='%23C2410C'/%3E%3C/svg%3E") repeat-x;background-size:48px 6px}
   .hero .wrap{position:relative;z-index:1}
   .hgrid{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center}
   @media(max-width:920px){.hgrid{grid-template-columns:1fr;gap:28px}}
   .eyebrow{display:inline-flex;align-items:center;gap:.5rem;font-weight:700;font-size:.76rem;letter-spacing:.08em;
     color:var(--bleu2);text-transform:uppercase}
-  .eyebrow::before{content:"";width:8px;height:8px;border-radius:3px;background:var(--bleu)}
+  .eyebrow::before{content:"";width:8px;height:8px;border-radius:3px;background:var(--or)}
   h1{font-size:clamp(2.3rem,5.6vw,3.7rem);line-height:1.04;margin:1rem 0 .7rem;font-weight:900;letter-spacing:-.025em}
-  h1 .accent{color:transparent;background:linear-gradient(90deg,var(--bleu2),var(--ambre));-webkit-background-clip:text;background-clip:text;position:relative}
-  h1 .accent::after{content:"";position:absolute;left:0;right:8%;bottom:-.08em;height:.09em;border-radius:3px;background:linear-gradient(90deg,var(--bleu),var(--ambre))}
+  h1 .accent{color:var(--bleu);position:relative}
+  h1 .accent::after{content:"";position:absolute;left:0;right:8%;bottom:-.08em;height:.09em;border-radius:3px;background:var(--bleu);opacity:.5}
   .lead{font-size:clamp(1.02rem,2.1vw,1.18rem);color:var(--gris);max-width:540px}
   .cta-row{display:flex;flex-wrap:wrap;gap:.8rem;margin:1.6rem 0 1rem}
   .trust{display:flex;flex-wrap:wrap;gap:1rem;color:var(--gris);font-size:.88rem;font-weight:600;margin-top:.4rem}
@@ -116,7 +127,7 @@
 
   /* Mock product card (démo offres notées) */
   .mock{background:linear-gradient(180deg,var(--carte),var(--bg2));border:1px solid var(--bord2);border-radius:20px;
-    box-shadow:0 24px 60px rgba(23,37,84,.12);overflow:hidden}
+    box-shadow:var(--ombre);overflow:hidden}
   .mock-top{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--bord);background:rgba(18,26,51,.025)}
   .mock-top .t{display:flex;align-items:center;gap:.5rem;font-weight:700;font-size:.92rem}
   .mock-top .t .dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--bleu),#1b2e86);display:grid;place-items:center}
@@ -153,6 +164,7 @@
   /* Sections */
   section{padding:66px 0}
   .kicker{color:var(--bleu2);font-weight:700;letter-spacing:.09em;text-transform:uppercase;font-size:.76rem}
+  .kicker::before{content:"\25C6";color:var(--or);margin-right:.45rem;font-size:.82em}
   h2{font-size:clamp(1.7rem,3.8vw,2.4rem);margin:.5rem 0 .5rem;font-weight:800;letter-spacing:-.02em}
   .sub{color:var(--gris);max-width:620px;font-size:1.02rem}
 
@@ -167,7 +179,7 @@
   .flist{list-style:none;padding:0;margin:0}
   .flist li{display:flex;gap:.6rem;padding:.3rem 0;color:var(--txt);font-size:.96rem}
   .flist li::before{content:"";flex:0 0 auto;width:16px;height:2px;background:var(--bleu);margin-top:.75rem;border-radius:2px}
-  .fimg{background:linear-gradient(180deg,var(--carte),var(--bg2));border:1px solid var(--bord2);border-radius:18px;padding:16px;box-shadow:0 20px 50px rgba(23,37,84,.1)}
+  .fimg{background:linear-gradient(180deg,var(--carte),var(--bg2));border:1px solid var(--bord2);border-radius:18px;padding:16px;box-shadow:var(--ombre)}
 
   /* chat mock */
   .chat .b{max-width:82%;padding:.6rem .85rem;border-radius:14px;margin:.4rem 0;font-size:.9rem;line-height:1.35}
@@ -187,7 +199,7 @@
   .price{display:grid;gap:18px;grid-template-columns:repeat(3,1fr);margin-top:30px}
   @media(max-width:880px){.price{grid-template-columns:1fr}}
   .plan{background:var(--carte);border:1px solid var(--bord2);border-radius:18px;padding:24px;position:relative}
-  .plan.pop{border-color:var(--bleu);box-shadow:0 18px 50px rgba(47,91,255,.22)}
+  .plan.pop{border-color:var(--bleu);box-shadow:var(--ombre)}
   .plan .tag{position:absolute;top:-12px;right:18px;background:var(--ambre);color:#0b1226;font-weight:800;font-size:.72rem;padding:.25rem .7rem;border-radius:999px}
   .plan h3{margin:0 0 .3rem;font-size:1.15rem}
   .plan .p{font-size:2rem;font-weight:900;margin:.2rem 0}
@@ -207,7 +219,7 @@
   details[open] summary::after{content:"\2212"}
   details p{margin:0 0 15px;color:var(--gris)}
 
-  .band{background:linear-gradient(135deg,#1e3a8a,#2F5BFF);border:0;border-radius:24px;padding:48px 28px;text-align:center;color:#fff;box-shadow:0 24px 60px rgba(47,91,255,.28)}
+  .band{background:linear-gradient(135deg,#123E86,#1B52B0);border:0;border-radius:24px;padding:48px 28px;text-align:center;color:#fff;box-shadow:var(--ombre)}
   .band h2{color:#fff}
   .band h2{margin:0 0 .4rem}
   .band p{color:rgba(255,255,255,.85);max-width:560px;margin:.2rem auto 1.5rem}
@@ -244,12 +256,13 @@
     .price{gap:14px}
     .feat{padding:24px 0}
     h1{font-size:clamp(2rem,8.5vw,2.6rem)}
-    .mock,.fimg{box-shadow:0 14px 34px rgba(23,37,84,.12)}
+    .mock,.fimg{box-shadow:var(--ombre-sm)}
   }
 </style>
 </head>
 <!-- data-wa = numero du BOT WhatsApp (reponses auto) · data-pay = numero PERSO qui recoit les paiements -->
 <body data-bot="nex_move_bot" data-wa="22962118761" data-pay="22994078765">
+<div class="motif" aria-hidden="true"></div>
 <header>
   <div class="wrap nav">
     <a class="brand" href="#top"><span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove</a>
@@ -266,6 +279,7 @@
     </nav>
   </div>
 </header>
+<div class="kente" aria-hidden="true"></div>
 
 <main id="top">
 
@@ -579,6 +593,7 @@
   <section>
     <div class="wrap">
       <div class="band reveal">
+        <div class="kente" aria-hidden="true" style="width:76px;height:6px;margin:0 auto 20px;border-radius:999px"></div>
         <h2>Ton prochain move commence maintenant</h2>
         <p>Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move. Gratuit pour démarrer.</p>
         <div class="cta-row" style="justify-content:center">
@@ -590,6 +605,7 @@
   </section>
 </main>
 
+<div class="kente" aria-hidden="true"></div>
 <footer>
   <div class="wrap">
     <div class="foot">
