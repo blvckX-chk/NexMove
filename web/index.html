@@ -96,7 +96,20 @@
   .nav-links{display:flex;gap:1.5rem;align-items:center}
   .nav-links a{color:var(--gris);font-weight:600;font-size:.94rem}
   .nav-links a:hover{color:var(--txt)}
-  @media(max-width:860px){.nav-links a:not(.btn){display:none}}
+  .nav-actions{display:flex;align-items:center;gap:.6rem}
+  .burger{display:none;background:transparent;border:1.5px solid var(--bord2);color:var(--txt);
+    width:40px;height:40px;border-radius:10px;align-items:center;justify-content:center;cursor:pointer}
+  .burger:hover{border-color:var(--bleu);color:var(--bleu)}
+  .burger svg{width:22px;height:22px}
+  @media(max-width:860px){
+    .burger{display:inline-flex}
+    .nav-links{position:absolute;top:66px;left:0;right:0;flex-direction:column;align-items:stretch;gap:0;
+      background:var(--carte);border-top:1px solid var(--bord);border-bottom:1px solid var(--bord);
+      box-shadow:var(--ombre);padding:.3rem 0;display:none}
+    header.nav-open .nav-links{display:flex}
+    .nav-links a{padding:.95rem 20px;font-size:1.02rem;border-bottom:1px solid var(--bord)}
+    .nav-links a:last-child{border-bottom:0}
+  }
 
   /* Hero */
   .hero{position:relative;padding:60px 0 40px;overflow:hidden}
@@ -162,14 +175,14 @@
   .stat .k{color:var(--gris);font-size:.86rem;margin-top:.25rem}
 
   /* Sections */
-  section{padding:66px 0}
+  section{padding:88px 0}
   .kicker{color:var(--bleu2);font-weight:700;letter-spacing:.09em;text-transform:uppercase;font-size:.76rem}
   .kicker::before{content:"\25C6";color:var(--or);margin-right:.45rem;font-size:.82em}
-  h2{font-size:clamp(1.7rem,3.8vw,2.4rem);margin:.5rem 0 .5rem;font-weight:800;letter-spacing:-.02em}
-  .sub{color:var(--gris);max-width:620px;font-size:1.02rem}
+  h2{font-size:clamp(1.7rem,3.8vw,2.4rem);margin:.6rem 0 .6rem;font-weight:800;letter-spacing:-.02em}
+  .sub{color:var(--gris);max-width:620px;font-size:1.02rem;line-height:1.6}
 
   /* Feature rows */
-  .feat{display:grid;grid-template-columns:1fr 1fr;gap:44px;align-items:center;padding:34px 0;border-top:1px solid var(--bord)}
+  .feat{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;padding:46px 0;border-top:1px solid var(--bord)}
   .feat:nth-child(even) .fimg{order:-1}
   @media(max-width:860px){.feat{grid-template-columns:1fr;gap:22px}.feat:nth-child(even) .fimg{order:0}}
   .fnum{font-size:2.3rem;font-weight:900;color:var(--bleu);line-height:1}
@@ -196,7 +209,7 @@
   .filecard small{color:var(--gris);font-weight:500;display:block}
 
   /* Pricing */
-  .price{display:grid;gap:18px;grid-template-columns:repeat(3,1fr);margin-top:30px}
+  .price{display:grid;gap:20px;grid-template-columns:repeat(3,1fr);margin-top:40px}
   @media(max-width:880px){.price{grid-template-columns:1fr}}
   .plan{background:var(--carte);border:1px solid var(--bord2);border-radius:18px;padding:24px;position:relative}
   .plan.pop{border-color:var(--bleu);box-shadow:var(--ombre)}
@@ -248,13 +261,13 @@
 
   /* Mobile : espacements plus serrés, boutons pleine largeur, pas de débordement */
   @media(max-width:560px){
-    section{padding:44px 0}
+    section{padding:58px 0}
     .hero{padding:40px 0 28px}
-    .band{padding:34px 18px;border-radius:18px}
+    .band{padding:38px 20px;border-radius:18px}
     .cta-row{gap:.6rem}
     .cta-row .btn{flex:1 1 100%;justify-content:center}
-    .price{gap:14px}
-    .feat{padding:24px 0}
+    .price{gap:16px}
+    .feat{padding:30px 0}
     h1{font-size:clamp(2rem,8.5vw,2.6rem)}
     .mock,.fimg{box-shadow:var(--ombre-sm)}
   }
@@ -266,17 +279,21 @@
 <header>
   <div class="wrap nav">
     <a class="brand" href="#top"><span class="logo"><svg viewBox="0 0 24 24" fill="none"><path d="M4 20V6l8 6 8-6v14" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M15 9h5V4" stroke="#FFB020" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg></span> NexMove</a>
-    <nav class="nav-links">
+    <nav class="nav-links" id="navLinks">
       <a href="#fonctions">Fonctions</a>
       <a href="#prix">Tarifs</a>
       <a href="#testeurs">Testeurs</a>
       <a href="#soutenir">Soutenir</a>
+    </nav>
+    <div class="nav-actions">
       <button class="theme-toggle" id="themeBtn" type="button" aria-label="Changer le thème clair/sombre" title="Thème clair / sombre">
         <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></svg>
         <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
       </button>
-      <a class="btn btn-blue js-start" href="#">Démarrer</a>
-    </nav>
+      <button class="burger" id="burger" type="button" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="navLinks">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+      </button>
+    </div>
   </div>
 </header>
 <div class="kente" aria-hidden="true"></div>
@@ -666,6 +683,20 @@
       var tc = document.querySelector('meta[name="theme-color"]');
       if(tc) tc.setAttribute('content', next === 'dark' ? '#0f1629' : '#f7f9fc');
     }); }
+
+    // Menu burger (mobile) : ouvre/ferme le panneau de navigation
+    var header = document.querySelector('header');
+    var burger = document.getElementById('burger');
+    var navLinks = document.getElementById('navLinks');
+    function closeNav(){ if(header){ header.classList.remove('nav-open'); } if(burger){ burger.setAttribute('aria-expanded','false'); } }
+    if(burger && header){
+      burger.addEventListener('click', function(){
+        var open = header.classList.toggle('nav-open');
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+    }
+    if(navLinks){ navLinks.addEventListener('click', function(e){ if(e.target.tagName === 'A') closeNav(); }); }
+    document.addEventListener('keydown', function(e){ if(e.key === 'Escape') closeNav(); });
 
     // Démo interactive : offres notées par profil
     var DATA = {
