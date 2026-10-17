@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.80.0"
+VERSION         = "2.80.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2820,7 +2820,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             seen = set(session.get("seen_urls", []))
             res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"),
                                   exclude_urls=seen, alertes=session.get("alertes", []),
-                                  tier=_user_tier(session))
+                                  tier=_user_tier(session), channel=session.get("channel", "telegram"))
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
             opps = res.get("opportunites", [])
             for o in opps:
@@ -3078,7 +3078,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         else:
             try:
                 res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"),
-                                      alertes=session.get("alertes", []), tier=_user_tier(session))
+                                      alertes=session.get("alertes", []), tier=_user_tier(session), channel=session.get("channel","telegram"))
                 new = 0
                 for opp in res.get("opportunites", []):
                     if opp_store.add(session.get("user_id"), opp):
@@ -3294,7 +3294,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         # Recherche AUTO : des offres notées tout de suite après le CV (valeur immédiate).
         preview = ""
         try:
-            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session))
+            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"))
             opps = res.get("opportunites", []) or []
             for o in opps:
                 opp_store.add(session.get("user_id"), o)
@@ -3399,7 +3399,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if cached:
                     top = cached[:3]
                 else:
-                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session))
+                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"))
                     top = res.get("opportunites", [])[:3]
                     for o in res.get("opportunites", []):
                         opp_store.add(session.get("user_id"), o)
@@ -5629,6 +5629,8 @@ def _domain(url):
 
 # Raccourcisseur de liens : base publique de l'API (où répond /l/<code>).
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api-nexmove.blvckunlimited.space").rstrip("/")
+# Domaine affiché pour les liens courts (idéalement un sous-domaine court/brandé qui pointe vers /l/).
+SHORT_LINK_BASE = os.getenv("SHORT_LINK_BASE", PUBLIC_API_URL).rstrip("/")
 
 def _short(url: str) -> str:
     """Un lien court maison pour une offre (présentation propre + clic mesurable).
@@ -5638,10 +5640,19 @@ def _short(url: str) -> str:
         return url
     try:
         code = link_store.shorten(url)
-        return f"{PUBLIC_API_URL}/l/{code}" if code else url
+        return f"{SHORT_LINK_BASE}/l/{code}" if code else url
     except Exception as e:
         logger.warning(f"[short] {e}")
         return url
+
+def _offer_link(lien: str, channel: str) -> str:
+    """Rendu du lien d'une offre selon le canal : lien MASQUÉ (markdown) sur Telegram/Messenger
+    pour ne pas afficher l'URL technique ; lien nu sur WhatsApp (markdown non supporté)."""
+    if not lien:
+        return ""
+    if channel in ("telegram", "messenger"):
+        return f"👉 [Voir l'offre]({lien})"
+    return f"👉 {lien}"
 
 def _url_specificity(url: str) -> int:
     """Heuristique : plus une URL a de segments de chemin et de chiffres (id d'offre),
@@ -5843,8 +5854,29 @@ def _opp_quality_ok(opp: dict) -> bool:
         return False
     return True
 
+_EMPLOI_KW = ("emploi", "job", "travail", "poste", "stage", "alternance", "recrut", "cdd", "cdi",
+              "temps partiel", "temps plein", "freelance", "mission", "boulot", "embauche")
+_BOURSE_KW = ("bourse", "scholarship", "étude", "etude", "master", "licence", "doctorat", "phd",
+              "fellowship", "campus", "universit", "formation", "financement d'étude")
+
+def _requested_type(cible: str, objectif: str) -> str:
+    """Déduit le TYPE demandé (emploi / bourse) à partir de la demande et de l'objectif, pour
+    filtrer la sortie. Retourne 'emploi', 'bourse' ou '' (indifférent)."""
+    s = f"{cible or ''} {objectif or ''}".lower()
+    e = any(k in s for k in _EMPLOI_KW)
+    b = any(k in s for k in _BOURSE_KW)
+    if objectif in ("travailler",):
+        e = True
+    if objectif in ("étudier", "etudier", "bourse"):
+        b = True
+    if e and not b:
+        return "emploi"
+    if b and not e:
+        return "bourse"
+    return ""
+
 async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None,
-                    tier: str = "free", n_queries: int = None) -> dict:
+                    tier: str = "free", n_queries: int = None, channel: str = "telegram") -> dict:
     profil = profil or {}
     exclude_urls = exclude_urls or set()
     alertes = alertes or []
@@ -5874,9 +5906,17 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                   f"expériences: {', '.join(experiences) or '—'} | compétences: {competences} | "
                   f"objectif: {objectif} | financement: {financement} | nationalité: {nationalite}")
 
+    # Type DEMANDÉ (prioritaire sur l'objectif de profil) : si l'utilisateur demande un emploi,
+    # on ne lui sort pas des bourses/formations, et inversement.
+    want_type = _requested_type(cible, objectif)
     # Périmètre/type pour les requêtes et l'activation des flux.
-    type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
-                "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
+    if want_type == "emploi":
+        type_mot = "emploi"
+    elif want_type == "bourse":
+        type_mot = "bourse"
+    else:
+        type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
+                    "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
     if pays_detecte:
         zone = pays_detecte
     elif not _pc_vide:
@@ -6002,6 +6042,13 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
     opps = [o for o in opps if _open(o)]
     if grounded:   # QC de sortie : on ne garde que des offres web saines (titre + URL http, sans placeholder)
         opps = [o for o in opps if _opp_quality_ok(o)]
+    # Respect du TYPE demandé : un emploi demandé ne doit pas renvoyer des bourses/formations (et inversement).
+    if want_type == "emploi":
+        _f = [o for o in opps if str(o.get("type", "")).lower() not in ("bourse", "fellowship", "formation")]
+        opps = _f or opps
+    elif want_type == "bourse":
+        _f = [o for o in opps if str(o.get("type", "")).lower() not in ("emploi", "stage")]
+        opps = _f or opps
     if exclude_urls:   # anti-doublons entre deux /mobilite d'affilée
         opps = [o for o in opps if str(o.get("url", "") or o.get("portail_officiel", "")) not in exclude_urls]
     # Alertes mots-clés : les offres qui matchent remontent en tête + tag 🔔.
@@ -6039,7 +6086,7 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         if raison:
             msg += f"   {raison}\n"
         if lien:
-            msg += f"   👉 {lien}\n"
+            msg += f"   {_offer_link(lien, channel)}\n"
         msg += "\n"
     if result.get("conseil_principal"):
         msg += f"💡 *Conseil :* {_md_clean(result['conseil_principal'])[:240]}\n\n"
@@ -6066,7 +6113,8 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
     session = session_manager.get(request.user_id)
     profil = session.get("profil", {}) if session else {}
     res = await run_osint(profil, request.cible, request.user_id,
-                          tier=_user_tier(session) if session else "free")
+                          tier=_user_tier(session) if session else "free",
+                          channel=(session or {}).get("channel", "telegram"))
     return {**res, "chat_id": request.chat_id}
 
 @app.post("/api/collect")

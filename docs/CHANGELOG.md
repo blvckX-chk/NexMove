@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.80.1 — Liens d'offres masqués + respect du type demandé
+- **Plus d'URL technique affichée** : sur Telegram/Messenger le lien d'une offre est masqué derrière « 👉 Voir l'offre » (markdown) ; sur WhatsApp il reste nu (markdown non supporté). Domaine court configurable via SHORT_LINK_BASE (pour un sous-domaine brandé).
+- **Respect du TYPE demandé** : si l'utilisateur demande un *emploi*, on ne lui sort plus de bourses/formations (et inversement). Détection à partir de la demande ET de l'objectif, appliquée aux requêtes et au filtrage de sortie.
+
 ## v2.80 — Signaler un bug avec une capture d'écran
 - L'utilisateur peut maintenant joindre une **capture d'écran** à un signalement de bug :
   après */bug*, la prochaine image envoyée est transmise à l'**admin** (Telegram) avec le contexte

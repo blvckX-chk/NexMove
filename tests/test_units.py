@@ -1666,7 +1666,7 @@ def test_url_specificity_prefers_specific():
     assert main._url_specificity(specific) > main._url_specificity(search)
 
 def test_short_link_roundtrip(monkeypatch):
-    monkeypatch.setattr(main, "PUBLIC_API_URL", "https://api.example")
+    monkeypatch.setattr(main, "SHORT_LINK_BASE", "https://api.example")
     out = main._short("https://fr.jooble.org/desc/42")
     assert out.startswith("https://api.example/l/")
     # non-URL inchangé
@@ -1748,7 +1748,7 @@ def test_run_osint_multirequete_integration(monkeypatch, tmp_path):
     monkeypatch.setattr(main, "call_groq", fake_groq)
     monkeypatch.setattr(main.opp_store, "search_sources", lambda kws, prefer_scope=None: [])
     monkeypatch.setattr(main.opp_store, "feedback_delta", lambda *a, **k: 0)
-    monkeypatch.setattr(main, "PUBLIC_API_URL", "https://api.example")
+    monkeypatch.setattr(main, "SHORT_LINK_BASE", "https://api.example")
     profil = {"preferences": {"objectif": "travailler", "mots_cles": "python", "pays_cibles": "Canada"}}
     # free -> 2 requêtes ; premium -> 3
     res_free = _run(main.run_osint(profil, "", "u1", tier="free"))
@@ -1827,3 +1827,39 @@ def test_bug_mode_annule_par_texte_normal():
     # un message texte normal (non /bug) doit désarmer le mode
     _run(main.process_text_message(session, "bonjour"))
     assert session.get("bug_mode") is False
+
+# ── Type demandé & rendu du lien (v2.80.1) ──
+def test_requested_type():
+    assert main._requested_type("emploi à temps partiel au Bénin", "tous") == "emploi"
+    assert main._requested_type("bourse master France", "tous") == "bourse"
+    assert main._requested_type("", "travailler") == "emploi"
+    assert main._requested_type("", "étudier") == "bourse"
+    assert main._requested_type("", "tous") == ""
+
+def test_offer_link_masque_selon_canal():
+    url = "https://api.example/l/abc123"
+    tg = main._offer_link(url, "telegram")
+    assert tg.startswith("👉 [Voir l'offre](") and url in tg   # masqué (markdown)
+    wa = main._offer_link(url, "whatsapp")
+    assert wa == f"👉 {url}" and "[" not in wa                 # nu (WhatsApp)
+    assert main._offer_link("", "telegram") == ""
+
+def test_run_osint_filtre_type_emploi(monkeypatch):
+    async def fake_tavily(q, n=8):
+        return [{"title": "Emploi dev", "url": "https://e.co/offre/1", "content": "dev"},
+                {"title": "Bourse master", "url": "https://b.co/bourse/2", "content": "bourse"}]
+    async def fake_sem(txt, items, fn): return [0.9, 0.8][:len(items)]
+    async def fake_groq(system, prompt, **kw):
+        return {"opportunites": [{"index": 0, "type": "emploi", "confiance": "haute", "score_composite": 80, "raison": "ok"},
+                                 {"index": 1, "type": "bourse", "confiance": "haute", "score_composite": 90, "raison": "ok"}],
+                "conseil_principal": ""}
+    monkeypatch.setattr(main, "TAVILY_API_KEY", "x")
+    monkeypatch.setattr(main, "tavily_search", fake_tavily)
+    monkeypatch.setattr(main, "semantic_scores", fake_sem)
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    monkeypatch.setattr(main.opp_store, "search_sources", lambda kws, prefer_scope=None: [])
+    monkeypatch.setattr(main.opp_store, "feedback_delta", lambda *a, **k: 0)
+    # demande explicite d'emploi -> la bourse doit être écartée même si mieux notée
+    res = _run(main.run_osint({"preferences": {"objectif": "tous"}}, "je cherche un emploi", "u1", tier="free"))
+    types = [str(o.get("type", "")).lower() for o in res["opportunites"]]
+    assert "bourse" not in types and "emploi" in types
