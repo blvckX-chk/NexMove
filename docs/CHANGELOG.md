@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.81 — Fiabilité anti-troncature généralisée + ajout manuel d'offres
+- **Anti-troncature partout** : helper réutilisable (_gen_text) qui détecte un texte coupé (ponctuation suspendue, parenthèse ouverte), relance avec plus de tokens, et coupe proprement à la dernière phrase complète (_trim_to_sentence). Appliqué au routeur des utilisateurs onboardés (tokens 380->650 + coupe propre), au pré-onboarding et au débrief de simulation.
+- **Ajout manuel d'offres (admin)** : /offre <type> | <titre> | <url> | <description> | <local|intl> injecte une offre curée dans le pool de veille, proposée ensuite aux profils correspondants.
+
 ## v2.80.1 — Liens d'offres masqués + respect du type demandé
 - **Plus d'URL technique affichée** : sur Telegram/Messenger le lien d'une offre est masqué derrière « 👉 Voir l'offre » (markdown) ; sur WhatsApp il reste nu (markdown non supporté). Domaine court configurable via SHORT_LINK_BASE (pour un sous-domaine brandé).
 - **Respect du TYPE demandé** : si l'utilisateur demande un *emploi*, on ne lui sort plus de bourses/formations (et inversement). Détection à partir de la demande ET de l'objectif, appliquée aux requêtes et au filtrage de sortie.

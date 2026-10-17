@@ -1863,3 +1863,47 @@ def test_run_osint_filtre_type_emploi(monkeypatch):
     res = _run(main.run_osint({"preferences": {"objectif": "tous"}}, "je cherche un emploi", "u1", tier="free"))
     types = [str(o.get("type", "")).lower() for o in res["opportunites"]]
     assert "bourse" not in types and "emploi" in types
+
+# ── Fiabilité anti-troncature (v2.81) ──
+def test_looks_truncated():
+    assert main._looks_truncated("Pour cibler, quel type ? (ex. rédaction,")
+    assert main._looks_truncated("une liste (ouverte")
+    assert not main._looks_truncated("Voici une réponse complète.")
+    assert main._looks_truncated("")
+
+def test_trim_to_sentence():
+    s = "Première phrase complète. Deuxième phrase coupée (ex. rédaction,"
+    out = main._trim_to_sentence(s)
+    assert out == "Première phrase complète." and not main._looks_truncated(out)
+    # texte sain : inchangé
+    assert main._trim_to_sentence("Tout va bien.") == "Tout va bien."
+
+def test_gen_text_relance_sur_troncature(monkeypatch):
+    seq = iter(["Réponse coupée (ex.", "Réponse complète et nette."])
+    async def fake_groq(system, user, **kw): return next(seq)
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    out = _run(main._gen_text("sys", "user"))
+    assert out == "Réponse complète et nette."
+
+# ── Ajout manuel d'offre par l'admin (v2.81) ──
+def test_offre_admin_ajoute(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    added = {}
+    monkeypatch.setattr(main.opp_store, "add_source", lambda it: added.update(it) or True)
+    session = {"user_id": "42", "chat_id": "42", "profil": {}, "historique": [], "onboarding_complete": True}
+    msg, _ = _run(main.process_text_message(session, "/offre emploi | Dev PHP Cotonou | https://ex.com/o1 | CDI | local"))
+    assert "ajoutée" in msg.lower()
+    assert added.get("type") == "emploi" and added.get("url") == "https://ex.com/o1" and added.get("scope") == "local"
+
+def test_offre_non_admin_refuse(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    session = {"user_id": "7", "chat_id": "7", "profil": {}, "historique": [], "onboarding_complete": True}
+    msg, _ = _run(main.process_text_message(session, "/offre emploi | X | https://ex.com | d | local"))
+    assert "administrateur" in msg.lower()
+
+def test_offres_premium_non_masque(monkeypatch):
+    # /offres (pluriel) ne doit PAS tomber dans le bloc admin /offre
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    session = {"user_id": "7", "chat_id": "7", "profil": {}, "historique": [], "onboarding_complete": True}
+    msg, _ = _run(main.process_text_message(session, "/offres"))
+    assert "réservée à l'administrateur" not in msg.lower()

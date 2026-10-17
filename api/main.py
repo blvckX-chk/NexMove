@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.80.1"
+VERSION         = "2.81.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1118,6 +1118,52 @@ _WELCOME_PITCH = (
     "📝 *Pas encore de CV ?* Tape /creercv · je t'en crée un en 5 questions."
 )
 
+# ── Fiabilité des réponses IA : détection de texte tronqué + relance + coupe propre ──
+def _looks_truncated(s: str) -> bool:
+    """Heuristique : la réponse semble coupée (ponctuation suspendue, parenthèse ouverte)."""
+    s = (s or "").rstrip()
+    if not s:
+        return True
+    if s[-1] in ",(:;-":
+        return True
+    low = s.lower()
+    if low.endswith(("ex.", "(ex.", "par ex.", "exemple", "etc", "notamment", "comme")):
+        return True
+    if s.count("(") > s.count(")"):
+        return True
+    return False
+
+def _trim_to_sentence(s: str) -> str:
+    """Si le texte est coupé, on le ramène à la dernière phrase complète (jamais de phrase coupée affichée).
+    On essaie les fins de phrase de la plus tardive à la plus précoce, jusqu'à obtenir un texte NON tronqué
+    (gère les abréviations type « ex. » qui ne sont pas de vraies fins de phrase)."""
+    s = (s or "").strip()
+    if not s or not _looks_truncated(s):
+        return s
+    ends = [m.end() for m in re.finditer(r"[.!?…]", s)]
+    for cut in reversed(ends):
+        cand = s[:cut].strip()
+        if len(cand) >= 20 and not _looks_truncated(cand):
+            return cand
+    return s
+
+async def _gen_text(system: str, user: str, *, max_tokens: int = 600, temperature: float = 0.4,
+                    tier: str = "smart", bump: int = 400) -> str:
+    """Génère un texte conversationnel FIABLE : relance une fois si vide/tronqué (avec plus de tokens),
+    puis coupe proprement à la dernière phrase. Retourne '' si l'IA est indisponible."""
+    best = ""
+    for i, mx in enumerate((max_tokens, max_tokens + bump)):
+        try:
+            r = (await call_groq(system, user, temperature=temperature, max_tokens=mx,
+                                 json_mode=False, tier=tier) or "").strip()
+        except Exception as e:
+            logger.warning(f"[gen_text] {e}")
+            r = ""
+        if r and not _looks_truncated(r):
+            return r
+        best = best or r
+    return _trim_to_sentence(best)
+
 async def _preonboarding_reply(session: dict, t: str) -> str:
     """Répond à N'IMPORTE QUELLE question d'un visiteur pas encore onboardé (RGPD, prix, fiabilité,
     « c'est quoi », etc.) via l'IA, puis invite doucement à envoyer le CV. Pas de mots-clés imposés."""
@@ -1146,30 +1192,8 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
         + _recent_dialogue(session, 4)
     )
-    # Premier contact = première impression : on privilégie la FIABILITÉ (tier "smart"), on détecte
-    # une réponse tronquée/vide et on relance, et on ne sort JAMAIS le gros pitch sur une vraie question.
-    def _looks_truncated(s: str) -> bool:
-        s = (s or "").rstrip()
-        if not s:
-            return True
-        if s[-1] in ",(:;-":
-            return True
-        low = s.lower()
-        if low.endswith(("ex.", "(ex.", "par ex.", "exemple")):
-            return True
-        if s.count("(") > s.count(")"):   # parenthèse ouverte non refermée
-            return True
-        return False
-    best = ""
-    for mx in (450, 650):
-        try:
-            r = (await call_groq(system, t, temperature=0.4, max_tokens=mx, json_mode=False, tier="smart") or "").strip()
-        except Exception as e:
-            logger.warning(f"[preonboarding] {e}")
-            r = ""
-        if r and not _looks_truncated(r):
-            return r
-        best = best or r
+    # Premier contact = première impression : FIABILITÉ (tier "smart") + anti-troncature + relance.
+    best = await _gen_text(system, t, max_tokens=450, temperature=0.4, tier="smart")
     if best:                       # imparfait mais réel : toujours mieux que le pitch générique
         return best
     if _is_pitch_question((t or "").lower()):
@@ -1351,13 +1375,9 @@ async def _sim_debrief(session: dict) -> str:
     echanges = "\n".join(f"Q: {h.get('q','')}\nR: {h.get('a','')}" for h in hist if h.get("a"))
     system = (f"Tu es coach d'{label}. Fais un BILAN synthétique et motivant de la simulation : 3 points forts, "
               "3 axes d'amélioration concrets, et 2 conseils actionnables pour le vrai entretien. Tutoie, sois précis.")
-    try:
-        r = await call_groq(system, f"Points évalués : {focus}\nÉchanges :\n{echanges[:2500]}",
-                            temperature=0.4, max_tokens=600, json_mode=False)
-        return (r or "").strip() or "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté et les exemples concrets."
-    except Exception as e:
-        logger.warning(f"[sim] debrief {e}")
-        return "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté du projet et les exemples concrets."
+    r = await _gen_text(system, f"Points évalués : {focus}\nÉchanges :\n{echanges[:2500]}",
+                        max_tokens=600, temperature=0.4)
+    return r or "Bravo d'avoir tenu la simulation ! Retravaille surtout la clarté et les exemples concrets."
 
 async def _simulation_start(session: dict, arg: str) -> tuple[str, dict]:
     key = _sim_type_key(arg)
@@ -2512,6 +2532,46 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if ((low.startswith("/offre") and not low.startswith("/offres"))
+            or low.startswith("/ajouteroffre") or low.startswith("/addoffre")):
+        # Ajout MANUEL d'une offre curée par l'admin -> rejoint le pool de veille (matché aux profils).
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=1)
+        raw = parts[1].strip() if len(parts) > 1 else ""
+        champs = [c.strip() for c in raw.split("|")]
+        if raw and len(champs) >= 3:
+            typ_in = champs[0].lower()
+            typ = next((x for x in ("emploi", "stage", "bourse", "fellowship", "formation", "ong") if x in typ_in), "emploi")
+            titre = champs[1]
+            url = champs[2]
+            resume = champs[3] if len(champs) > 3 else ""
+            scope_in = (champs[4].lower() if len(champs) > 4 else "")
+            scope = "local" if scope_in.startswith(("loc", "ben")) else ("intl" if scope_in.startswith(("int", "etr", "étr")) else "both")
+            if not url.startswith(("http://", "https://")) or len(titre) < 3:
+                msg = ("❌ URL ou titre invalide.\n"
+                       "Format : `/offre <type> | <titre> | <url> | <description> | <local|intl>`")
+            else:
+                try:
+                    added = opp_store.add_source({"titre": titre, "url": url, "resume": resume,
+                                                  "type": typ, "scope": scope, "date": ""})
+                except Exception as e:
+                    logger.error(f"[offre] {e}"); added = False
+                msg = (f"✅ Offre ajoutée au pool de veille ({typ}, {scope}).\n*{_md_clean(titre)}*\n"
+                       "Elle sera proposée aux profils correspondants (et visible via /veille)."
+                       if added else "ℹ️ Cette offre (même URL) est déjà dans le pool.")
+        else:
+            msg = ("➕ *Ajouter une offre manuellement*\n"
+                   "`/offre <type> | <titre> | <url> | <description> | <local|intl>`\n\n"
+                   "Types : emploi, stage, bourse, fellowship, formation, ong.\n"
+                   "Exemple :\n"
+                   "`/offre emploi | Développeur PHP · Cotonou | https://exemple.com/offre | CDI, 2 ans d'XP | local`\n\n"
+                   "L'offre rejoint la veille et est proposée aux profils qui correspondent.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/formations") or low.startswith("/formation"):
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
@@ -3495,7 +3555,7 @@ COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/
 REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
-        r = await call_groq(system, t, temperature=0.3, max_tokens=380)
+        r = await call_groq(system, t, temperature=0.3, max_tokens=650)   # marge suffisante : le JSON ne se coupe plus
     except Exception as e:
         logger.error(f"Erreur LLM: {e}")
         r = {}
@@ -3503,7 +3563,8 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<r
     if action in _VALID_INTENTS:
         arg = str(r.get("argument", "") or "").strip()
         return await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
-    message = (r.get("message") or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…).").strip()
+    message = _trim_to_sentence((r.get("message") or "").strip()) \
+        or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…)."
     _push(session, "user", t); _push(session, "assistant", message)
     session["derniere_activite"] = now
     return message, session
