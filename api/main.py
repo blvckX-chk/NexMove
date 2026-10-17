@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.79.0"
+VERSION         = "2.79.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1146,13 +1146,38 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
         + _recent_dialogue(session, 4)
     )
-    try:
-        r = await call_groq(system, t, temperature=0.4, max_tokens=350, json_mode=False, tier="fast")
-        r = (r or "").strip()
-        return r or _WELCOME_PITCH
-    except Exception as e:
-        logger.warning(f"[preonboarding] {e}")
-        return _WELCOME_PITCH
+    # Premier contact = première impression : on privilégie la FIABILITÉ (tier "smart"), on détecte
+    # une réponse tronquée/vide et on relance, et on ne sort JAMAIS le gros pitch sur une vraie question.
+    def _looks_truncated(s: str) -> bool:
+        s = (s or "").rstrip()
+        if not s:
+            return True
+        if s[-1] in ",(:;-":
+            return True
+        low = s.lower()
+        if low.endswith(("ex.", "(ex.", "par ex.", "exemple")):
+            return True
+        if s.count("(") > s.count(")"):   # parenthèse ouverte non refermée
+            return True
+        return False
+    best = ""
+    for mx in (450, 650):
+        try:
+            r = (await call_groq(system, t, temperature=0.4, max_tokens=mx, json_mode=False, tier="smart") or "").strip()
+        except Exception as e:
+            logger.warning(f"[preonboarding] {e}")
+            r = ""
+        if r and not _looks_truncated(r):
+            return r
+        best = best or r
+    if best:                       # imparfait mais réel : toujours mieux que le pitch générique
+        return best
+    if _is_pitch_question((t or "").lower()):
+        return _WELCOME_PITCH      # vraie question « c'est quoi » -> pitch OK
+    # repli CONTEXTUEL (on ne répond pas à côté) : on relance utilement
+    return ("Bonne question ! Dis-m'en un peu plus sur ce que tu cherches (études ou travail ? quel domaine "
+            "ou pays ?) et je t'oriente tout de suite. Tu peux aussi m'envoyer ton *CV* (PDF, Word ou image), "
+            "ou taper /creercv si tu n'en as pas.")
 
 def _is_pitch_question(low: str) -> bool:
     """Question d'ouverture / salutation à laquelle on répond AVANT de demander le CV."""
