@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.79.1 — Qualité du premier contact (anti-réponse tronquée / à côté)
+- **Pré-onboarding fiabilisé** : le premier échange passe sur le modèle "smart" (fiable) au lieu de "fast". Détection des réponses tronquées (phrase coupée, parenthèse ouverte) + relance automatique.
+- **Plus jamais le pitch générique sur une vraie question** : si l'IA échoue, repli CONTEXTUEL qui relance utilement (et propose CV / /creercv), au lieu de renvoyer le bloc « NexMove c'est quoi ». Le pitch complet reste réservé aux vraies questions « c'est quoi ».
+
 ## v2.79 — Recherche multi-requêtes par tier + flux conditionnels + QC des offres
 - **Multi-requêtes parallèles** selon le tier : 2 (gratuit), 3 (Premium), 4 (Pro), 5 (VIP), jusqu'à 8 (admin). Chaque requête couvre un angle différent (cœur, local, grands job boards, variantes mots-clés, télétravail, stage/alternance) ; résultats fusionnés et dé-doublonnés.
 - **Flux structurés activés selon la requête** : le catalogue de sources (SOURCE_CATALOG) est fusionné au pool, filtré par TYPE (emploi vs bourse) et périmètre (local/intl).

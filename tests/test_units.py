@@ -1759,3 +1759,27 @@ def test_run_osint_multirequete_integration(monkeypatch, tmp_path):
     # message contient des liens courts maison et pas le domaine jooble auto-lié en doublon
     assert "https://api.example/l/" in res_prem["message"]
     assert res_prem["opportunites"]   # au moins une offre après QC + dédoublonnage domaine
+
+# ── Pré-onboarding fiable (anti-troncature, pas de pitch à côté) v2.79.1 ──
+def test_preonboarding_retry_sur_troncature(monkeypatch):
+    seq = iter(["Pour cibler, quel type de télétravail ? (ex. rédaction,",
+                "Au-delà de la rédaction : saisie de données, modération, assistance virtuelle, traduction. Envoie ton CV pour que je cible."])
+    async def fake_groq(system, user, **kw):
+        return next(seq)
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    out = _run(main._preonboarding_reply({"historique": []}, "à part la rédaction il y a quoi d'autres ?"))
+    assert "saisie de données" in out and not out.rstrip().endswith(",")
+
+def test_preonboarding_fallback_contextuel_pas_pitch(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return ""   # LLM indisponible
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    out = _run(main._preonboarding_reply({"historique": []}, "à part la rédaction il y a quoi d'autres ?"))
+    assert out != main._WELCOME_PITCH and "études ou travail" in out
+
+def test_preonboarding_pitch_sur_cest_quoi(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return ""
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    out = _run(main._preonboarding_reply({"historique": []}, "c'est quoi NexMove ?"))
+    assert out == main._WELCOME_PITCH
