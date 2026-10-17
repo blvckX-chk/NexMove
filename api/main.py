@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.78.0"
+VERSION         = "2.79.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2783,7 +2783,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         try:
             seen = set(session.get("seen_urls", []))
             res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"),
-                                  exclude_urls=seen, alertes=session.get("alertes", []))
+                                  exclude_urls=seen, alertes=session.get("alertes", []),
+                                  tier=_user_tier(session))
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
             opps = res.get("opportunites", [])
             for o in opps:
@@ -3041,7 +3042,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         else:
             try:
                 res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"),
-                                      alertes=session.get("alertes", []))
+                                      alertes=session.get("alertes", []), tier=_user_tier(session))
                 new = 0
                 for opp in res.get("opportunites", []):
                     if opp_store.add(session.get("user_id"), opp):
@@ -3257,7 +3258,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         # Recherche AUTO : des offres notées tout de suite après le CV (valeur immédiate).
         preview = ""
         try:
-            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session))
             opps = res.get("opportunites", []) or []
             for o in opps:
                 opp_store.add(session.get("user_id"), o)
@@ -3362,7 +3363,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if cached:
                     top = cached[:3]
                 else:
-                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"))
+                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session))
                     top = res.get("opportunites", [])[:3]
                     for o in res.get("opportunites", []):
                         opp_store.add(session.get("user_id"), o)
@@ -5681,7 +5682,97 @@ _REAL_JOB_PORTALS = [
     {"titre": "Indeed", "url": "https://www.indeed.com", "type": "emploi", "organisation": "indeed.com"},
 ]
 
-async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None) -> dict:
+# Nombre de requêtes web PARALLÈLES par tier (free 2, premium 3, pro 4, vip 5, admin = max).
+_TIER_QUERIES = {"free": 2, "premium": 3, "pro": 4, "vip": 5, "admin": 8}
+_TIER_CONC = {"free": 2, "premium": 3, "pro": 4, "vip": 6, "admin": 8}
+
+def _profil_search_terms(profil: dict) -> dict:
+    """Dérive de MEILLEURS termes de recherche à partir du profil (mots-clés explicites,
+    dernier poste, domaine de formation, compétences) en gérant les reconversions."""
+    prefs = (profil.get("preferences") or {})
+    mots = prefs.get("mots_cles") or ""
+    mots_list = [m.strip() for m in re.split(r"[,/;]| et ", mots) if m.strip()] \
+        if mots and mots.lower() not in ("tous", "aucun", "aucune", "-", "") else []
+    exp = profil.get("experience") or []
+    last_poste = (exp[0].get("poste", "") if exp and isinstance(exp[0], dict) else "")
+    comp = (profil.get("competences", {}).get("techniques", []) +
+            profil.get("competences", {}).get("securite", []))[:6]
+    form_dom = next((f.get("domaine", "") for f in (profil.get("formation") or []) if f.get("domaine")), "")
+    # Priorité : mots-clés visés > dernier poste > domaine de formation > résumé.
+    domaine = (mots_list[0] if mots_list else "") or last_poste or form_dom \
+        or (str(profil.get("resume_profil", ""))[:50]) or "opportunités"
+    kw = []
+    for x in (mots_list + [last_poste, form_dom] + list(comp)):
+        x = (x or "").strip()
+        if x and x.lower() not in [k.lower() for k in kw]:
+            kw.append(x)
+    return {"domaine": domaine, "keywords": kw[:6], "mots_list": mots_list}
+
+def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
+                         local_pays: str, type_emploi: str, veut_local: bool) -> list:
+    """Construit une liste ORDONNÉE de requêtes complémentaires (angles différents).
+    Les comptes gratuits en prennent les 2 premières (les plus utiles), les premium plus."""
+    domaine = terms["domaine"]; kws = terms["keywords"]; year = datetime.now(timezone.utc).year
+    z = zone or ""
+    Q = []
+    Q.append(f"{type_mot} {domaine} {type_emploi} {z} {year} candidature")
+    if veut_local and local_pays:
+        locs = " OR ".join(p.split()[0] for p in LOCAL_JOB_SOURCES.get(local_pays, [])[:3])
+        Q.append(f"{type_mot} {domaine} {local_pays} {locs}")
+    if type_mot == "emploi" or objectif in ("travailler", "tous", "tout", ""):
+        Q.append(f"{domaine} {z} emploi site:linkedin.com OR site:indeed.com OR site:glassdoor.com")
+    else:
+        Q.append(f"bourse {domaine} {z} site:campusfrance.org OR DAAD OR Erasmus Mundus OR Chevening")
+    if len(kws) > 1:
+        Q.append(f"{type_mot} {kws[1]} {z} {year}")
+    Q.append(f"{domaine} {type_mot} télétravail OR remote OR international {year}")
+    if len(kws) > 2:
+        Q.append(f"{type_mot} {kws[2]} {z}")
+    if type_mot == "emploi":
+        Q.append(f"stage OR alternance {domaine} {z} {year}")
+    seen = set(); out = []
+    for q in Q:
+        q = re.sub(r"\s+", " ", q).strip()
+        if q and q.lower() not in seen:
+            seen.add(q.lower()); out.append(q)
+    return out
+
+def _feed_candidates(kws: list, type_mot: str, prefer_scope) -> list:
+    """Flux structurés (SOURCE_CATALOG déjà ingérés) ACTIVÉS selon la requête : on ne remonte
+    que les items du bon TYPE (emploi vs bourse), convertis au format des résultats web."""
+    try:
+        srcs = opp_store.search_sources([k for k in kws if k], prefer_scope=prefer_scope)
+    except Exception as e:
+        logger.warning(f"[feeds] search_sources: {e}")
+        return []
+    out = []
+    for s in srcs:
+        st = (s.get("type") or "").lower()
+        if type_mot == "emploi" and st and st not in ("emploi", "ong", "both"):
+            continue
+        if type_mot == "bourse" and st and st not in ("bourse", "fellowship", "both"):
+            continue
+        url = s.get("url", "")
+        if not url:
+            continue
+        out.append({"title": s.get("titre", ""), "url": url,
+                    "content": (s.get("resume") or "")[:300], "_feed": True})
+    return out
+
+def _opp_quality_ok(opp: dict) -> bool:
+    """QC de sortie d'une offre : titre réel, URL http valide, pas de placeholder."""
+    titre = str(opp.get("titre", "") or "").strip()
+    url = str(opp.get("url", "") or opp.get("portail_officiel", "") or "").strip()
+    if len(titre) < 4:
+        return False
+    if not url.startswith(("http://", "https://")):
+        return False
+    if _PLACEHOLDER_RE.search(titre):
+        return False
+    return True
+
+async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None,
+                    tier: str = "free", n_queries: int = None) -> dict:
     profil = profil or {}
     exclude_urls = exclude_urls or set()
     alertes = alertes or []
@@ -5694,13 +5785,8 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     formations = [f.get("diplome", "") for f in (profil.get("formation") or []) if f.get("diplome")][:3]
     experiences = [f"{e.get('poste','')} ({e.get('organisation','')})" for e in (profil.get("experience") or []) if e.get("poste")][:3]
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:8]
-    mots = prefs.get("mots_cles") or ""
-    mots_list = [m.strip() for m in re.split(r"[,/;]| et ", mots) if m.strip()] if mots and mots.lower() not in ("tous", "aucun", "aucune", "-", "") else []
-    if mots_list:
-        domaine = mots
-    else:
-        last_poste = (profil.get("experience") or [{}])[0].get("poste", "")
-        domaine = last_poste or (resume[:60]) or (formations[0] if formations else "") or "opportunités"
+    terms = _profil_search_terms(profil)
+    domaine = terms["domaine"]; mots_list = terms["mots_list"]
     type_emploi = prefs.get("type_emploi") or ""
     cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités"
     cible_lower = cible.lower()
@@ -5716,27 +5802,40 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                   f"expériences: {', '.join(experiences) or '—'} | compétences: {competences} | "
                   f"objectif: {objectif} | financement: {financement} | nationalité: {nationalite}")
 
+    # Périmètre/type pour les requêtes et l'activation des flux.
+    type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
+                "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
+    if pays_detecte:
+        zone = pays_detecte
+    elif not _pc_vide:
+        zone = pays_cibles
+    else:
+        zone = local_pays if veut_local else ""
+    prefer_scope = None if _vise_international(prefs) else ("local" if _is_travail(objectif) else None)
+
     grounded = []
     if TAVILY_API_KEY:
-        type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
-                    "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
-        if pays_detecte:
-            zone = pays_detecte
-        elif not _pc_vide:
-            zone = pays_cibles
-        else:
-            zone = local_pays if veut_local else ""
-        domaine_q = " OR ".join(mots_list) if len(mots_list) > 1 else domaine
-        query = f"{type_mot} {domaine_q} {type_emploi} {zone} 2026 candidature".strip()
-        # Recherche LOCALE : on oriente vers les portails d'emploi réels du pays.
-        if veut_local and local_pays and objectif in ("travailler", "tous", "tout", ""):
-            portails = LOCAL_JOB_SOURCES.get(local_pays, [])[:3]
-            if portails:
-                query += " " + " OR ".join(p.split()[0] for p in portails)
-        # Emploi (international) : on fait remonter les grands job boards, dont LinkedIn.
-        if type_mot == "emploi" or objectif in ("travailler", "tous", "tout"):
-            query += " LinkedIn OR Indeed OR Glassdoor"
-        grounded = await tavily_search(query, 12)
+        # Multi-requêtes PARALLÈLES : nombre selon le tier (free 2 … admin 8), filtrage commun ensuite.
+        nq = n_queries if isinstance(n_queries, int) and n_queries > 0 else _TIER_QUERIES.get(tier, 2)
+        conc = _TIER_CONC.get(tier, 2)
+        queries = _build_osint_queries(terms, objectif, type_mot, zone, local_pays, type_emploi, veut_local)[:nq]
+        sem = asyncio.Semaphore(max(1, conc))
+        async def _one_query(q):
+            async with sem:
+                return await tavily_search(q, 8)
+        batches = await asyncio.gather(*[_one_query(q) for q in queries], return_exceptions=True)
+        seen_u = set()
+        for b in batches:
+            if isinstance(b, Exception) or not b:
+                continue
+            for s in b:
+                u = s.get("url", "")
+                if u and u not in seen_u:
+                    seen_u.add(u); grounded.append(s)
+        # Flux structurés ACTIVÉS selon la requête (emploi vs bourse), fusionnés au pool.
+        for fc in _feed_candidates(terms["keywords"] + [domaine], type_mot, prefer_scope):
+            if fc["url"] not in seen_u:
+                seen_u.add(fc["url"]); grounded.append(fc)
 
     if grounded:
         # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
@@ -5745,7 +5844,8 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
             for s, sim in zip(grounded, sims):
                 s["_sim"] = sim
             grounded = sorted(grounded, key=lambda s: s.get("_sim", 0.0), reverse=True)
-        grounded = grounded[:8]
+        # Fenêtre de sélection élargie selon le tier (plus de requêtes -> plus de candidats à trier).
+        grounded = grounded[:min(14, 6 + _TIER_QUERIES.get(tier, 2) * 2)]
         sources_txt = "\n".join(f"[{i}] {s.get('title','')} · {(s.get('content','') or '')[:200]}"
                                 for i, s in enumerate(grounded))
         system = ("Tu es expert en orientation, emploi et mobilité (LOCALE ou internationale). On te fournit des "
@@ -5828,6 +5928,8 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         except Exception:
             return True
     opps = [o for o in opps if _open(o)]
+    if grounded:   # QC de sortie : on ne garde que des offres web saines (titre + URL http, sans placeholder)
+        opps = [o for o in opps if _opp_quality_ok(o)]
     if exclude_urls:   # anti-doublons entre deux /mobilite d'affilée
         opps = [o for o in opps if str(o.get("url", "") or o.get("portail_officiel", "")) not in exclude_urls]
     # Alertes mots-clés : les offres qui matchent remontent en tête + tag 🔔.
@@ -5852,12 +5954,12 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         score = opp.get("score_composite", 0)
         emoji = "🔥" if score >= 75 else "✅" if score >= 55 else "⚠️"
         conf = conf_emoji.get(str(opp.get("confiance", "")).lower(), "")
-        titre = _md_clean(opp.get("titre", ""))[:70]
+        titre = _md_clean(_sanitize_doc_text(opp.get("titre", "")))[:70]
         raw = str(opp.get("url", "") or opp.get("portail_officiel", "")).replace("*", "").replace("`", "").strip()
         # 1 SEUL lien propre par offre : court maison pour les offres web, URL officielle directe pour les portails.
         lien = (_short(raw) if grounded else raw) if raw else ""
         deadline = _md_clean(opp.get("deadline", ""))
-        raison = _md_clean(opp.get("raison", ""))[:150]
+        raison = _md_clean(_sanitize_doc_text(opp.get("raison", "")))[:150]
         meta = f"   {_type_label(opp.get('type',''))} · {score}/100 {conf}".rstrip()
         if deadline:
             meta += f" · 📅 {deadline}"
@@ -5891,7 +5993,8 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
     logger.info(f"[osint] user={request.user_id} cible={request.cible}")
     session = session_manager.get(request.user_id)
     profil = session.get("profil", {}) if session else {}
-    res = await run_osint(profil, request.cible, request.user_id)
+    res = await run_osint(profil, request.cible, request.user_id,
+                          tier=_user_tier(session) if session else "free")
     return {**res, "chat_id": request.chat_id}
 
 @app.post("/api/collect")
@@ -5906,7 +6009,8 @@ async def collect(_auth: bool = Depends(verify_api_key)):
             prefs = profil.get("preferences", {}) or {}
             if COLLECT_OSINT_PER_USER:
                 try:
-                    res = await run_osint(profil, "", s.get("user_id"), alertes=s.get("alertes", []))
+                    res = await run_osint(profil, "", s.get("user_id"), alertes=s.get("alertes", []),
+                                          tier=_user_tier(s), n_queries=1)
                     for opp in res.get("opportunites", []):
                         if opp_store.add(s.get("user_id"), opp):
                             n += 1
