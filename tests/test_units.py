@@ -1658,3 +1658,24 @@ def test_build_letter_docx_sans_carreau():
     buf = main.build_letter_docx(profil, "Candidature ☐", "Madame, □ je postule pour ce poste.")
     data = buf.getvalue()
     assert data[:2] == b"PK" and len(data) > 500  # docx = zip valide
+
+# ── Raccourcisseur de liens & spécificité d'URL (offres plus propres) ──
+def test_url_specificity_prefers_specific():
+    search = "https://fr.jooble.org/emploi-benin"
+    specific = "https://fr.jooble.org/desc/1234567890"
+    assert main._url_specificity(specific) > main._url_specificity(search)
+
+def test_short_link_roundtrip(monkeypatch):
+    monkeypatch.setattr(main, "PUBLIC_API_URL", "https://api.example")
+    out = main._short("https://fr.jooble.org/desc/42")
+    assert out.startswith("https://api.example/l/")
+    # non-URL inchangé
+    assert main._short("pas une url") == "pas une url"
+
+def test_short_link_redirect_endpoint():
+    from fastapi.testclient import TestClient
+    c = TestClient(main.app)
+    code = main.link_store.shorten("https://example.org/offre/7")
+    r = c.get(f"/l/{code}", follow_redirects=False)
+    assert r.status_code == 302 and r.headers["location"] == "https://example.org/offre/7"
+    assert c.get("/l/zzzzzz", follow_redirects=False).status_code == 404

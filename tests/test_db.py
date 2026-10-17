@@ -301,3 +301,18 @@ def test_candidature_note_et_full(tmp_path, monkeypatch):
     assert rows[0][5]  # updated_at renseigné
     # note sur cible inconnue -> 0 ligne
     assert store.set_note("u1", "inexistant xyz", "note") == 0
+
+def test_link_store_shorten_resolve(tmp_path, monkeypatch):
+    db = _fresh_db(tmp_path, monkeypatch)
+    ls = db.LinkStore()
+    url = "https://fr.jooble.org/emploi-benin/analyste"
+    code = ls.shorten(url)
+    assert code and len(code) >= 5
+    # même URL -> même code (stable, pas de doublon)
+    assert ls.shorten(url) == code
+    # résolution + comptage de clics
+    assert ls.resolve(code) == url
+    assert ls.resolve(code) == url
+    assert ls.resolve("inexistant") is None
+    # URL vide -> code vide
+    assert ls.shorten("") == ""

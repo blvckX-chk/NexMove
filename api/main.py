@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.77.3"
+VERSION         = "2.78.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -217,7 +217,7 @@ RATE_LIMIT_PER_MIN = int(os.getenv("RATE_LIMIT_PER_MIN", "120"))   # 0 = désact
 _RATE_BUCKET: dict[str, list[float]] = {}
 # Exempts : pings uptime + webhooks entrants (déjà authentifiés par secret/signature ;
 # les limiter risquerait de FAIRE TOMBER des messages utilisateurs légitimes).
-_RATE_EXEMPT = ("/health", "/webhook/")
+_RATE_EXEMPT = ("/health", "/webhook/", "/l/")
 
 _SEC_HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
                 "Referrer-Policy": "strict-origin-when-cross-origin"}
@@ -287,7 +287,9 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
-                profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store)
+                profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store,
+                link_store)
+from fastapi.responses import RedirectResponse, PlainTextResponse
 
 
 # (Embeddings/vision : voir llm.py · PR-B)
@@ -5552,6 +5554,35 @@ def _domain(url):
     d = re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0]
     return d[:40]
 
+# Raccourcisseur de liens : base publique de l'API (où répond /l/<code>).
+PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api-nexmove.blvckunlimited.space").rstrip("/")
+
+def _short(url: str) -> str:
+    """Un lien court maison pour une offre (présentation propre + clic mesurable).
+    Repli sur l'URL d'origine si le raccourcisseur échoue."""
+    url = (url or "").strip()
+    if not url or not url.startswith(("http://", "https://")):
+        return url
+    try:
+        code = link_store.shorten(url)
+        return f"{PUBLIC_API_URL}/l/{code}" if code else url
+    except Exception as e:
+        logger.warning(f"[short] {e}")
+        return url
+
+def _url_specificity(url: str) -> int:
+    """Heuristique : plus une URL a de segments de chemin et de chiffres (id d'offre),
+    plus elle est 'spécifique' (une offre précise) plutôt qu'une page de recherche."""
+    try:
+        path = urlparse(url).path
+    except Exception:
+        path = str(url or "")
+    segs = [s for s in path.split("/") if s]
+    score = len(segs) * 2 + sum(1 for s in segs if any(c.isdigit() for c in s)) * 3
+    if any(k in url.lower() for k in ("/search", "?q=", "/recherche", "/jobs?", "/emploi-", "/offres?")):
+        score -= 4   # ressemble à une page de recherche générique
+    return score
+
 # Nationalité -> pays (pour proposer aussi des opportunités LOCALES, pas seulement à l'étranger)
 _NAT_PAYS = {
     "béninoise": "Bénin", "beninoise": "Bénin", "ivoirienne": "Côte d'Ivoire", "sénégalaise": "Sénégal",
@@ -5705,7 +5736,7 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
         # Emploi (international) : on fait remonter les grands job boards, dont LinkedIn.
         if type_mot == "emploi" or objectif in ("travailler", "tous", "tout"):
             query += " LinkedIn OR Indeed OR Glassdoor"
-        grounded = await tavily_search(query, 10)
+        grounded = await tavily_search(query, 12)
 
     if grounded:
         # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
@@ -5759,6 +5790,15 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                 if d:
                     o["score_composite"] = max(0, min(100, (o.get("score_composite") or 0) + d))
         clean.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
+        # Dé-doublonnage par domaine : on ne garde qu'UNE offre par site (la mieux notée et
+        # la plus spécifique), pour éviter 3 liens du même portail de recherche.
+        best_by_dom = {}
+        for o in clean:
+            dom = _domain(o.get("url", ""))
+            prev = best_by_dom.get(dom)
+            if prev is None or _url_specificity(o.get("url", "")) > _url_specificity(prev.get("url", "")):
+                best_by_dom[dom] = o
+        clean = sorted(best_by_dom.values(), key=lambda o: o.get("score_composite", 0), reverse=True)
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles · vérifie l'éligibilité et la deadline sur chaque lien._"
     else:
@@ -5808,30 +5848,43 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         msg += f"🔔 *{n_alertes} offre(s) correspondent à tes alertes !*\n"
     if pays_detecte:
         msg += f"🗺️ Visa {pays_detecte} : {visa_info['facilite']}/100, ~{visa_info['delai']}j\n\n"
-    for i, opp in enumerate(opps[:5], 1):
+    for i, opp in enumerate(opps[:4], 1):
         score = opp.get("score_composite", 0)
         emoji = "🔥" if score >= 75 else "✅" if score >= 55 else "⚠️"
         conf = conf_emoji.get(str(opp.get("confiance", "")).lower(), "")
-        titre = _md_clean(opp.get("titre", ""))[:60]
-        orga = _md_clean(opp.get("organisation", ""))
-        lien = str(opp.get("url", "") or opp.get("portail_officiel", "")).replace("*", "").replace("`", "").strip()
+        titre = _md_clean(opp.get("titre", ""))[:70]
+        raw = str(opp.get("url", "") or opp.get("portail_officiel", "")).replace("*", "").replace("`", "").strip()
+        # 1 SEUL lien propre par offre : court maison pour les offres web, URL officielle directe pour les portails.
+        lien = (_short(raw) if grounded else raw) if raw else ""
         deadline = _md_clean(opp.get("deadline", ""))
-        raison = _md_clean(opp.get("raison", ""))
-        msg += f"{i}. {_type_label(opp.get('type',''))}  {emoji}\n   *{titre}*\n"
-        msg += f"   🏢 {orga} · 📊 {score}/100 {conf}\n"
-        if lien:
-            msg += f"   🔗 {lien}\n"
+        raison = _md_clean(opp.get("raison", ""))[:150]
+        meta = f"   {_type_label(opp.get('type',''))} · {score}/100 {conf}".rstrip()
         if deadline:
-            msg += f"   📅 {deadline}\n"
+            meta += f" · 📅 {deadline}"
+        msg += f"{i}. {emoji} *{titre}*\n{meta}\n"
         if raison:
-            msg += f"   💬 {raison}\n"
+            msg += f"   {raison}\n"
+        if lien:
+            msg += f"   👉 {lien}\n"
         msg += "\n"
     if result.get("conseil_principal"):
-        msg += f"💡 *Conseil :* {_md_clean(result['conseil_principal'])}\n\n"
+        msg += f"💡 *Conseil :* {_md_clean(result['conseil_principal'])[:240]}\n\n"
     if not opps:
         msg += "Aucune opportunité pertinente trouvée. Précise un domaine : /mobilite <pays> <domaine>.\n\n"
     msg += footer
     return {"message": msg, "opportunites": opps, "visa_info": visa_info, "grounded": bool(grounded)}
+
+@app.get("/l/{code}")
+async def short_link_redirect(code: str):
+    """Redirige un lien court maison vers sa cible (public, sans clé). Compte le clic."""
+    url = None
+    try:
+        url = link_store.resolve(code)
+    except Exception as e:
+        logger.warning(f"[short] resolve {code}: {e}")
+    if not url:
+        return PlainTextResponse("Lien introuvable ou expiré.", status_code=404)
+    return RedirectResponse(url, status_code=302)
 
 @app.post("/api/osint")
 async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_api_key)):

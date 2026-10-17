@@ -721,6 +721,62 @@ class Cache:
         con.commit(); con.close()
 
 
+class LinkStore:
+    """Raccourcisseur de liens maison : un code court -> URL cible, avec comptage de clics.
+    Sert à n'afficher QU'UN lien propre par offre et à pouvoir mesurer/mettre à jour ensuite."""
+    _ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"  # sans caractères ambigus
+
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS links (
+            code TEXT PRIMARY KEY, url TEXT UNIQUE, clicks INTEGER DEFAULT 0, created_at TEXT)""")
+        con.commit(); con.close()
+
+    def _gen_code(self, n: int = 6) -> str:
+        import secrets
+        return "".join(secrets.choice(self._ALPHABET) for _ in range(n))
+
+    def shorten(self, url: str) -> str:
+        """Retourne un code court stable pour cette URL (réutilisé si déjà vu)."""
+        url = (url or "").strip()
+        if not url:
+            return ""
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT code FROM links WHERE url=?", (url,)).fetchone()
+            if row:
+                return row[0]
+            for _ in range(5):
+                code = self._gen_code()
+                try:
+                    con.execute("INSERT INTO links(code,url,clicks,created_at) VALUES(?,?,0,?)",
+                                (code, url, datetime.now(timezone.utc).isoformat()))
+                    con.commit()
+                    return code
+                except sqlite3.IntegrityError:
+                    # collision de code (rare) : on réessaie ; ou l'URL a été insérée entre-temps
+                    row = con.execute("SELECT code FROM links WHERE url=?", (url,)).fetchone()
+                    if row:
+                        return row[0]
+            return ""
+        finally:
+            con.close()
+
+    def resolve(self, code: str) -> Optional[str]:
+        """Retourne l'URL cible et incrémente le compteur de clics."""
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            row = con.execute("SELECT url FROM links WHERE code=?", (str(code or ""),)).fetchone()
+            if not row:
+                return None
+            con.execute("UPDATE links SET clicks=clicks+1 WHERE code=?", (str(code),))
+            con.commit()
+            return row[0]
+        finally:
+            con.close()
+
+
 # ── Singletons partagés — même contrat qu'avant la PR-A ──
 session_manager = SessionManager()
 opp_store = OppStore()
@@ -733,3 +789,4 @@ premium_store = PremiumStore()
 credit_store = CreditStore()
 referral_store = ReferralStore()
 cache = Cache()
+link_store = LinkStore()

@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.78 — Offres plus lisibles : 1 lien court par offre + sources affinées
+- **Un seul lien propre par offre** : fini le domaine auto-lié + le lien de recherche + le lien source. Chaque offre affiche désormais UN lien court maison (service de raccourcissement intégré, /l/<code>), avec clic mesurable.
+- **Message plus court** : mise en page compacte (type · score · deadline sur une ligne), 4 offres max, conseil resserré.
+- **Dé-doublonnage par domaine** + préférence aux URL spécifiques (une vraie offre plutôt qu'une page de recherche générique).
+- **Plus de sources** : recherche web élargie (12 résultats) avant sélection.
+- Nouveau raccourcisseur de liens (table links), endpoint public /l/<code> (302 + comptage). Tests ajoutés.
+
 ## v2.77.3 — Zéro tiret cadratin (anti-marqueur IA) + en-tête épuré
 - **Vitrine** : suppression de tous les tirets cadratins/demi-cadratins restants ; en-tête réduit à 4 liens ciblés (Fonctions, Tarifs, Testeurs, Soutenir) pour une UX plus claire, orientée présentation/financement.
 - **Bot** : règle de style imposée au LLM (aucun tiret cadratin dans les réponses générées) + remplacement des 230 séparateurs " — " des messages par un point médian, sans toucher à la logique de parsing (regex de titres, marqueurs de champ vide préservés).
