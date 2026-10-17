@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.79 — Recherche multi-requêtes par tier + flux conditionnels + QC des offres
+- **Multi-requêtes parallèles** selon le tier : 2 (gratuit), 3 (Premium), 4 (Pro), 5 (VIP), jusqu'à 8 (admin). Chaque requête couvre un angle différent (cœur, local, grands job boards, variantes mots-clés, télétravail, stage/alternance) ; résultats fusionnés et dé-doublonnés.
+- **Flux structurés activés selon la requête** : le catalogue de sources (SOURCE_CATALOG) est fusionné au pool, filtré par TYPE (emploi vs bourse) et périmètre (local/intl).
+- **Meilleure construction du profil de recherche** : termes dérivés des mots-clés visés, du dernier poste, du domaine de formation et des compétences (gestion des reconversions).
+- **QC de sortie des offres** : on ne garde que des offres saines (titre réel, URL http, sans placeholder), titres/raisons nettoyés des symboles parasites ; filtrage sémantique pour tous.
+- Fenêtre de sélection élargie selon le tier ; /collect en arrière-plan plafonné à 1 requête (coût). Tests ajoutés.
+
 ## v2.78 — Offres plus lisibles : 1 lien court par offre + sources affinées
 - **Un seul lien propre par offre** : fini le domaine auto-lié + le lien de recherche + le lien source. Chaque offre affiche désormais UN lien court maison (service de raccourcissement intégré, /l/<code>), avec clic mesurable.
 - **Message plus court** : mise en page compacte (type · score · deadline sur une ligne), 4 offres max, conseil resserré.

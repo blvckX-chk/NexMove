@@ -224,6 +224,7 @@ def test_name_from_filename_chiffres_ignores():
 
 # ------------------ Flux d'onboarding adaptatif (bout en bout, hors réseau) ------------------
 import asyncio as _asyncio
+import asyncio as _aio
 
 def _run(coro):
     loop = _asyncio.new_event_loop()
@@ -1491,7 +1492,6 @@ def test_fetch_url_ssrf_refuse():
     assert r3["ok"] is False
 
 def test_user_lock_dedup():
-    import asyncio as _aio
     l1 = main._user_lock("u1"); l2 = main._user_lock("u1"); l3 = main._user_lock("u2")
     assert l1 is l2 and l1 is not l3 and isinstance(l1, _aio.Lock)
 
@@ -1679,3 +1679,83 @@ def test_short_link_redirect_endpoint():
     r = c.get(f"/l/{code}", follow_redirects=False)
     assert r.status_code == 302 and r.headers["location"] == "https://example.org/offre/7"
     assert c.get("/l/zzzzzz", follow_redirects=False).status_code == 404
+
+# ── Multi-requêtes OSINT, profil & QC des offres (v2.79) ──
+def test_profil_search_terms_priorise_motscles():
+    profil = {"preferences": {"mots_cles": "cybersécurité, réseaux"},
+              "experience": [{"poste": "Technicien support"}],
+              "formation": [{"domaine": "informatique"}],
+              "competences": {"techniques": ["Python", "Linux"]}}
+    t = main._profil_search_terms(profil)
+    assert t["domaine"] == "cybersécurité"
+    assert "réseaux" in t["keywords"] and "Technicien support" in t["keywords"]
+    assert t["mots_list"][:2] == ["cybersécurité", "réseaux"]
+
+def test_profil_search_terms_reconversion_sans_motscles():
+    # pas de mots-clés -> dernier poste prioritaire (reconversion possible)
+    profil = {"preferences": {}, "experience": [{"poste": "Data analyst"}],
+              "formation": [{"domaine": "gestion"}]}
+    assert main._profil_search_terms(profil)["domaine"] == "Data analyst"
+
+def test_build_osint_queries_angles_varies():
+    terms = {"domaine": "cybersécurité", "keywords": ["cybersécurité", "réseaux", "cloud"], "mots_list": ["cybersécurité", "réseaux"]}
+    qs = main._build_osint_queries(terms, "travailler", "emploi", "Canada", "Bénin", "", True)
+    assert len(qs) >= 4 and len(set(qs)) == len(qs)   # requêtes distinctes
+    # free prend les 2 premières (cœur + local)
+    assert "cybersécurité" in qs[0].lower()
+
+def test_tier_query_counts():
+    assert main._TIER_QUERIES["free"] == 2
+    assert main._TIER_QUERIES["premium"] == 3 and main._TIER_QUERIES["pro"] == 4
+    assert main._TIER_QUERIES["vip"] == 5
+    assert main._TIER_QUERIES["admin"] >= 6   # "le plus possible" pour l'admin
+
+def test_feed_candidates_filtre_par_type(monkeypatch):
+    monkeypatch.setattr(main.opp_store, "search_sources", lambda kws, prefer_scope=None: [
+        {"titre": "Emploi dev", "url": "https://a.co/1", "resume": "x", "type": "emploi", "scope": "both"},
+        {"titre": "Bourse master", "url": "https://b.co/2", "resume": "y", "type": "bourse", "scope": "intl"},
+    ])
+    emploi = main._feed_candidates(["dev"], "emploi", None)
+    assert len(emploi) == 1 and emploi[0]["url"] == "https://a.co/1"
+    bourse = main._feed_candidates(["master"], "bourse", None)
+    assert len(bourse) == 1 and bourse[0]["url"] == "https://b.co/2"
+
+def test_opp_quality_ok():
+    assert main._opp_quality_ok({"titre": "Analyste SOC", "url": "https://x.co/1"})
+    assert not main._opp_quality_ok({"titre": "", "url": "https://x.co/1"})
+    assert not main._opp_quality_ok({"titre": "Poste", "url": "pas-une-url"})
+    assert not main._opp_quality_ok({"titre": "Poste [entreprise]", "url": "https://x.co/1"})
+
+def test_run_osint_multirequete_integration(monkeypatch, tmp_path):
+    calls = {"queries": []}
+    async def fake_tavily(q, n=8):
+        calls["queries"].append(q)
+        # 2 résultats par requête, URLs distinctes
+        i = len(calls["queries"])
+        return [{"title": f"Offre {i}a", "url": f"https://site{i}.com/offre/{i}01", "content": "dev python"},
+                {"title": f"Offre {i}b", "url": f"https://jooble.org/emploi-benin", "content": "recherche"}]
+    async def fake_sem(txt, items, fn):
+        return [0.9 - 0.01*k for k in range(len(items))]
+    async def fake_groq(system, prompt, **kw):
+        # sélectionne les 3 premiers index présents dans le prompt
+        return {"opportunites": [{"index": 0, "type": "emploi", "confiance": "haute", "score_composite": 80, "raison": "ok"},
+                                 {"index": 1, "type": "emploi", "confiance": "moyenne", "score_composite": 70, "raison": "ok"},
+                                 {"index": 2, "type": "emploi", "confiance": "moyenne", "score_composite": 60, "raison": "ok"}],
+                "conseil_principal": "Postule vite."}
+    monkeypatch.setattr(main, "TAVILY_API_KEY", "x")
+    monkeypatch.setattr(main, "tavily_search", fake_tavily)
+    monkeypatch.setattr(main, "semantic_scores", fake_sem)
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    monkeypatch.setattr(main.opp_store, "search_sources", lambda kws, prefer_scope=None: [])
+    monkeypatch.setattr(main.opp_store, "feedback_delta", lambda *a, **k: 0)
+    monkeypatch.setattr(main, "PUBLIC_API_URL", "https://api.example")
+    profil = {"preferences": {"objectif": "travailler", "mots_cles": "python", "pays_cibles": "Canada"}}
+    # free -> 2 requêtes ; premium -> 3
+    res_free = _run(main.run_osint(profil, "", "u1", tier="free"))
+    assert len(calls["queries"]) == 2
+    calls["queries"].clear()
+    res_prem = _run(main.run_osint(profil, "", "u2", tier="premium"))
+    assert len(calls["queries"]) == 3
+    # message contient des liens courts maison et pas le domaine jooble auto-lié en doublon
+    assert "https://api.example/l/" in res_prem["message"]
+    assert res_prem["opportunites"]   # au moins une offre après QC + dédoublonnage domaine
