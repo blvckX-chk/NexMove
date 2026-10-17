@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.79.1"
+VERSION         = "2.80.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1544,6 +1544,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     now = datetime.now(timezone.utc).isoformat()
     profil = session.get("profil", {}) or {}   # disponible pour TOUS les handlers (évite UnboundLocalError)
 
+    # Bug en attente de capture : un message TEXTE qui n'est pas un /bug annule l'attente
+    # (évite qu'un CV envoyé ensuite parte par erreur comme capture de bug).
+    if session.get("bug_mode") and not low.startswith(("/bug", "/probleme", "/problème", "/signaler")):
+        session["bug_mode"] = False; session.pop("bug_text", None)
+
     # Mode /simulation (coach d'entretien) : capte les réponses libres (les commandes passent normalement).
     if session.get("sim_mode") and not low.startswith("/"):
         _push(session, "user", t)
@@ -2323,10 +2328,11 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         contact_bloc = "\n".join(contacts) if contacts else "_(canaux directs non configurés · utilise /contact <ton message>)_"
         if not message_user:
             if _is_bug:
+                session["bug_mode"] = True   # la prochaine capture d'écran sera transmise comme bug
                 msg = ("🐞 *Signaler un bug*\n"
-                       "Décris le souci après la commande, ex : */bug le bot ne répond pas quand j'envoie mon CV*.\n"
-                       "Précise si possible : ce que tu faisais, ce qui s'est passé, et sur Telegram ou WhatsApp.\n\n"
-                       "Je transmets directement à l'équipe technique. Merci, ça aide à améliorer NexMove.")
+                       "📸 *Envoie-moi une capture d'écran* du souci maintenant, je la transmets à l'équipe.\n"
+                       "Tu peux aussi le décrire : */bug ce que tu faisais et ce qui s'est passé*.\n\n"
+                       "Merci, ça aide à améliorer NexMove.")
             else:
                 msg = ("💬 *Nous contacter*\n" + contact_bloc + "\n\n"
                        "Ou écris ici : */contact ton message* · je le transmets à l'équipe.\n"
@@ -2353,8 +2359,13 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             opp_store.add_contact(session.get("user_id"), session.get("username"), tag, ok)
         except Exception as e:
             logger.warning(f"[contact] log: {e}")
+        if _is_bug:
+            # On arme la capture : l'utilisateur peut maintenant envoyer un screenshot qui complétera ce bug.
+            session["bug_mode"] = True
+            session["bug_text"] = message_user
         if ok and _is_bug:
-            msg = "✅ Bug transmis à l'équipe technique. Merci, on regarde ça. Tu peux continuer à utiliser le bot normalement."
+            msg = ("✅ Bug transmis à l'équipe technique. Merci, on regarde ça.\n"
+                   "📸 Tu peux *envoyer une capture d'écran* maintenant pour l'illustrer (facultatif).")
         elif ok:
             msg = f"✅ Merci, ton message a été transmis à l'équipe. Nous te recontactons vite.\n\n{contact_bloc}"
         else:
@@ -4243,8 +4254,44 @@ async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
     await deliver_text(session, "🧭 " + guidance + "\n\n_Envoie la capture suivante, ou tape /annuler pour quitter._")
 
 
-async def process_cv(session, pdf_bytes, filename="cv.pdf"):
+async def _process_bug_screenshot(session, data, filename, caption=""):
+    """Transmet une capture d'écran de bug à l'admin (Telegram), avec le contexte utilisateur."""
+    uid = session.get("user_id"); uname = session.get("username", "utilisateur")
+    canal = session.get("channel", "?")
+    desc = (session.pop("bug_text", "") or "").strip()
+    libre = (caption or "").strip()
+    for marker in ("/bug", "/probleme", "/problème", "/signaler", "bug"):
+        if libre.lower().startswith(marker):
+            libre = libre[len(marker):].strip(" :·-"); break
+    details = " ".join(p for p in (desc, libre) if p)[:1500]
+    ok = False
+    if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
+        cap = (f"🐞 *Bug signalé (capture)*\n"
+               f"👤 @{_md_clean(str(uname))} (`{uid}`) · {_md_clean(str(canal))}\n"
+               f"🕒 {datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}"
+               + (f"\n\n{_md_clean(details)}" if details else ""))
+        try:
+            ok = await _send_telegram_document(ADMIN_CHAT_ID, filename or "bug.jpg", data, cap)
+        except Exception as e:
+            logger.error(f"[bug] forward capture: {e}")
+    try:
+        opp_store.add_contact(uid, uname, "[BUG][capture] " + (details or "(capture seule)"), ok)
+    except Exception as e:
+        logger.warning(f"[bug] log: {e}")
+    if ok:
+        await deliver_text(session, "✅ Capture reçue et transmise à l'équipe technique. Merci, on regarde ça. "
+                                    "Tu peux continuer à utiliser le bot normalement.")
+    else:
+        await deliver_text(session, "📝 Capture bien reçue (enregistrée, l'équipe la verra). Merci pour ton retour.")
+
+async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
     uid = session.get("user_id")
+    # Signalement de bug : une capture arrive après /bug (mode armé) ou avec une légende « bug ».
+    _cap_low = (caption or "").strip().lower()
+    if session.get("bug_mode") or _cap_low.startswith(("/bug", "/probleme", "/problème", "/signaler", "bug")):
+        session["bug_mode"] = False
+        await _process_bug_screenshot(session, pdf_bytes, filename, caption)
+        return
     # Mode /guide : la capture d'écran est analysée par la vision (pas comme un CV).
     if session.get("guide_mode"):
         await _process_guide_screenshot(session, pdf_bytes, filename)
@@ -4467,11 +4514,11 @@ def _extract_incoming(channel, raw):
             m = raw.get("message") or raw.get("edited_message") or {}
             if m.get("document"):
                 d = m["document"]
-                doc = {"id": d.get("file_id"), "filename": d.get("file_name") or "cv.pdf"}
+                doc = {"id": d.get("file_id"), "filename": d.get("file_name") or "cv.pdf", "caption": m.get("caption") or ""}
             elif m.get("photo"):
                 sizes = m.get("photo") or []
                 ph = sizes[-1] if sizes else {}     # la plus grande résolution
-                doc = {"id": ph.get("file_id"), "filename": "cv.jpg"}
+                doc = {"id": ph.get("file_id"), "filename": "cv.jpg", "caption": m.get("caption") or ""}
             elif "text" in m:
                 text = m.get("text", "")
             elif m.get("voice") or m.get("audio"):
@@ -4494,7 +4541,7 @@ def _extract_incoming(channel, raw):
             # Photo directe (WhatsApp) · traitée comme un CV en image via vision Gemini
             im = raw.get("image", {})
             ext = ".png" if "png" in (im.get("mime_type") or "") else ".jpg"
-            doc = {"id": im.get("id"), "filename": f"cv{ext}"}
+            doc = {"id": im.get("id"), "filename": f"cv{ext}", "caption": im.get("caption") or ""}
         elif t == "button":
             callback = raw.get("button", {}).get("payload")
         elif t in ("audio", "voice"):
@@ -4579,7 +4626,7 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
         text, doc = transcript, None      # on continue dans le flux TEXTE ci-dessous
     if doc:
         pdf = await _download_doc(channel, doc)
-        await process_cv(session, pdf, doc.get("filename", "cv.pdf"))
+        await process_cv(session, pdf, doc.get("filename", "cv.pdf"), caption=doc.get("caption", ""))
         return
     if callback:
         cb_id = (raw.get("callback_query") or {}).get("id") if channel == "telegram" else None

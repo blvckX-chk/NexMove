@@ -1783,3 +1783,47 @@ def test_preonboarding_pitch_sur_cest_quoi(monkeypatch):
     monkeypatch.setattr(main, "call_groq", fake_groq)
     out = _run(main._preonboarding_reply({"historique": []}, "c'est quoi NexMove ?"))
     assert out == main._WELCOME_PITCH
+
+# ── Signalement de bug avec capture d'écran (v2.80) ──
+def test_bug_screenshot_mode_arme(monkeypatch):
+    sent = {}
+    async def fake_send_doc(chat_id, filename, data, caption=""):
+        sent.update(chat_id=chat_id, filename=filename, caption=caption, data=data); return True
+    async def fake_deliver(session, text, **kw): sent["reply"] = text; return True
+    monkeypatch.setattr(main, "_send_telegram_document", fake_send_doc)
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "x")
+    monkeypatch.setattr(main.opp_store, "add_contact", lambda *a, **k: 1)
+    session = {"user_id": "u1", "username": "ana", "channel": "whatsapp",
+               "bug_mode": True, "bug_text": "le bot se coupe"}
+    _run(main.process_cv(session, b"\xff\xd8img", "cv.jpg"))
+    assert sent.get("chat_id") == "42" and "Bug signalé" in sent["caption"]
+    assert "le bot se coupe" in sent["caption"]
+    assert session.get("bug_mode") is False   # consommé
+    assert "transmise" in sent["reply"].lower()
+
+def test_bug_screenshot_via_legende(monkeypatch):
+    sent = {}
+    async def fake_send_doc(chat_id, filename, data, caption=""):
+        sent["ok"] = True; return True
+    async def fake_deliver(session, text, **kw): return True
+    monkeypatch.setattr(main, "_send_telegram_document", fake_send_doc)
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "x")
+    monkeypatch.setattr(main.opp_store, "add_contact", lambda *a, **k: 1)
+    # pas de bug_mode, mais la légende commence par "bug"
+    called = {"vision": False}
+    async def fake_guide(*a, **k): called["vision"] = True
+    monkeypatch.setattr(main, "_process_guide_screenshot", fake_guide)
+    session = {"user_id": "u2", "username": "x", "channel": "telegram"}
+    _run(main.process_cv(session, b"\xff\xd8img", "cv.jpg", caption="bug la liste ne charge pas"))
+    assert sent.get("ok") and called["vision"] is False
+
+def test_bug_mode_annule_par_texte_normal():
+    session = {"user_id": "u3", "bug_mode": True, "bug_text": "x",
+               "onboarding_complete": True, "profil": {}, "historique": []}
+    # un message texte normal (non /bug) doit désarmer le mode
+    _run(main.process_text_message(session, "bonjour"))
+    assert session.get("bug_mode") is False

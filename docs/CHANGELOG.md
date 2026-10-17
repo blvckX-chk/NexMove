@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.80 — Signaler un bug avec une capture d'écran
+- L'utilisateur peut maintenant joindre une **capture d'écran** à un signalement de bug :
+  après */bug*, la prochaine image envoyée est transmise à l'**admin** (Telegram) avec le contexte
+  (utilisateur, canal, description éventuelle). Fonctionne aussi en envoyant une image **légendée « bug »**.
+- Garde-fou : un message texte normal annule l'attente de capture (un CV envoyé ensuite n'est pas pris pour un bug).
+- Les captures de bug sont journalisées (/contacts_log) comme les autres retours.
+
 ## v2.79.1 — Qualité du premier contact (anti-réponse tronquée / à côté)
 - **Pré-onboarding fiabilisé** : le premier échange passe sur le modèle "smart" (fiable) au lieu de "fast". Détection des réponses tronquées (phrase coupée, parenthèse ouverte) + relance automatique.
 - **Plus jamais le pitch générique sur une vraie question** : si l'IA échoue, repli CONTEXTUEL qui relance utilement (et propose CV / /creercv), au lieu de renvoyer le bloc « NexMove c'est quoi ». Le pitch complet reste réservé aux vraies questions « c'est quoi ».
