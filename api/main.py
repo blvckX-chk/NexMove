@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.94.0"
+VERSION         = "2.95.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -127,9 +127,21 @@ FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "6"))   # recherches /v
 # Onboarding CONVERSATIONNEL piloté par le LLM (comprend n'importe quel scénario) ; 0 = ancien questionnaire scripté.
 LLM_ONBOARDING      = os.getenv("LLM_ONBOARDING", "1").strip().lower() in ("1", "true", "yes", "on", "oui")
 VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en rafale d'une recherche à l'autre
-# Dépôt d'offre par un RECRUTEUR (payant) : tarif affiché + moyen de paiement/contact.
-RECRUIT_POST_PRICE  = os.getenv("RECRUIT_POST_PRICE", "5 000 FCFA")   # tarif d'une diffusion d'offre
+# Dépôt d'offre par un RECRUTEUR (payant via CRÉDITS de diffusion achetés sur la vitrine).
 RECRUIT_PAY_CONTACT = os.getenv("RECRUIT_PAY_CONTACT", "")            # ex. « +229 62 11 87 61 » ; vide -> on dit « l'équipe te recontacte »
+RECRUIT_BUY_URL     = os.getenv("RECRUIT_BUY_URL", "")               # page vitrine « acheter des crédits » (redirige vers WhatsApp admin)
+# Coût d'une diffusion en CRÉDITS (ajustable : « on verra combien selon les critères »).
+DIFFUSION_BASE_COST = int(os.getenv("DIFFUSION_BASE_COST", "1"))      # coût plancher d'une diffusion
+DIFFUSION_PER_RECIP = int(os.getenv("DIFFUSION_PER_RECIP", "50"))     # +1 crédit par tranche de N destinataires
+DIFFUSION_ALL_EXTRA = int(os.getenv("DIFFUSION_ALL_EXTRA", "2"))      # surcoût d'une diffusion « à tous » (hors candidats ciblés)
+
+def _diffusion_cost(n_targets: int, tous: bool = False) -> int:
+    """Crédits consommés par une diffusion. Barème simple et CONFIGURABLE (à affiner selon les
+    critères business) : plancher + 1 crédit par tranche de destinataires + surcoût si « à tous »."""
+    cost = DIFFUSION_BASE_COST + (max(0, int(n_targets)) // max(1, DIFFUSION_PER_RECIP))
+    if tous:
+        cost += DIFFUSION_ALL_EXTRA
+    return max(1, cost)
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -1528,11 +1540,17 @@ RECRUIT_STEPS = [
     ("deadline",        "📅 *Date limite de candidature* ? _(ex : 30/11/2026, ou « aucune »)_"),
 ]
 
+def _recruit_buy_line() -> str:
+    """Où acheter des crédits de diffusion (vitrine -> WhatsApp admin, paiement manuel)."""
+    if RECRUIT_BUY_URL:
+        return f"🛒 Achète des crédits de diffusion ici : {RECRUIT_BUY_URL}"
+    if RECRUIT_PAY_CONTACT:
+        return f"🛒 Pour acheter des crédits de diffusion, écris-nous sur WhatsApp : *{RECRUIT_PAY_CONTACT}*."
+    return "🛒 Pour acheter des crédits de diffusion, contacte-nous (notre équipe te recontacte)."
+
 def _recruit_price_line() -> str:
-    pay = (f" Paiement : contacte-nous au *{RECRUIT_PAY_CONTACT}*."
-           if RECRUIT_PAY_CONTACT else " Notre équipe te recontacte pour le paiement.")
-    return (f"💼 La diffusion d'une offre de recrutement est *payante* ({RECRUIT_POST_PRICE} par offre)."
-            + pay)
+    return ("💼 La diffusion d'une offre est *payante* : elle consomme des *crédits de diffusion*.\n"
+            + _recruit_buy_line())
 
 async def _recruit_start(session: dict) -> tuple[str, dict]:
     session["etape"] = "RECRUIT"
@@ -1590,14 +1608,18 @@ async def _recruit_finish(session: dict) -> tuple[str, dict]:
             await _alert_admin(
                 f"🆕 *Nouvelle offre recruteur · #{offer_id}* (à valider + paiement)\n\n"
                 + _format_recruiter_offer(full, for_admin=True)
-                + f"\n\n✅ Diffuser : `/valider {offer_id}` (candidats emploi) · `/valider {offer_id} tous`"
+                + f"\n\n👀 Aperçu + coût : `/valider {offer_id}` (candidats) · `/valider {offer_id} tous`"
+                + f"\n▶️ Diffuser : ajoute `envoyer` · 🎁 offert : ajoute `envoyer force`"
                 + f"\n❌ Refuser : `/refuser {offer_id}`\n📋 File : `/annonces`")
         except Exception as e:
             logger.warning(f"[recruit] alerte admin: {e}")
+    bal = _credit_balance(session)
     msg = ("✅ *Offre bien reçue* — merci !\n"
            f"Référence : *#{offer_id}*.\n\n" if offer_id else "✅ *Offre bien reçue* — merci !\n\n")
     msg += (_recruit_price_line()
-            + "\n\nDès validation du paiement, je la diffuse aux candidats dont le profil correspond. "
+            + f"\n\n🎟️ Tes crédits de diffusion : *{bal}*."
+            + ("" if bal > 0 else " Tu n'en as pas encore — achète un pack pour qu'on puisse diffuser.")
+            + "\n\nDès réception de ton paiement, je valide et je diffuse aux candidats dont le profil correspond. "
             "Tu veux en publier une autre ? Tape /publier.")
     _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     return msg, session
@@ -2925,12 +2947,47 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         opts = [x for x in toks[2:]]
         tous = any(x in ("tous", "all", "tout") for x in opts)
         inclure_dormants = any(x in ("dormants", "inactifs") for x in opts)
+        do_send = any(x in ("envoyer", "envoi", "send", "go", "confirmer") for x in opts)
+        force = any(x in ("force", "gratuit", "offert") for x in opts)   # diffuser sans débiter de crédits
         o = recruiter_offer_store.get(oid) if oid else None
         if not o:
             msg = "❓ Offre introuvable. `/annonces` pour voir la file.\nUsage : `/valider <id>` ou `/valider <id> tous`."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
+        if o.get("status") == "validee":
+            msg = f"ℹ️ L'offre *#{oid}* a déjà été diffusée (statut : validée). `/annonces` pour la file."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
         targets = _recruit_targets(tous=tous, actif_jours=0 if inclure_dormants else 30)
+        cost = _diffusion_cost(len(targets), tous)
+        # Solde de crédits du RECRUTEUR (son portefeuille), chargé depuis sa session.
+        rec_sess = session_manager.get(o.get("recruiter_id")) if o.get("recruiter_id") else None
+        rec_bal = _credit_balance(rec_sess) if rec_sess else 0
+        portee = "tous" if tous else "candidats (emploi)"
+        portee += " + dormants" if inclure_dormants else ""
+        # Alerte si la deadline de l'offre est déjà passée (on prévient, on ne bloque pas).
+        exp_warn = ("\n⚠️ *Deadline semble passée* — vérifie avant de diffuser."
+                    if _deadline_is_past(f"{o.get('deadline','')} {o.get('titre','')}",
+                                         datetime.now(timezone.utc).date()) else "")
+        # ── Aperçu (pas de `envoyer`) : on compte, on chiffre le coût, on n'envoie RIEN. ──
+        if not do_send:
+            msg = (f"📣 *Aperçu diffusion · offre #{oid}*\n"
+                   f"{_md_clean(o.get('titre',''))} · {_md_clean(o.get('entreprise',''))}\n"
+                   f"Portée : {portee}\nDestinataires : *{len(targets)}*\n"
+                   f"Coût : *{cost}* crédit(s) · solde recruteur : *{rec_bal}*"
+                   + ("  ✅ suffisant" if rec_bal >= cost else "  ❌ insuffisant") + exp_warn
+                   + f"\n\n▶️ Pour diffuser : `/valider {oid}{' tous' if tous else ''} envoyer`"
+                   + f"\n🎁 Diffuser SANS débiter (offert) : `/valider {oid}{' tous' if tous else ''} envoyer force`")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        # ── Envoi réel : vérifier/débiter les crédits (sauf `force`). ──
+        if not force and rec_bal < cost:
+            msg = (f"⛔ Diffusion bloquée · crédits insuffisants.\n"
+                   f"Coût : *{cost}* · solde recruteur : *{rec_bal}*.\n"
+                   "Le recruteur doit acheter des crédits (il reçoit un code `CRD-…` à activer via /credits).\n"
+                   f"Ou diffuse quand même en offert : `/valider {oid}{' tous' if tous else ''} envoyer force`.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
         annonce = ("📢 *Nouvelle offre d'emploi*\n━━━━━━━━━━━━━━━━━━\n"
                    + _format_recruiter_offer(o, for_admin=False)
                    + "\n\n_Diffusé via NexMove · vérifie les détails auprès du recruteur._")
@@ -2944,23 +3001,35 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 failed += 1
                 logger.warning(f"[valider] envoi {g.get('chat_id')}: {e}")
             await asyncio.sleep(0.05)
+        # Débit des crédits du recruteur (après diffusion, sauf offert).
+        debite = 0
+        if not force and rec_sess:
+            debite = cost
+            rec_sess["credits"] = max(0, rec_bal - cost)
+            try:
+                session_manager.set(o.get("recruiter_id"), rec_sess)
+            except Exception as e:
+                logger.warning(f"[valider] débit crédits: {e}")
         recruiter_offer_store.set_status(oid, "validee", by=session.get("user_id"), broadcast_count=sent)
         try:
-            opp_store.add_broadcast(session.get("user_id"), f"offre #{oid} · {'tous' if tous else 'candidats emploi'}",
+            opp_store.add_broadcast(session.get("user_id"), f"offre #{oid} · {portee} · -{debite} crédit(s)",
                                     o.get("titre", ""), len(targets), sent, failed)
         except Exception:
             pass
         # Confirme au recruteur que son offre est diffusée.
         if o.get("recruiter_chat_id") and o.get("recruiter_channel"):
             try:
+                solde_txt = (f"\n🎟️ {debite} crédit(s) débité(s) · solde : {_credit_balance(rec_sess)}."
+                             if debite and rec_sess else "")
                 await deliver_text({"channel": o["recruiter_channel"], "chat_id": o["recruiter_chat_id"]},
                                    f"✅ Ton offre *{_md_clean(o.get('titre',''))}* (#{oid}) a été validée et diffusée "
-                                   f"à {sent} candidat(s). Merci d'utiliser NexMove !")
+                                   f"à {sent} candidat(s). Merci d'utiliser NexMove !" + solde_txt)
             except Exception:
                 pass
-        portee = "tous" if tous else "candidats (emploi)"
-        msg = (f"✅ Offre *#{oid}* validée et diffusée.\nPortée : {portee}"
-               f"{' + dormants' if inclure_dormants else ''}\nEnvoyés : *{sent}* · Échecs : {failed} · Ciblés : {len(targets)}")
+        msg = (f"✅ Offre *#{oid}* validée et diffusée.\nPortée : {portee}\n"
+               f"Envoyés : *{sent}* · Échecs : {failed} · Ciblés : {len(targets)}\n"
+               + (f"🎟️ Crédits débités au recruteur : *{debite}* (solde : {_credit_balance(rec_sess) if rec_sess else 0})"
+                  if debite else "🎁 Diffusion offerte (aucun crédit débité)."))
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4504,10 +4573,30 @@ BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
 _WM_GREY = HexColor("#c9ced6")
 
+def _draw_wm_footer(canvas, doc):
+    """Mention NexMove discrète en PIED de page, uniquement. Utilisé pour le CV ATS et les
+    lettres : une grille diagonale de texte polluerait l'extraction par les robots de tri (ATS),
+    ce qui DÉGRADERAIT justement le CV « lisible par les machines ». Ici, une seule ligne en bas,
+    après le contenu, ne gêne pas le parsing."""
+    canvas.saveState()
+    try:
+        w, _h = A4
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(GRIS)
+        try:
+            canvas.setFillAlpha(0.8)
+        except Exception:
+            pass
+        canvas.drawCentredString(w / 2, 0.8 * cm,
+                                 "Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane")
+    except Exception:
+        pass
+    finally:
+        canvas.restoreState()
+
 def _draw_watermark(canvas, doc):
-    """Filigrane NexMove pour les documents des comptes GRATUITS : texte diagonal
-    répété (discret, n'empêche pas la lecture) + mention en pied de page.
-    Les abonnés premium reçoivent le même document SANS filigrane."""
+    """Filigrane NexMove VISUEL (grille diagonale) + pied de page. Réservé aux documents
+    destinés à l'ŒIL HUMAIN (CV graphique) — JAMAIS au CV ATS (cf. _draw_wm_footer)."""
     canvas.saveState()
     try:
         w, h = A4
@@ -4524,28 +4613,20 @@ def _draw_watermark(canvas, doc):
         for yy in range(-int(h), int(h), step):
             for xx in range(-int(w), int(w), 230):
                 canvas.drawCentredString(xx, yy, "NexMove")
-        canvas.restoreState()
-        # Pied de page discret (hors rotation)
-        canvas.saveState()
-        canvas.setFont("Helvetica", 7)
-        canvas.setFillColor(GRIS)
-        try:
-            canvas.setFillAlpha(0.8)
-        except Exception:
-            pass
-        canvas.drawCentredString(w / 2, 0.8 * cm,
-                                 "Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane")
     except Exception:
         pass
     finally:
         canvas.restoreState()
+    _draw_wm_footer(canvas, doc)
 
-def _pdf_build(doc, els, watermark: bool):
-    """Construit le PDF, avec filigrane sur toutes les pages si watermark=True."""
-    if watermark:
-        doc.build(els, onFirstPage=_draw_watermark, onLaterPages=_draw_watermark)
-    else:
+def _pdf_build(doc, els, watermark: bool, footer_only: bool = False):
+    """Construit le PDF. watermark=True -> filigrane sur toutes les pages.
+    footer_only=True -> seulement la mention en pied (pour l'ATS/les lettres, sans polluer le texte)."""
+    if not watermark:
         doc.build(els)
+        return
+    fn = _draw_wm_footer if footer_only else _draw_watermark
+    doc.build(els, onFirstPage=fn, onLaterPages=fn)
 
 def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats",
                  watermark: bool = False) -> io.BytesIO:
@@ -4607,7 +4688,8 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style
         els.append(Paragraph("FORMATION", s_sec))
         for f in formation[:3]:
             els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> · {_xml(f.get('etablissement',''))}", s_body))
-    _pdf_build(doc, els, watermark)
+    # ATS : filigrane en pied SEULEMENT (ne pas polluer l'extraction par les robots) ; graphique : filigrane visuel.
+    _pdf_build(doc, els, watermark, footer_only=(not graphic))
     return buf
 
 def _xml(s):
@@ -4641,7 +4723,7 @@ def build_letter_pdf(profil: dict, objet: str, corps: str, watermark: bool = Fal
     els.append(Spacer(1, 12))
     els.append(Paragraph("Cordialement,", s_body))
     els.append(Paragraph(_xml(ident.get("nom", "")), s_head))
-    _pdf_build(doc, els, watermark)
+    _pdf_build(doc, els, watermark, footer_only=True)   # lettre lue par un humain/ATS : pied de page seulement
     return buf
 
 # ---------- Export Word (.docx) : versions modifiables du CV et de la lettre ----------
