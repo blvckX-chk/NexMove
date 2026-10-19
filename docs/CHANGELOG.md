@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.94 — Dépôt d'offres par les recruteurs (payant, validé par l'admin)
+- Un recruteur peut déposer une offre directement au bot : soit en langage naturel (« je veux publier une offre », « nous recrutons »… détecté automatiquement), soit via `/publier`. Le bot pose 9 questions (intitulé, entreprise, lieu, contrat, missions, profil recherché, rémunération, comment postuler, deadline) et annonce d'emblée que **la diffusion est payante** (tarif `RECRUIT_POST_PRICE`, contact `RECRUIT_PAY_CONTACT`).
+- L'offre part en **validation chez l'admin** (notification avec tous les détails + commandes). L'admin dispose de : `/annonces` (file des offres en attente/validées/refusées), `/annonce_voir <id>`, `/valider <id>` (diffusion aux **candidats emploi**), `/valider <id> tous` (à tout le monde), `/refuser <id>`. Le déposant est notifié automatiquement de la validation ou du refus.
+- Nouveau stockage `recruiter_offers` (RecruiterOfferStore) + ciblage `_recruit_targets` (candidats en recherche d'emploi, actifs 30 j par défaut). Les diffusions sont journalisées dans l'historique `/diffuser_log`.
+
 ## v2.93 — Filigrane NexMove (comptes gratuits) + suivi des codes
 - Tous les documents générés par un compte GRATUIT (CV ATS/graphique, lettre, projet d'études, en PDF comme en .docx) portent désormais un **filigrane NexMove** : texte diagonal discret + mention « Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane ». Les abonnés (premium/pro/vip/admin) reçoivent le même document **sans filigrane**.
 - Nouvelle commande admin `/codes` pour suivre les codes premium générés : `/codes` (tout), `/codes valides` (non utilisés), `/codes utilises` (déjà activés, avec qui et quand). Affiche aussi le total valides/utilisés.

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.93.0"
+VERSION         = "2.94.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -127,6 +127,9 @@ FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "6"))   # recherches /v
 # Onboarding CONVERSATIONNEL piloté par le LLM (comprend n'importe quel scénario) ; 0 = ancien questionnaire scripté.
 LLM_ONBOARDING      = os.getenv("LLM_ONBOARDING", "1").strip().lower() in ("1", "true", "yes", "on", "oui")
 VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en rafale d'une recherche à l'autre
+# Dépôt d'offre par un RECRUTEUR (payant) : tarif affiché + moyen de paiement/contact.
+RECRUIT_POST_PRICE  = os.getenv("RECRUIT_POST_PRICE", "5 000 FCFA")   # tarif d'une diffusion d'offre
+RECRUIT_PAY_CONTACT = os.getenv("RECRUIT_PAY_CONTACT", "")            # ex. « +229 62 11 87 61 » ; vide -> on dit « l'équipe te recontacte »
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -292,7 +295,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
                 profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store,
-                link_store)
+                link_store, recruiter_offer_store)
 from fastapi.responses import RedirectResponse, PlainTextResponse
 
 
@@ -520,6 +523,35 @@ def _broadcast_targets(filters: dict, actif_jours: int = 30) -> list:
                 continue
             if f_tier in ("free", "gratuit") and tier != "free":
                 continue
+        if actif_jours > 0:
+            da = s.get("derniere_activite") or s.get("created_at")
+            try:
+                if not da or (now - datetime.fromisoformat(da)).days >= actif_jours:
+                    continue
+            except Exception:
+                continue
+        key = (canal, str(chat_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"user_id": s.get("user_id"), "chat_id": str(chat_id),
+                    "channel": canal, "username": s.get("username", "")})
+    return out
+
+def _recruit_targets(tous: bool = False, actif_jours: int = 30) -> list:
+    """Destinataires d'une offre recruteur validée.
+    tous=False : uniquement les CANDIDATS qui cherchent un emploi (objectif = travail).
+    tous=True  : tous les utilisateurs. actif_jours borne aux comptes actifs (0 = inclure dormants)."""
+    now = datetime.now(timezone.utc)
+    out = []; seen = set()
+    for s in session_manager.list_all():
+        chat_id = s.get("chat_id"); canal = (s.get("channel") or "telegram").lower()
+        if not chat_id:
+            continue
+        prefs = ((s.get("profil") or {}).get("preferences") or {})
+        objectif = str(prefs.get("objectif", "")).lower()
+        if not tous and not _is_travail(objectif):
+            continue
         if actif_jours > 0:
             da = s.get("derniere_activite") or s.get("created_at")
             try:
@@ -900,6 +932,25 @@ def _is_meta_question(t: str) -> bool:
         return False
     return tl.endswith("?") or any(c in tl for c in _META_Q_CUES)
 
+_RECRUIT_INTENT_RE = re.compile(
+    r"\b(je\s+(?:veux|voudrais|souhaite|aimerais)\s+(?:publier|diffuser|poster|d[ée]poser|proposer)\s+(?:une\s+)?(?:offre|annonce|poste)"
+    r"|(?:publier|diffuser|poster|d[ée]poser)\s+(?:une\s+)?(?:offre|annonce)"
+    r"|je\s+recrute|nous\s+recrutons|on\s+recrute|je\s+suis\s+recruteur"
+    r"|une\s+offre\s+(?:d['e]\s*)?(?:emploi|stage)\s+[àa]\s+(?:publier|diffuser|proposer)"
+    r"|j['e]\s*ai\s+(?:une\s+)?(?:offre|poste|annonce)\s+[àa]\s+(?:publier|diffuser|proposer|pourvoir))\b",
+    re.IGNORECASE)
+
+def _is_recruiter_intent(t: str) -> bool:
+    """Détecte qu'un RECRUTEUR veut déposer une offre (≠ candidat qui cherche un emploi)."""
+    tl = (t or "").strip().lower()
+    if not tl or len(tl) > 160:
+        return False
+    # On exclut clairement la posture candidat.
+    if any(k in tl for k in ("je cherche", "je recherche", "je veux un emploi", "trouver un emploi",
+                             "je postule", "chercher du travail")):
+        return False
+    return bool(_RECRUIT_INTENT_RE.search(tl))
+
 def _build_pref_plan(prefs: dict, remote: bool = False) -> list[str]:
     """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
     Recalculée à chaque étape. Télétravail/freelance -> plan minimal (pas de nationalité/visa/certifs)."""
@@ -1071,7 +1122,8 @@ AIDE_TXT = ("🧭 *NexMove · que veux-tu faire ?*\n\n"
             "📊 *Mon espace*\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
             "💎 /offres · /premium <code> (abonnement) · 🎟️ /credits <code> (pack de crédits) · /monabo\n"
-            "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
+            "🎁 /parrainage (invite tes amis, gagne du Premium)\n\n"
+            "📢 *Recruteur ?* /publier · dépose ton offre d'emploi (diffusion payante, validée avant publication)\n"
             "/contact (nous joindre / rencontrer un conseiller) · 🐞 /bug (signaler un souci) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
@@ -1463,6 +1515,94 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
     return recap, session
 
 
+# ── Dépôt d'offre par un RECRUTEUR (payant, validé par l'admin avant diffusion) ──
+RECRUIT_STEPS = [
+    ("titre",            "🧾 *Intitulé du poste* ? _(ex : Développeur web junior)_"),
+    ("entreprise",      "🏢 *Nom de l'entreprise / structure* ?"),
+    ("lieu",            "📍 *Lieu* ? _(ville + pays, ou « télétravail »)_"),
+    ("contrat",         "📄 *Type de contrat* ? _(CDI, CDD, stage, freelance, alternance…)_"),
+    ("description",     "📝 *Missions principales* ? _(2-4 lignes)_"),
+    ("profil_recherche", "🎯 *Profil recherché* ? _(diplôme, compétences, années d'expérience, langues)_"),
+    ("remuneration",    "💰 *Rémunération* ? _(fourchette ou « à négocier »)_"),
+    ("postuler",        "📬 *Comment postuler* ? _(lien, email ou numéro)_"),
+    ("deadline",        "📅 *Date limite de candidature* ? _(ex : 30/11/2026, ou « aucune »)_"),
+]
+
+def _recruit_price_line() -> str:
+    pay = (f" Paiement : contacte-nous au *{RECRUIT_PAY_CONTACT}*."
+           if RECRUIT_PAY_CONTACT else " Notre équipe te recontacte pour le paiement.")
+    return (f"💼 La diffusion d'une offre de recrutement est *payante* ({RECRUIT_POST_PRICE} par offre)."
+            + pay)
+
+async def _recruit_start(session: dict) -> tuple[str, dict]:
+    session["etape"] = "RECRUIT"
+    session["recruit_step"] = 0
+    session["recruit_data"] = {}
+    session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
+    msg = ("📢 *Publier une offre de recrutement*\n"
+           + _recruit_price_line() + "\n\n"
+           "Je te pose quelques questions, puis l'offre part en *validation* avant diffusion "
+           "aux profils correspondants (ou à tous).\n"
+           "_Tape /annuler pour arrêter._\n\n" + RECRUIT_STEPS[0][1])
+    _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
+
+def _format_recruiter_offer(o: dict, for_admin: bool = False) -> str:
+    """Mise en forme d'une offre recruteur : version diffusée aux candidats (for_admin=False)
+    ou version admin avec le déposant (for_admin=True)."""
+    lignes = [f"💼 *{_md_clean(o.get('titre',''))}*"]
+    if o.get("entreprise"):
+        lignes.append(f"🏢 {_md_clean(o.get('entreprise',''))}")
+    if o.get("lieu"):
+        lignes.append(f"📍 {_md_clean(o.get('lieu',''))}")
+    if o.get("contrat"):
+        lignes.append(f"📄 {_md_clean(o.get('contrat',''))}")
+    if o.get("remuneration"):
+        lignes.append(f"💰 {_md_clean(o.get('remuneration',''))}")
+    if o.get("description"):
+        lignes.append(f"\n{_md_clean(o.get('description',''))}")
+    if o.get("profil_recherche"):
+        lignes.append(f"\n🎯 *Profil* : {_md_clean(o.get('profil_recherche',''))}")
+    if o.get("deadline") and str(o.get("deadline")).lower() not in ("aucune", "non", "-"):
+        lignes.append(f"📅 Deadline : {_md_clean(o.get('deadline',''))}")
+    if o.get("postuler"):
+        lignes.append(f"📬 Postuler : {_md_clean(o.get('postuler',''))}")
+    if for_admin:
+        lignes.append(f"\n👤 Déposé par : {_md_clean(o.get('recruiter_name') or o.get('recruiter_id') or '?')} "
+                      f"({_md_clean(o.get('recruiter_channel',''))})")
+    return "\n".join(lignes)
+
+async def _recruit_finish(session: dict) -> tuple[str, dict]:
+    data = session.get("recruit_data", {}) or {}
+    recruiter = {"user_id": session.get("user_id"), "channel": session.get("channel", ""),
+                 "chat_id": session.get("chat_id"), "name": session.get("username", "")}
+    offer_id = None
+    try:
+        offer_id = recruiter_offer_store.add(recruiter, data)
+    except Exception as e:
+        logger.error(f"[recruit] enregistrement: {e}")
+    session["etape"] = "ACTIF"; session["recruit_step"] = None; session["recruit_data"] = {}
+    # Notifie l'admin avec l'offre + les commandes de décision.
+    if offer_id:
+        full = dict(data, recruiter_name=recruiter["name"], recruiter_id=recruiter["user_id"],
+                    recruiter_channel=recruiter["channel"])
+        try:
+            await _alert_admin(
+                f"🆕 *Nouvelle offre recruteur · #{offer_id}* (à valider + paiement)\n\n"
+                + _format_recruiter_offer(full, for_admin=True)
+                + f"\n\n✅ Diffuser : `/valider {offer_id}` (candidats emploi) · `/valider {offer_id} tous`"
+                + f"\n❌ Refuser : `/refuser {offer_id}`\n📋 File : `/annonces`")
+        except Exception as e:
+            logger.warning(f"[recruit] alerte admin: {e}")
+    msg = ("✅ *Offre bien reçue* — merci !\n"
+           f"Référence : *#{offer_id}*.\n\n" if offer_id else "✅ *Offre bien reçue* — merci !\n\n")
+    msg += (_recruit_price_line()
+            + "\n\nDès validation du paiement, je la diffuse aux candidats dont le profil correspond. "
+            "Tu veux en publier une autre ? Tape /publier.")
+    _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
+
+
 # ── /simulation : coach d'entretien interactif ──
 _SIM_TYPES = {
     "campus": ("entretien Campus France / Études en France",
@@ -1848,16 +1988,24 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         if _mprem:
             return await process_text_message(session, "/premium " + _mprem.group(0).upper())
 
+    # Un RECRUTEUR écrit directement pour déposer une offre -> on lance le dépôt guidé (payant, validé admin).
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")
+            and not session.get("recruit_step") and _is_recruiter_intent(t)):
+        _push(session, "user", t)
+        return await _recruit_start(session)
+
     # Lien d'opportunité collé -> audit automatique (compatibilité, admissibilité, comment postuler).
     # Fonctionne À TOUT MOMENT (même avant d'avoir envoyé un CV), sauf en pleine simulation
     # ou pendant la création de CV guidée.
-    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")):
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")
+            and not session.get("recruit_step")):
         _murl = _URL_RE.search(t)
         if _murl:
             return await audit_opportunity_link(session, _murl.group(0))
 
     # Suite d'un lien analysé : « je veux candidater / mes chances » -> on réutilise la cible du lien.
-    if (not low.startswith("/") and not session.get("sim_mode") and session.get("last_link_cible")
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("recruit_step")
+            and session.get("last_link_cible")
             and not _URL_RE.search(t)):
         _cible = session.get("last_link_cible")
         if any(k in low for k in ("candidater", "postuler", "je veux candidat", "déposer ma candidature", "comment faire pour postuler")):
@@ -1947,6 +2095,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if low.startswith("/creercv") or low.startswith("/creer-cv") or low.startswith("/sanscv") or low.startswith("/nouveaucv"):
         _push(session, "user", t)
         return await _cvbuild_start(session)
+
+    if (low.startswith("/publier") or low.startswith("/recruter") or low.startswith("/recruteur")
+            or low.startswith("/posteroffre") or low.startswith("/diffuseroffre")):
+        _push(session, "user", t)
+        return await _recruit_start(session)
 
     if low.startswith("/simulation") or low.startswith("/simuler") or low.startswith("/entrainement"):
         if not session.get("onboarding_complete"):
@@ -2408,8 +2561,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
         session["guide_mode"] = False; session.pop("guide_context", None)
         session["sim_mode"] = False
-        if session.get("etape") == "CVBUILD":
-            session["etape"] = "ATTENTE_CV"
+        if session.get("etape") in ("CVBUILD", "RECRUIT"):
+            session["etape"] = "ATTENTE_CV" if session.get("etape") == "CVBUILD" else "ACTIF"
+        session["recruit_step"] = None
         msg = "🚫 Opération annulée."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -2713,6 +2867,122 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                if envoi_ok else
                f"⚠️ Échec de l'envoi à `{_md_clean(cible_uid)}` (canal {dest.get('channel','?')} · "
                "l'utilisateur a peut-être bloqué le bot, ou fenêtre WhatsApp 24 h dépassée).")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/annonces") or low.startswith("/offres_recruteurs") or low.startswith("/validations"):
+        # File des offres déposées par les recruteurs · RÉSERVÉ à l'admin.
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = low.split()
+        filtre = parts[1] if len(parts) > 1 else "en_attente"
+        status = {"attente": "en_attente", "en_attente": "en_attente", "pending": "en_attente",
+                  "validees": "validee", "validee": "validee", "refusees": "refusee",
+                  "refusee": "refusee", "tout": None, "toutes": None}.get(filtre, "en_attente")
+        offres = recruiter_offer_store.list_by_status(status, limit=20)
+        st = recruiter_offer_store.stats()
+        entete = (f"📋 *Offres recruteurs* · en attente: {st.get('en_attente',0)} · "
+                  f"validées: {st.get('validee',0)} · refusées: {st.get('refusee',0)}\n"
+                  "━━━━━━━━━━━━━━━━━━")
+        if not offres:
+            msg = entete + "\n_(aucune offre pour ce filtre)_\n\n💡 `/annonces tout` · `/valider <id>` · `/refuser <id>`"
+        else:
+            blocs = []
+            for o in offres:
+                tag = {"en_attente": "🕗", "validee": "✅", "refusee": "❌"}.get(o.get("status"), "•")
+                blocs.append(f"{tag} *#{o['id']}* · {_md_clean(o.get('titre',''))} · {_md_clean(o.get('entreprise',''))}\n"
+                             f"   📍 {_md_clean(o.get('lieu',''))} · 👤 {_md_clean(o.get('recruiter_name') or o.get('recruiter_id') or '?')}")
+            msg = (entete + "\n" + "\n".join(blocs)
+                   + "\n\n✅ `/valider <id>` (candidats) · `/valider <id> tous`\n❌ `/refuser <id>`\n🔎 `/annonce_voir <id>`")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/annonce_voir") or low.startswith("/voir_annonce"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        oid = int(re.sub(r"[^0-9]", "", t) or 0)
+        o = recruiter_offer_store.get(oid) if oid else None
+        if not o:
+            msg = "❓ Offre introuvable. Vois la file avec `/annonces`."
+        else:
+            msg = (f"📄 *Offre #{oid}* · statut : {o.get('status')}\n━━━━━━━━━━━━━━━━━━\n"
+                   + _format_recruiter_offer(o, for_admin=True)
+                   + f"\n\n✅ `/valider {oid}` · `/valider {oid} tous`\n❌ `/refuser {oid}`")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/valider"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        toks = low.split()
+        oid = int(re.sub(r"[^0-9]", "", toks[1])) if len(toks) > 1 and re.sub(r"[^0-9]", "", toks[1]) else 0
+        opts = [x for x in toks[2:]]
+        tous = any(x in ("tous", "all", "tout") for x in opts)
+        inclure_dormants = any(x in ("dormants", "inactifs") for x in opts)
+        o = recruiter_offer_store.get(oid) if oid else None
+        if not o:
+            msg = "❓ Offre introuvable. `/annonces` pour voir la file.\nUsage : `/valider <id>` ou `/valider <id> tous`."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        targets = _recruit_targets(tous=tous, actif_jours=0 if inclure_dormants else 30)
+        annonce = ("📢 *Nouvelle offre d'emploi*\n━━━━━━━━━━━━━━━━━━\n"
+                   + _format_recruiter_offer(o, for_admin=False)
+                   + "\n\n_Diffusé via NexMove · vérifie les détails auprès du recruteur._")
+        sent = 0; failed = 0
+        for g in targets:
+            try:
+                ok_s = await deliver_text({"channel": g["channel"], "chat_id": g["chat_id"]}, annonce)
+                sent += 1 if ok_s else 0
+                failed += 0 if ok_s else 1
+            except Exception as e:
+                failed += 1
+                logger.warning(f"[valider] envoi {g.get('chat_id')}: {e}")
+            await asyncio.sleep(0.05)
+        recruiter_offer_store.set_status(oid, "validee", by=session.get("user_id"), broadcast_count=sent)
+        try:
+            opp_store.add_broadcast(session.get("user_id"), f"offre #{oid} · {'tous' if tous else 'candidats emploi'}",
+                                    o.get("titre", ""), len(targets), sent, failed)
+        except Exception:
+            pass
+        # Confirme au recruteur que son offre est diffusée.
+        if o.get("recruiter_chat_id") and o.get("recruiter_channel"):
+            try:
+                await deliver_text({"channel": o["recruiter_channel"], "chat_id": o["recruiter_chat_id"]},
+                                   f"✅ Ton offre *{_md_clean(o.get('titre',''))}* (#{oid}) a été validée et diffusée "
+                                   f"à {sent} candidat(s). Merci d'utiliser NexMove !")
+            except Exception:
+                pass
+        portee = "tous" if tous else "candidats (emploi)"
+        msg = (f"✅ Offre *#{oid}* validée et diffusée.\nPortée : {portee}"
+               f"{' + dormants' if inclure_dormants else ''}\nEnvoyés : *{sent}* · Échecs : {failed} · Ciblés : {len(targets)}")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/refuser"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        oid = int(re.sub(r"[^0-9]", "", t) or 0)
+        o = recruiter_offer_store.get(oid) if oid else None
+        if not o:
+            msg = "❓ Offre introuvable. `/annonces` pour voir la file."
+        else:
+            recruiter_offer_store.set_status(oid, "refusee", by=session.get("user_id"))
+            if o.get("recruiter_chat_id") and o.get("recruiter_channel"):
+                try:
+                    await deliver_text({"channel": o["recruiter_channel"], "chat_id": o["recruiter_chat_id"]},
+                                       f"ℹ️ Ton offre *{_md_clean(o.get('titre',''))}* (#{oid}) n'a pas pu être diffusée "
+                                       "pour le moment. Contacte-nous pour en savoir plus.")
+                except Exception:
+                    pass
+            msg = f"❌ Offre *#{oid}* refusée (déposant notifié)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -3673,6 +3943,27 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
         return await _cvbuild_finish(session)
+
+    if etape == "RECRUIT":
+        step = session.get("recruit_step", 0) or 0
+        data = session.get("recruit_data", {}) or {}
+        if 0 <= step < len(RECRUIT_STEPS):
+            field = RECRUIT_STEPS[step][0]
+            val = t.strip()
+            if val.lower().startswith("/") or len(val) < 2:
+                _push(session, "user", t)
+                q = "🤔 Réponds à la question (sans commande).\n\n" + RECRUIT_STEPS[step][1]
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            data[field] = val
+            session["recruit_data"] = data
+        _push(session, "user", t)
+        step += 1; session["recruit_step"] = step
+        if step < len(RECRUIT_STEPS):
+            q = RECRUIT_STEPS[step][1]
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        return await _recruit_finish(session)
 
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"

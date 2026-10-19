@@ -2203,3 +2203,48 @@ def test_premium_store_list_codes():
     assert len(used) == 1 and used[0]["used_by"] == "user42"
     libres = st.list_codes(status="unused")
     assert len(libres) == 2
+
+
+# ------------------ Dépôt d'offre par un recruteur (v2.94) ------------------
+def test_is_recruiter_intent_positif():
+    assert main._is_recruiter_intent("Je veux publier une offre d'emploi")
+    assert main._is_recruiter_intent("Nous recrutons un développeur")
+    assert main._is_recruiter_intent("j'ai une offre à pourvoir")
+    assert main._is_recruiter_intent("diffuser une annonce")
+
+def test_is_recruiter_intent_negatif():
+    assert not main._is_recruiter_intent("Je cherche une offre d'emploi")
+    assert not main._is_recruiter_intent("je veux un emploi")
+    assert not main._is_recruiter_intent("bonjour")
+
+def test_recruiter_offer_store_cycle():
+    import db as _db, tempfile, os as _os
+    path = _os.path.join(tempfile.mkdtemp(), "r.db")
+    st = _db.RecruiterOfferStore(path)
+    rid = st.add({"user_id": "rec1", "channel": "whatsapp", "chat_id": "229", "name": "DRH"},
+                 {"titre": "Dev web", "entreprise": "ACME", "lieu": "Cotonou", "contrat": "CDI",
+                  "description": "coder", "profil_recherche": "Licence", "remuneration": "négo",
+                  "postuler": "rh@acme.bj", "deadline": "30/11/2026"})
+    assert isinstance(rid, int) and rid > 0
+    o = st.get(rid)
+    assert o["titre"] == "Dev web" and o["status"] == "en_attente" and o["recruiter_name"] == "DRH"
+    assert len(st.list_by_status("en_attente")) == 1
+    assert st.set_status(rid, "validee", by="admin", broadcast_count=5) is True
+    assert st.get(rid)["status"] == "validee" and st.get(rid)["broadcast_count"] == 5
+    assert st.stats().get("validee") == 1
+
+def test_recruit_flow_depot(monkeypatch):
+    async def _noop(*a, **k):
+        return True
+    monkeypatch.setattr(main, "_alert_admin", _noop)
+    monkeypatch.setattr(main, "deliver_text", _noop)
+    session = {"user_id": "recX", "channel": "whatsapp", "chat_id": "22990", "username": "DRH",
+               "etape": "ACTIF", "profil": {}, "historique": []}
+    msg, session = _run(main.process_text_message(session, "je veux publier une offre"))
+    assert session["etape"] == "RECRUIT" and "payante" in msg.lower()
+    reponses = ["Développeur web", "ACME", "Cotonou, Bénin", "CDI", "coder des sites",
+                "Licence info, 2 ans", "à négocier", "rh@acme.bj", "30/11/2026"]
+    for r in reponses:
+        msg, session = _run(main.process_text_message(session, r))
+    assert session["etape"] == "ACTIF"
+    assert "reçue" in msg.lower() or "merci" in msg.lower()
