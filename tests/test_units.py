@@ -1979,3 +1979,32 @@ def test_veille_gate_premium_illimite(monkeypatch):
     session = {"user_id": "u3", "_veille_at": 0}
     ok, _ = main._veille_gate(session)
     assert ok is True
+
+# ── Onboarding adaptatif : télétravail + anti-robot (v2.85) ──
+def test_pref_plan_remote_minimal():
+    plan = main._build_pref_plan({"objectif": "travailler"}, remote=True)
+    assert "nationalite" not in plan and "certifs_langue" not in plan and "financement" not in plan
+    assert "mots_cles" in plan and "langues_opportunite" in plan
+
+def test_pref_plan_tous_ne_force_plus_mobilite():
+    plan = main._build_pref_plan({"objectif": "tous"}, remote=False)
+    assert "nationalite" not in plan and "certifs_langue" not in plan
+
+def test_is_remote_depuis_dialogue():
+    session = {"historique": [{"role": "user", "content": "je veux des opportunités de télétravail"}]}
+    assert main._is_remote(session, {})
+    assert not main._is_remote({"historique": []}, {"objectif": "travailler"})
+
+def test_is_meta_question():
+    assert main._is_meta_question("Tu veux en faire quoi ?")
+    assert main._is_meta_question("pourquoi tu as besoin de ça")
+    assert not main._is_meta_question("béninoise")
+
+def test_pref_meta_question_pas_stockee():
+    # pref_current = nationalite, l'utilisateur pose une question -> NE stocke PAS, répond + re-pose
+    session = {"user_id": "u1", "etape": "PREFERENCES", "pref_current": "nationalite",
+               "historique": [{"role": "user", "content": "je cherche du télétravail"}],
+               "profil": {"preferences": {"objectif": "travailler"}}}
+    msg, session = _run(main.process_text_message(session, "Tu veux en faire quoi ? Tu en as besoin ?"))
+    assert session["profil"]["preferences"].get("nationalite") != "Tu veux en faire quoi ? Tu en as besoin ?"
+    assert "nationalite" not in session["profil"]["preferences"]   # non stockée

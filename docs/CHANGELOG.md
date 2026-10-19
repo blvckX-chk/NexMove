@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.85 — Onboarding adaptatif (anti-robot)
+- **Détection télétravail/freelance** : on saute les questions de mobilité (nationalité, visa, certifs de langue, financement) qui n'ont aucun sens pour du remote — questionnaire minimal (domaine, langue, niveau). type_emploi mis à « télétravail » automatiquement.
+- **Fini le robot qui ignore l'utilisateur** : si la personne pose une question au lieu de répondre (« tu en as besoin pour quoi ? »), le bot RÉPOND honnêtement (pourquoi on demande) puis repose/adapte la question — au lieu de stocker la question comme réponse et d'enchaîner.
+- « tous » comme objectif ne force plus le parcours études complet (plus de nationalité/certifs inutiles).
+
 ## v2.84.1 — Durcissement anti prompt-injection
 - Le contenu web d'un lien collé (et les résultats de recherche) sont désormais encadrés comme DONNÉES NON FIABLES avec consigne explicite d'ignorer toute instruction qui y figurerait. Risque déjà faible (sortie JSON contrainte, aucun outil agentique), désormais explicitement durci.
 
