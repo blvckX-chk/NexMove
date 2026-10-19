@@ -565,6 +565,25 @@ class PremiumStore:
         con.close()
         return {s: int(n) for s, n in rows}
 
+    def list_codes(self, status: Optional[str] = None, limit: int = 100) -> list:
+        """Liste les codes (optionnellement filtrés par statut 'used'/'unused'),
+        les plus récents d'abord. Renvoie des dicts {code,tier,days,status,used_by,used_at,created_at,batch}."""
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            q = ("SELECT code,tier,days,status,used_by,used_at,created_at,batch "
+                 "FROM premium_codes")
+            args: list = []
+            if status in ("used", "unused"):
+                q += " WHERE status=?"
+                args.append(status)
+            q += " ORDER BY created_at DESC LIMIT ?"
+            args.append(int(limit))
+            rows = con.execute(q, args).fetchall()
+        finally:
+            con.close()
+        return [{"code": r[0], "tier": r[1], "days": int(r[2] or 0), "status": r[3],
+                 "used_by": r[4], "used_at": r[5], "created_at": r[6], "batch": r[7]} for r in rows]
+
 
 class CreditStore:
     """Codes de crédits FONGIBLES : chaque code = N crédits utilisables sur n'importe quelle action.
@@ -777,6 +796,92 @@ class LinkStore:
             con.close()
 
 
+class RecruiterOfferStore:
+    """Offres déposées par des RECRUTEURS via le bot. Chaque offre passe par une
+    validation admin (et un paiement, l'offre de recrutement étant payante) avant
+    d'être diffusée aux profils correspondants ou à tous.
+    Statuts : 'en_attente' (déposée, à valider+payer) · 'validee' (diffusée) · 'refusee'."""
+    _FIELDS = ("titre", "entreprise", "lieu", "contrat", "description",
+               "profil_recherche", "remuneration", "postuler", "deadline")
+
+    def __init__(self, path: str = DB_PATH):
+        self._path = path
+        con = sqlite3.connect(self._path)
+        con.execute("""CREATE TABLE IF NOT EXISTS recruiter_offers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recruiter_id TEXT, recruiter_channel TEXT, recruiter_chat_id TEXT, recruiter_name TEXT,
+            titre TEXT, entreprise TEXT, lieu TEXT, contrat TEXT, description TEXT,
+            profil_recherche TEXT, remuneration TEXT, postuler TEXT, deadline TEXT,
+            status TEXT DEFAULT 'en_attente', created_at TEXT,
+            decided_at TEXT, decided_by TEXT, broadcast_count INTEGER DEFAULT 0)""")
+        con.commit(); con.close()
+
+    def add(self, recruiter: dict, offer: dict) -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            cur = con.execute(
+                """INSERT INTO recruiter_offers
+                (recruiter_id, recruiter_channel, recruiter_chat_id, recruiter_name,
+                 titre, entreprise, lieu, contrat, description, profil_recherche,
+                 remuneration, postuler, deadline, status, created_at)
+                VALUES (?,?,?,?, ?,?,?,?,?,?, ?,?,?, 'en_attente', ?)""",
+                (str(recruiter.get("user_id", "")), recruiter.get("channel", ""),
+                 str(recruiter.get("chat_id", "")), recruiter.get("name", ""),
+                 offer.get("titre", ""), offer.get("entreprise", ""), offer.get("lieu", ""),
+                 offer.get("contrat", ""), offer.get("description", ""),
+                 offer.get("profil_recherche", ""), offer.get("remuneration", ""),
+                 offer.get("postuler", ""), offer.get("deadline", ""), now))
+            con.commit()
+            return int(cur.lastrowid)
+        finally:
+            con.close()
+
+    def _row_to_dict(self, r) -> dict:
+        cols = ("id", "recruiter_id", "recruiter_channel", "recruiter_chat_id", "recruiter_name",
+                "titre", "entreprise", "lieu", "contrat", "description", "profil_recherche",
+                "remuneration", "postuler", "deadline", "status", "created_at",
+                "decided_at", "decided_by", "broadcast_count")
+        return {c: r[i] for i, c in enumerate(cols)}
+
+    def get(self, offer_id: int) -> Optional[dict]:
+        con = sqlite3.connect(self._path, timeout=10)
+        r = con.execute("SELECT * FROM recruiter_offers WHERE id=?", (int(offer_id),)).fetchone()
+        con.close()
+        return self._row_to_dict(r) if r else None
+
+    def list_by_status(self, status: Optional[str] = None, limit: int = 30) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            if status:
+                rows = con.execute("SELECT * FROM recruiter_offers WHERE status=? ORDER BY id DESC LIMIT ?",
+                                   (status, int(limit))).fetchall()
+            else:
+                rows = con.execute("SELECT * FROM recruiter_offers ORDER BY id DESC LIMIT ?",
+                                   (int(limit),)).fetchall()
+        finally:
+            con.close()
+        return [self._row_to_dict(r) for r in rows]
+
+    def set_status(self, offer_id: int, status: str, by: str = "", broadcast_count: int = 0) -> bool:
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            con.execute("""UPDATE recruiter_offers
+                SET status=?, decided_at=?, decided_by=?, broadcast_count=? WHERE id=?""",
+                        (status, datetime.now(timezone.utc).isoformat(), str(by),
+                         int(broadcast_count), int(offer_id)))
+            con.commit()
+            return con.total_changes > 0
+        finally:
+            con.close()
+
+    def stats(self) -> dict:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT status, COUNT(*) FROM recruiter_offers GROUP BY status").fetchall()
+        con.close()
+        return {s: int(n) for s, n in rows}
+
+
 # ── Singletons partagés — même contrat qu'avant la PR-A ──
 session_manager = SessionManager()
 opp_store = OppStore()
@@ -790,3 +895,4 @@ credit_store = CreditStore()
 referral_store = ReferralStore()
 cache = Cache()
 link_store = LinkStore()
+recruiter_offer_store = RecruiterOfferStore()

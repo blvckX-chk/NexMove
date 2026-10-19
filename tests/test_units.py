@@ -2138,3 +2138,113 @@ def test_run_osint_local_depuis_numero(monkeypatch):
     _run(main.run_osint(profil, "", "2250700000000", tier="free", channel="whatsapp"))
     blob = " ".join(cap["q"]).lower()
     assert "ivoire" in blob or "emploi.ci" in blob or "educarriere" in blob
+
+
+# ------------------ Filtrage des deadlines passées (v2.92) ------------------
+from datetime import date as _date
+_TODAY = _date(2026, 10, 19)
+
+def test_deadline_past_iso():
+    assert main._deadline_is_past("2024-01-15", _TODAY) is True
+
+def test_deadline_future_iso():
+    assert main._deadline_is_past("2027-06-30", _TODAY) is False
+
+def test_deadline_past_francais():
+    assert main._deadline_is_past("Date limite : 15 janvier 2024", _TODAY) is True
+
+def test_deadline_future_francais():
+    assert main._deadline_is_past("candidatures jusqu'au 10 décembre 2026", _TODAY) is False
+
+def test_deadline_annee_seule_passee():
+    assert main._deadline_is_past("Bourse 2023", _TODAY) is True
+
+def test_deadline_vide_garde_offre():
+    assert main._deadline_is_past("", _TODAY) is False
+
+def test_deadline_rolling_jamais_passee():
+    assert main._deadline_is_past("rolling admission 2022", _TODAY) is False
+
+def test_deadline_jjmmaaaa_passee():
+    assert main._deadline_is_past("avant le 01/02/2025", _TODAY) is True
+
+
+# ------------------ Filigrane comptes gratuits + suivi des codes (v2.93) ------------------
+_PROFIL_T = {"identite": {"nom": "Testeur", "email": "t@x.com"},
+             "formation": [{"diplome": "Licence", "etablissement": "UAC"}],
+             "experience": [], "competences": {"techniques": ["Python"]}}
+
+def test_cv_pdf_filigrane_valide():
+    b = main.build_cv_pdf(_PROFIL_T, "CV", "resume", ["Python"], "ats", watermark=True).getvalue()
+    assert b[:4] == b"%PDF" and len(b) > 1000
+
+def test_cv_pdf_sans_filigrane_valide():
+    b = main.build_cv_pdf(_PROFIL_T, "CV", "resume", ["Python"], "ats", watermark=False).getvalue()
+    assert b[:4] == b"%PDF"
+
+def test_lettre_pdf_filigrane_valide():
+    b = main.build_letter_pdf(_PROFIL_T, "Objet", "corps\n\npara2", watermark=True).getvalue()
+    assert b[:4] == b"%PDF"
+
+def test_cv_docx_filigrane_valide():
+    b = main.build_cv_docx(_PROFIL_T, "CV", "r", ["Python"], watermark=True).getvalue()
+    assert b[:2] == b"PK"
+
+def test_premium_store_list_codes():
+    import db as _db, tempfile, os as _os
+    path = _os.path.join(tempfile.mkdtemp(), "t.db")
+    st = _db.PremiumStore(path)
+    codes = st.create_codes("premium", 30, 3)
+    assert len(codes) == 3
+    allc = st.list_codes()
+    assert len(allc) == 3 and all(c["status"] == "unused" for c in allc)
+    st.redeem(codes[0], "user42")
+    used = st.list_codes(status="used")
+    assert len(used) == 1 and used[0]["used_by"] == "user42"
+    libres = st.list_codes(status="unused")
+    assert len(libres) == 2
+
+
+# ------------------ Dépôt d'offre par un recruteur (v2.94) ------------------
+def test_is_recruiter_intent_positif():
+    assert main._is_recruiter_intent("Je veux publier une offre d'emploi")
+    assert main._is_recruiter_intent("Nous recrutons un développeur")
+    assert main._is_recruiter_intent("j'ai une offre à pourvoir")
+    assert main._is_recruiter_intent("diffuser une annonce")
+
+def test_is_recruiter_intent_negatif():
+    assert not main._is_recruiter_intent("Je cherche une offre d'emploi")
+    assert not main._is_recruiter_intent("je veux un emploi")
+    assert not main._is_recruiter_intent("bonjour")
+
+def test_recruiter_offer_store_cycle():
+    import db as _db, tempfile, os as _os
+    path = _os.path.join(tempfile.mkdtemp(), "r.db")
+    st = _db.RecruiterOfferStore(path)
+    rid = st.add({"user_id": "rec1", "channel": "whatsapp", "chat_id": "229", "name": "DRH"},
+                 {"titre": "Dev web", "entreprise": "ACME", "lieu": "Cotonou", "contrat": "CDI",
+                  "description": "coder", "profil_recherche": "Licence", "remuneration": "négo",
+                  "postuler": "rh@acme.bj", "deadline": "30/11/2026"})
+    assert isinstance(rid, int) and rid > 0
+    o = st.get(rid)
+    assert o["titre"] == "Dev web" and o["status"] == "en_attente" and o["recruiter_name"] == "DRH"
+    assert len(st.list_by_status("en_attente")) == 1
+    assert st.set_status(rid, "validee", by="admin", broadcast_count=5) is True
+    assert st.get(rid)["status"] == "validee" and st.get(rid)["broadcast_count"] == 5
+    assert st.stats().get("validee") == 1
+
+def test_recruit_flow_depot(monkeypatch):
+    async def _noop(*a, **k):
+        return True
+    monkeypatch.setattr(main, "_alert_admin", _noop)
+    monkeypatch.setattr(main, "deliver_text", _noop)
+    session = {"user_id": "recX", "channel": "whatsapp", "chat_id": "22990", "username": "DRH",
+               "etape": "ACTIF", "profil": {}, "historique": []}
+    msg, session = _run(main.process_text_message(session, "je veux publier une offre"))
+    assert session["etape"] == "RECRUIT" and "payante" in msg.lower()
+    reponses = ["Développeur web", "ACME", "Cotonou, Bénin", "CDI", "coder des sites",
+                "Licence info, 2 ans", "à négocier", "rh@acme.bj", "30/11/2026"]
+    for r in reponses:
+        msg, session = _run(main.process_text_message(session, r))
+    assert session["etape"] == "ACTIF"
+    assert "reçue" in msg.lower() or "merci" in msg.lower()

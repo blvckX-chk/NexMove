@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.91.0"
+VERSION         = "2.94.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -127,6 +127,9 @@ FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "6"))   # recherches /v
 # Onboarding CONVERSATIONNEL piloté par le LLM (comprend n'importe quel scénario) ; 0 = ancien questionnaire scripté.
 LLM_ONBOARDING      = os.getenv("LLM_ONBOARDING", "1").strip().lower() in ("1", "true", "yes", "on", "oui")
 VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en rafale d'une recherche à l'autre
+# Dépôt d'offre par un RECRUTEUR (payant) : tarif affiché + moyen de paiement/contact.
+RECRUIT_POST_PRICE  = os.getenv("RECRUIT_POST_PRICE", "5 000 FCFA")   # tarif d'une diffusion d'offre
+RECRUIT_PAY_CONTACT = os.getenv("RECRUIT_PAY_CONTACT", "")            # ex. « +229 62 11 87 61 » ; vide -> on dit « l'équipe te recontacte »
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -292,7 +295,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
                 profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store,
-                link_store)
+                link_store, recruiter_offer_store)
 from fastapi.responses import RedirectResponse, PlainTextResponse
 
 
@@ -520,6 +523,35 @@ def _broadcast_targets(filters: dict, actif_jours: int = 30) -> list:
                 continue
             if f_tier in ("free", "gratuit") and tier != "free":
                 continue
+        if actif_jours > 0:
+            da = s.get("derniere_activite") or s.get("created_at")
+            try:
+                if not da or (now - datetime.fromisoformat(da)).days >= actif_jours:
+                    continue
+            except Exception:
+                continue
+        key = (canal, str(chat_id))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"user_id": s.get("user_id"), "chat_id": str(chat_id),
+                    "channel": canal, "username": s.get("username", "")})
+    return out
+
+def _recruit_targets(tous: bool = False, actif_jours: int = 30) -> list:
+    """Destinataires d'une offre recruteur validée.
+    tous=False : uniquement les CANDIDATS qui cherchent un emploi (objectif = travail).
+    tous=True  : tous les utilisateurs. actif_jours borne aux comptes actifs (0 = inclure dormants)."""
+    now = datetime.now(timezone.utc)
+    out = []; seen = set()
+    for s in session_manager.list_all():
+        chat_id = s.get("chat_id"); canal = (s.get("channel") or "telegram").lower()
+        if not chat_id:
+            continue
+        prefs = ((s.get("profil") or {}).get("preferences") or {})
+        objectif = str(prefs.get("objectif", "")).lower()
+        if not tous and not _is_travail(objectif):
+            continue
         if actif_jours > 0:
             da = s.get("derniere_activite") or s.get("created_at")
             try:
@@ -900,6 +932,25 @@ def _is_meta_question(t: str) -> bool:
         return False
     return tl.endswith("?") or any(c in tl for c in _META_Q_CUES)
 
+_RECRUIT_INTENT_RE = re.compile(
+    r"\b(je\s+(?:veux|voudrais|souhaite|aimerais)\s+(?:publier|diffuser|poster|d[ée]poser|proposer)\s+(?:une\s+)?(?:offre|annonce|poste)"
+    r"|(?:publier|diffuser|poster|d[ée]poser)\s+(?:une\s+)?(?:offre|annonce)"
+    r"|je\s+recrute|nous\s+recrutons|on\s+recrute|je\s+suis\s+recruteur"
+    r"|une\s+offre\s+(?:d['e]\s*)?(?:emploi|stage)\s+[àa]\s+(?:publier|diffuser|proposer)"
+    r"|j['e]\s*ai\s+(?:une\s+)?(?:offre|poste|annonce)\s+[àa]\s+(?:publier|diffuser|proposer|pourvoir))\b",
+    re.IGNORECASE)
+
+def _is_recruiter_intent(t: str) -> bool:
+    """Détecte qu'un RECRUTEUR veut déposer une offre (≠ candidat qui cherche un emploi)."""
+    tl = (t or "").strip().lower()
+    if not tl or len(tl) > 160:
+        return False
+    # On exclut clairement la posture candidat.
+    if any(k in tl for k in ("je cherche", "je recherche", "je veux un emploi", "trouver un emploi",
+                             "je postule", "chercher du travail")):
+        return False
+    return bool(_RECRUIT_INTENT_RE.search(tl))
+
 def _build_pref_plan(prefs: dict, remote: bool = False) -> list[str]:
     """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
     Recalculée à chaque étape. Télétravail/freelance -> plan minimal (pas de nationalité/visa/certifs)."""
@@ -1071,7 +1122,8 @@ AIDE_TXT = ("🧭 *NexMove · que veux-tu faire ?*\n\n"
             "📊 *Mon espace*\n"
             "/profil · /moncode · /moi <code> · /status · 🗺️ /timeline · /rappels · /digest · /supprimer\n"
             "💎 /offres · /premium <code> (abonnement) · 🎟️ /credits <code> (pack de crédits) · /monabo\n"
-            "🎁 /parrainage (invite tes amis, gagne du Premium)\n"
+            "🎁 /parrainage (invite tes amis, gagne du Premium)\n\n"
+            "📢 *Recruteur ?* /publier · dépose ton offre d'emploi (diffusion payante, validée avant publication)\n"
             "/contact (nous joindre / rencontrer un conseiller) · 🐞 /bug (signaler un souci) · /version\n\n"
             "💡 Nouveau ? Tape /tuto. Sinon commence par /veille ou /campusfrance.")
 
@@ -1123,6 +1175,56 @@ def _md_clean(s):
     for c in ("*", "_", "`", "[", "]"):
         s = s.replace(c, "")
     return s.strip()
+
+_FR_MONTHS = {
+    "janvier": 1, "fevrier": 2, "février": 2, "mars": 3, "avril": 4, "mai": 5,
+    "juin": 6, "juillet": 7, "aout": 8, "août": 8, "septembre": 9, "octobre": 10,
+    "novembre": 11, "decembre": 12, "décembre": 12,
+    "jan": 1, "feb": 2, "fev": 2, "fév": 2, "apr": 4, "avr": 4, "jun": 6, "jul": 7,
+    "jui": 6, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12, "déc": 12,
+}
+
+def _deadline_is_past(text, today):
+    """Best-effort : renvoie True seulement si le texte contient une date clairement
+    PASSÉE (deadline déjà close). Conservateur : en cas de doute → False (on garde l'offre).
+    Gère l'ISO (AAAA-MM-JJ), le français (« 15 janvier 2024 »), « janvier 2023 » et
+    une année seule nettement révolue. N'écarte jamais une mention « rolling / permanent »."""
+    t = str(text or "").lower().strip()
+    if not t:
+        return False
+    if any(k in t for k in ("rolling", "permanent", "continu", "toute l'année", "ouvert", "à venir", "prochaine")):
+        return False
+    # ISO : AAAA-MM-JJ
+    m = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", t)
+    if m:
+        try:
+            d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+            return d < today
+        except Exception:
+            pass
+    # JJ/MM/AAAA ou JJ-MM-AAAA
+    m = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", t)
+    if m:
+        try:
+            d = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+            return d < today
+        except Exception:
+            pass
+    # « 15 janvier 2024 » ou « janvier 2024 »
+    for mm in re.finditer(r"(?:(\d{1,2})\s+)?([a-zéûôà]+)\s+(20\d{2})", t):
+        mois = _FR_MONTHS.get(mm.group(2))
+        if mois:
+            try:
+                jour = int(mm.group(1)) if mm.group(1) else 28  # fin de mois par défaut → prudent
+                d = datetime(int(mm.group(3)), mois, min(jour, 28)).date()
+                return d < today
+            except Exception:
+                continue
+    # Année seule : on n'écarte que si elle est strictement < année en cours.
+    for ym in re.findall(r"\b(20\d{2})\b", t):
+        if int(ym) < today.year:
+            return True
+    return False
 
 def _type_label(typ):
     tp = str(typ or "").lower()
@@ -1365,6 +1467,7 @@ async def _cvbuild_start(session: dict) -> tuple[str, dict]:
     session["cvbuild_data"] = {}
     session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
     msg = ("📝 *Créons ton CV ensemble* · 5 petites questions, puis je te génère un CV et j'analyse ton profil.\n"
+           "🎤 _Pas envie de tout taper ? Envoie un message vocal à chaque question, je le transcris._\n"
            "_Tape /annuler pour arrêter._\n\n" + CVBUILD_STEPS[0][1])
     _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     return msg, session
@@ -1399,7 +1502,7 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
     nom = (profil.get("identite") or {}).get("nom") or data.get("nom") or "Candidat"
     try:
         comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
-        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps, "ats")
+        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps, "ats", watermark=not _is_premium(session))
         await deliver_file(session, f"CV_ats_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV (format *ATS*, lisible par les robots de tri)")
     except Exception as e:
         logger.error(f"[cvbuild] pdf: {e}")
@@ -1410,6 +1513,94 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     _push(session, "assistant", recap)
     return recap, session
+
+
+# ── Dépôt d'offre par un RECRUTEUR (payant, validé par l'admin avant diffusion) ──
+RECRUIT_STEPS = [
+    ("titre",            "🧾 *Intitulé du poste* ? _(ex : Développeur web junior)_"),
+    ("entreprise",      "🏢 *Nom de l'entreprise / structure* ?"),
+    ("lieu",            "📍 *Lieu* ? _(ville + pays, ou « télétravail »)_"),
+    ("contrat",         "📄 *Type de contrat* ? _(CDI, CDD, stage, freelance, alternance…)_"),
+    ("description",     "📝 *Missions principales* ? _(2-4 lignes)_"),
+    ("profil_recherche", "🎯 *Profil recherché* ? _(diplôme, compétences, années d'expérience, langues)_"),
+    ("remuneration",    "💰 *Rémunération* ? _(fourchette ou « à négocier »)_"),
+    ("postuler",        "📬 *Comment postuler* ? _(lien, email ou numéro)_"),
+    ("deadline",        "📅 *Date limite de candidature* ? _(ex : 30/11/2026, ou « aucune »)_"),
+]
+
+def _recruit_price_line() -> str:
+    pay = (f" Paiement : contacte-nous au *{RECRUIT_PAY_CONTACT}*."
+           if RECRUIT_PAY_CONTACT else " Notre équipe te recontacte pour le paiement.")
+    return (f"💼 La diffusion d'une offre de recrutement est *payante* ({RECRUIT_POST_PRICE} par offre)."
+            + pay)
+
+async def _recruit_start(session: dict) -> tuple[str, dict]:
+    session["etape"] = "RECRUIT"
+    session["recruit_step"] = 0
+    session["recruit_data"] = {}
+    session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
+    msg = ("📢 *Publier une offre de recrutement*\n"
+           + _recruit_price_line() + "\n\n"
+           "Je te pose quelques questions, puis l'offre part en *validation* avant diffusion "
+           "aux profils correspondants (ou à tous).\n"
+           "_Tape /annuler pour arrêter._\n\n" + RECRUIT_STEPS[0][1])
+    _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
+
+def _format_recruiter_offer(o: dict, for_admin: bool = False) -> str:
+    """Mise en forme d'une offre recruteur : version diffusée aux candidats (for_admin=False)
+    ou version admin avec le déposant (for_admin=True)."""
+    lignes = [f"💼 *{_md_clean(o.get('titre',''))}*"]
+    if o.get("entreprise"):
+        lignes.append(f"🏢 {_md_clean(o.get('entreprise',''))}")
+    if o.get("lieu"):
+        lignes.append(f"📍 {_md_clean(o.get('lieu',''))}")
+    if o.get("contrat"):
+        lignes.append(f"📄 {_md_clean(o.get('contrat',''))}")
+    if o.get("remuneration"):
+        lignes.append(f"💰 {_md_clean(o.get('remuneration',''))}")
+    if o.get("description"):
+        lignes.append(f"\n{_md_clean(o.get('description',''))}")
+    if o.get("profil_recherche"):
+        lignes.append(f"\n🎯 *Profil* : {_md_clean(o.get('profil_recherche',''))}")
+    if o.get("deadline") and str(o.get("deadline")).lower() not in ("aucune", "non", "-"):
+        lignes.append(f"📅 Deadline : {_md_clean(o.get('deadline',''))}")
+    if o.get("postuler"):
+        lignes.append(f"📬 Postuler : {_md_clean(o.get('postuler',''))}")
+    if for_admin:
+        lignes.append(f"\n👤 Déposé par : {_md_clean(o.get('recruiter_name') or o.get('recruiter_id') or '?')} "
+                      f"({_md_clean(o.get('recruiter_channel',''))})")
+    return "\n".join(lignes)
+
+async def _recruit_finish(session: dict) -> tuple[str, dict]:
+    data = session.get("recruit_data", {}) or {}
+    recruiter = {"user_id": session.get("user_id"), "channel": session.get("channel", ""),
+                 "chat_id": session.get("chat_id"), "name": session.get("username", "")}
+    offer_id = None
+    try:
+        offer_id = recruiter_offer_store.add(recruiter, data)
+    except Exception as e:
+        logger.error(f"[recruit] enregistrement: {e}")
+    session["etape"] = "ACTIF"; session["recruit_step"] = None; session["recruit_data"] = {}
+    # Notifie l'admin avec l'offre + les commandes de décision.
+    if offer_id:
+        full = dict(data, recruiter_name=recruiter["name"], recruiter_id=recruiter["user_id"],
+                    recruiter_channel=recruiter["channel"])
+        try:
+            await _alert_admin(
+                f"🆕 *Nouvelle offre recruteur · #{offer_id}* (à valider + paiement)\n\n"
+                + _format_recruiter_offer(full, for_admin=True)
+                + f"\n\n✅ Diffuser : `/valider {offer_id}` (candidats emploi) · `/valider {offer_id} tous`"
+                + f"\n❌ Refuser : `/refuser {offer_id}`\n📋 File : `/annonces`")
+        except Exception as e:
+            logger.warning(f"[recruit] alerte admin: {e}")
+    msg = ("✅ *Offre bien reçue* — merci !\n"
+           f"Référence : *#{offer_id}*.\n\n" if offer_id else "✅ *Offre bien reçue* — merci !\n\n")
+    msg += (_recruit_price_line()
+            + "\n\nDès validation du paiement, je la diffuse aux candidats dont le profil correspond. "
+            "Tu veux en publier une autre ? Tape /publier.")
+    _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    return msg, session
 
 
 # ── /simulation : coach d'entretien interactif ──
@@ -1797,16 +1988,24 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         if _mprem:
             return await process_text_message(session, "/premium " + _mprem.group(0).upper())
 
+    # Un RECRUTEUR écrit directement pour déposer une offre -> on lance le dépôt guidé (payant, validé admin).
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")
+            and not session.get("recruit_step") and _is_recruiter_intent(t)):
+        _push(session, "user", t)
+        return await _recruit_start(session)
+
     # Lien d'opportunité collé -> audit automatique (compatibilité, admissibilité, comment postuler).
     # Fonctionne À TOUT MOMENT (même avant d'avoir envoyé un CV), sauf en pleine simulation
     # ou pendant la création de CV guidée.
-    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")):
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")
+            and not session.get("recruit_step")):
         _murl = _URL_RE.search(t)
         if _murl:
             return await audit_opportunity_link(session, _murl.group(0))
 
     # Suite d'un lien analysé : « je veux candidater / mes chances » -> on réutilise la cible du lien.
-    if (not low.startswith("/") and not session.get("sim_mode") and session.get("last_link_cible")
+    if (not low.startswith("/") and not session.get("sim_mode") and not session.get("recruit_step")
+            and session.get("last_link_cible")
             and not _URL_RE.search(t)):
         _cible = session.get("last_link_cible")
         if any(k in low for k in ("candidater", "postuler", "je veux candidat", "déposer ma candidature", "comment faire pour postuler")):
@@ -1896,6 +2095,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if low.startswith("/creercv") or low.startswith("/creer-cv") or low.startswith("/sanscv") or low.startswith("/nouveaucv"):
         _push(session, "user", t)
         return await _cvbuild_start(session)
+
+    if (low.startswith("/publier") or low.startswith("/recruter") or low.startswith("/recruteur")
+            or low.startswith("/posteroffre") or low.startswith("/diffuseroffre")):
+        _push(session, "user", t)
+        return await _recruit_start(session)
 
     if low.startswith("/simulation") or low.startswith("/simuler") or low.startswith("/entrainement"):
         if not session.get("onboarding_complete"):
@@ -2264,7 +2468,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 try:
                     cp = _condense_profil(profil)
                     comps = (cp.get("competences", {}).get("techniques", []) + cp.get("competences", {}).get("outils", []))[:8]
-                    buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps)
+                    buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps, watermark=not _is_premium(session))
                     nom = (profil.get("identite") or {}).get("nom") or "Candidat"
                     await deliver_file(session, f"CV_1page_{_slug(nom)}.pdf", buf.getvalue(), "📄 Ton CV condensé (1 page)")
                     msg = "✅ Voici ton *CV condensé* · parfait quand un recruteur veut du synthétique."
@@ -2284,7 +2488,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 try:
                     ap = _anonymize_profil(profil)
                     comps = (ap.get("competences", {}).get("techniques", []) + ap.get("competences", {}).get("outils", []))[:14]
-                    buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps)
+                    buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps, watermark=not _is_premium(session))
                     await deliver_file(session, "CV_anonyme.pdf", buf.getvalue(), "🕶️ Ton CV anonymisé")
                     msg = "✅ *CV anonymisé* (nom et coordonnées masqués) · idéal pour une candidature à l'aveugle ou une CVthèque."
                 except Exception as e:
@@ -2357,8 +2561,9 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
         session["guide_mode"] = False; session.pop("guide_context", None)
         session["sim_mode"] = False
-        if session.get("etape") == "CVBUILD":
-            session["etape"] = "ATTENTE_CV"
+        if session.get("etape") in ("CVBUILD", "RECRUIT"):
+            session["etape"] = "ATTENTE_CV" if session.get("etape") == "CVBUILD" else "ACTIF"
+        session["recruit_step"] = None
         msg = "🚫 Opération annulée."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -2665,6 +2870,122 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/annonces") or low.startswith("/offres_recruteurs") or low.startswith("/validations"):
+        # File des offres déposées par les recruteurs · RÉSERVÉ à l'admin.
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = low.split()
+        filtre = parts[1] if len(parts) > 1 else "en_attente"
+        status = {"attente": "en_attente", "en_attente": "en_attente", "pending": "en_attente",
+                  "validees": "validee", "validee": "validee", "refusees": "refusee",
+                  "refusee": "refusee", "tout": None, "toutes": None}.get(filtre, "en_attente")
+        offres = recruiter_offer_store.list_by_status(status, limit=20)
+        st = recruiter_offer_store.stats()
+        entete = (f"📋 *Offres recruteurs* · en attente: {st.get('en_attente',0)} · "
+                  f"validées: {st.get('validee',0)} · refusées: {st.get('refusee',0)}\n"
+                  "━━━━━━━━━━━━━━━━━━")
+        if not offres:
+            msg = entete + "\n_(aucune offre pour ce filtre)_\n\n💡 `/annonces tout` · `/valider <id>` · `/refuser <id>`"
+        else:
+            blocs = []
+            for o in offres:
+                tag = {"en_attente": "🕗", "validee": "✅", "refusee": "❌"}.get(o.get("status"), "•")
+                blocs.append(f"{tag} *#{o['id']}* · {_md_clean(o.get('titre',''))} · {_md_clean(o.get('entreprise',''))}\n"
+                             f"   📍 {_md_clean(o.get('lieu',''))} · 👤 {_md_clean(o.get('recruiter_name') or o.get('recruiter_id') or '?')}")
+            msg = (entete + "\n" + "\n".join(blocs)
+                   + "\n\n✅ `/valider <id>` (candidats) · `/valider <id> tous`\n❌ `/refuser <id>`\n🔎 `/annonce_voir <id>`")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/annonce_voir") or low.startswith("/voir_annonce"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        oid = int(re.sub(r"[^0-9]", "", t) or 0)
+        o = recruiter_offer_store.get(oid) if oid else None
+        if not o:
+            msg = "❓ Offre introuvable. Vois la file avec `/annonces`."
+        else:
+            msg = (f"📄 *Offre #{oid}* · statut : {o.get('status')}\n━━━━━━━━━━━━━━━━━━\n"
+                   + _format_recruiter_offer(o, for_admin=True)
+                   + f"\n\n✅ `/valider {oid}` · `/valider {oid} tous`\n❌ `/refuser {oid}`")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/valider"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        toks = low.split()
+        oid = int(re.sub(r"[^0-9]", "", toks[1])) if len(toks) > 1 and re.sub(r"[^0-9]", "", toks[1]) else 0
+        opts = [x for x in toks[2:]]
+        tous = any(x in ("tous", "all", "tout") for x in opts)
+        inclure_dormants = any(x in ("dormants", "inactifs") for x in opts)
+        o = recruiter_offer_store.get(oid) if oid else None
+        if not o:
+            msg = "❓ Offre introuvable. `/annonces` pour voir la file.\nUsage : `/valider <id>` ou `/valider <id> tous`."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        targets = _recruit_targets(tous=tous, actif_jours=0 if inclure_dormants else 30)
+        annonce = ("📢 *Nouvelle offre d'emploi*\n━━━━━━━━━━━━━━━━━━\n"
+                   + _format_recruiter_offer(o, for_admin=False)
+                   + "\n\n_Diffusé via NexMove · vérifie les détails auprès du recruteur._")
+        sent = 0; failed = 0
+        for g in targets:
+            try:
+                ok_s = await deliver_text({"channel": g["channel"], "chat_id": g["chat_id"]}, annonce)
+                sent += 1 if ok_s else 0
+                failed += 0 if ok_s else 1
+            except Exception as e:
+                failed += 1
+                logger.warning(f"[valider] envoi {g.get('chat_id')}: {e}")
+            await asyncio.sleep(0.05)
+        recruiter_offer_store.set_status(oid, "validee", by=session.get("user_id"), broadcast_count=sent)
+        try:
+            opp_store.add_broadcast(session.get("user_id"), f"offre #{oid} · {'tous' if tous else 'candidats emploi'}",
+                                    o.get("titre", ""), len(targets), sent, failed)
+        except Exception:
+            pass
+        # Confirme au recruteur que son offre est diffusée.
+        if o.get("recruiter_chat_id") and o.get("recruiter_channel"):
+            try:
+                await deliver_text({"channel": o["recruiter_channel"], "chat_id": o["recruiter_chat_id"]},
+                                   f"✅ Ton offre *{_md_clean(o.get('titre',''))}* (#{oid}) a été validée et diffusée "
+                                   f"à {sent} candidat(s). Merci d'utiliser NexMove !")
+            except Exception:
+                pass
+        portee = "tous" if tous else "candidats (emploi)"
+        msg = (f"✅ Offre *#{oid}* validée et diffusée.\nPortée : {portee}"
+               f"{' + dormants' if inclure_dormants else ''}\nEnvoyés : *{sent}* · Échecs : {failed} · Ciblés : {len(targets)}")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/refuser"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        oid = int(re.sub(r"[^0-9]", "", t) or 0)
+        o = recruiter_offer_store.get(oid) if oid else None
+        if not o:
+            msg = "❓ Offre introuvable. `/annonces` pour voir la file."
+        else:
+            recruiter_offer_store.set_status(oid, "refusee", by=session.get("user_id"))
+            if o.get("recruiter_chat_id") and o.get("recruiter_channel"):
+                try:
+                    await deliver_text({"channel": o["recruiter_channel"], "chat_id": o["recruiter_chat_id"]},
+                                       f"ℹ️ Ton offre *{_md_clean(o.get('titre',''))}* (#{oid}) n'a pas pu être diffusée "
+                                       "pour le moment. Contacte-nous pour en savoir plus.")
+                except Exception:
+                    pass
+            msg = f"❌ Offre *#{oid}* refusée (déposant notifié)."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if ((low.startswith("/diffuser") and not low.startswith("/diffuser_log"))
             or low.startswith("/broadcast") or low.startswith("/annonce")) and not low.startswith("/diffusions"):
         # Diffusion d'un message/publicité ciblée par profil · RÉSERVÉ à l'admin.
@@ -2964,6 +3285,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         if tier not in _PREMIUM_TIERS or days <= 0 or not (1 <= count <= 500):
             msg = ("🧰 *Génération de codes* (admin)\n`/gencodes <premium|pro|vip> <jours> <nombre>`\n"
                    "Ex : `/gencodes premium 30 50` → 50 codes Premium de 30 jours.\n"
+                   "Suivi : `/codes` · `/codes valides` · `/codes utilises`\n"
                    f"État actuel : {premium_store.stats()}")
         else:
             codes = premium_store.create_codes(tier, days, count, batch=now[:10])
@@ -2974,6 +3296,38 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/codes"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = low.split()
+        filtre = parts[1] if len(parts) > 1 else ""
+        status = "used" if filtre in ("used", "utilises", "utilisés", "u") else \
+                 "unused" if filtre in ("unused", "valides", "libres", "restants", "v") else None
+        st = premium_store.stats()
+        used_n = st.get("used", 0); free_n = st.get("unused", 0)
+        codes = premium_store.list_codes(status=status, limit=200)
+        titre = ("✅ *Codes VALIDES (non utilisés)*" if status == "unused" else
+                 "🔴 *Codes déjà utilisés*" if status == "used" else "🧾 *Tous les codes premium*")
+        lignes = [titre, f"_Total : {free_n} valides · {used_n} utilisés._", ""]
+        for c in codes[:40]:
+            if c["status"] == "used":
+                qui = str(c.get("used_by") or "?")
+                quand = str(c.get("used_at") or "")[:10]
+                lignes.append(f"🔴 `{c['code']}` · {c['tier']}/{c['days']}j · par {qui} le {quand}")
+            else:
+                lignes.append(f"✅ `{c['code']}` · {c['tier']}/{c['days']}j · libre")
+        if not codes:
+            lignes.append("_(aucun code)_")
+        elif len(codes) > 40:
+            lignes.append(f"\n… et {len(codes) - 40} autres. Astuce : `/codes valides` ou `/codes utilises`.")
+        if status is None:
+            lignes.append("\n💡 `/codes valides` · `/codes utilises`")
+        msg = "\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -3144,16 +3498,16 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
                 pack = await generate_pack(profil, cible_desc, type_cible)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté · {cible_desc[:60]}")
                 ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation · {cible_desc[:60]}")
                 if _DOCX_OK:
                     try:
-                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
+                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
                         await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
                         await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
                     except Exception as de:
@@ -3304,16 +3658,16 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if r.get("conseils"):
                     msg += "💡 *Conseils :*\n" + "\n".join(f"• {_md_clean(c)}" for c in r["conseils"][:5]) + "\n\n"
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences, watermark=not _is_premium(session))
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""), watermark=not _is_premium(session))
                 nom = _slug(ident.get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
                 await deliver_file(session,f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
                 if _DOCX_OK:
                     try:
-                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""))
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences, watermark=not _is_premium(session))
+                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""), watermark=not _is_premium(session))
                         await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 CV Word (modifiable)")
                         await deliver_file(session, f"Projet_{nom}.docx", pr_dx.getvalue(), "📝 Projet Word (modifiable)")
                     except Exception as de:
@@ -3589,6 +3943,27 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             _push(session, "assistant", q); session["derniere_activite"] = now
             return q, session
         return await _cvbuild_finish(session)
+
+    if etape == "RECRUIT":
+        step = session.get("recruit_step", 0) or 0
+        data = session.get("recruit_data", {}) or {}
+        if 0 <= step < len(RECRUIT_STEPS):
+            field = RECRUIT_STEPS[step][0]
+            val = t.strip()
+            if val.lower().startswith("/") or len(val) < 2:
+                _push(session, "user", t)
+                q = "🤔 Réponds à la question (sans commande).\n\n" + RECRUIT_STEPS[step][1]
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            data[field] = val
+            session["recruit_data"] = data
+        _push(session, "user", t)
+        step += 1; session["recruit_step"] = step
+        if step < len(RECRUIT_STEPS):
+            q = RECRUIT_STEPS[step][1]
+            _push(session, "assistant", q); session["derniere_activite"] = now
+            return q, session
+        return await _recruit_finish(session)
 
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"
@@ -4127,8 +4502,53 @@ def _condense_profil(profil: dict) -> dict:
 
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
+_WM_GREY = HexColor("#c9ced6")
 
-def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats") -> io.BytesIO:
+def _draw_watermark(canvas, doc):
+    """Filigrane NexMove pour les documents des comptes GRATUITS : texte diagonal
+    répété (discret, n'empêche pas la lecture) + mention en pied de page.
+    Les abonnés premium reçoivent le même document SANS filigrane."""
+    canvas.saveState()
+    try:
+        w, h = A4
+        canvas.setFont("Helvetica-Bold", 30)
+        canvas.setFillColor(_WM_GREY)
+        try:
+            canvas.setFillAlpha(0.22)
+        except Exception:
+            pass
+        # Grille diagonale de « NexMove »
+        canvas.translate(w / 2, h / 2)
+        canvas.rotate(35)
+        step = 150
+        for yy in range(-int(h), int(h), step):
+            for xx in range(-int(w), int(w), 230):
+                canvas.drawCentredString(xx, yy, "NexMove")
+        canvas.restoreState()
+        # Pied de page discret (hors rotation)
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(GRIS)
+        try:
+            canvas.setFillAlpha(0.8)
+        except Exception:
+            pass
+        canvas.drawCentredString(w / 2, 0.8 * cm,
+                                 "Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane")
+    except Exception:
+        pass
+    finally:
+        canvas.restoreState()
+
+def _pdf_build(doc, els, watermark: bool):
+    """Construit le PDF, avec filigrane sur toutes les pages si watermark=True."""
+    if watermark:
+        doc.build(els, onFirstPage=_draw_watermark, onLaterPages=_draw_watermark)
+    else:
+        doc.build(els)
+
+def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats",
+                 watermark: bool = False) -> io.BytesIO:
     """style='ats' : sobre, noir, une colonne, polices standard -> lisible par les robots de tri (ATS).
     style='graphic' : bandeau coloré + titres de section en couleur -> pour un envoi direct / humain."""
     titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
@@ -4187,7 +4607,7 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style
         els.append(Paragraph("FORMATION", s_sec))
         for f in formation[:3]:
             els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> · {_xml(f.get('etablissement',''))}", s_body))
-    doc.build(els)
+    _pdf_build(doc, els, watermark)
     return buf
 
 def _xml(s):
@@ -4197,7 +4617,7 @@ def _slug(s):
     s = "".join(c for c in str(s or "candidat") if c.isalnum() or c in " -_")
     return (s.strip().replace(" ", "_")[:40]) or "candidat"
 
-def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
+def build_letter_pdf(profil: dict, objet: str, corps: str, watermark: bool = False) -> io.BytesIO:
     objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
@@ -4221,14 +4641,24 @@ def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
     els.append(Spacer(1, 12))
     els.append(Paragraph("Cordialement,", s_body))
     els.append(Paragraph(_xml(ident.get("nom", "")), s_head))
-    doc.build(els)
+    _pdf_build(doc, els, watermark)
     return buf
 
 # ---------- Export Word (.docx) : versions modifiables du CV et de la lettre ----------
 _BLEU_RGB = (0x1a, 0x23, 0x7e)
 _GRIS_RGB = (0x54, 0x6e, 0x7a)
 
-def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
+def _docx_watermark_footer(d):
+    """Mention NexMove en pied de document (.docx) pour les comptes gratuits."""
+    try:
+        p = d.add_paragraph(); r = p.add_run(
+            "— Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane —")
+        r.italic = True; r.font.size = _DocxPt(8); r.font.color.rgb = _DocxRGB(*_GRIS_RGB)
+    except Exception:
+        pass
+
+def build_cv_docx(profil: dict, titre: str, resume: str, competences: list,
+                  watermark: bool = False) -> io.BytesIO:
     titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
     competences = [_sanitize_doc_text(c) for c in (competences or []) if _sanitize_doc_text(c)]
     d = _DocxDocument()
@@ -4260,6 +4690,8 @@ def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> i
         section("Formation")
         for f in form[:4]:
             p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} · {f.get('etablissement','')}"); r.bold = True
+    if watermark:
+        _docx_watermark_footer(d)
     buf = io.BytesIO(); d.save(buf); return buf
 
 async def _deliver_cv(session: dict, style: str = "ats") -> bool:
@@ -4274,14 +4706,14 @@ async def _deliver_cv(session: dict, style: str = "ats") -> bool:
     ok = False
     for st in styles:
         try:
-            buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", resume, comps, st)
+            buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", resume, comps, st, watermark=not _is_premium(session))
             label = "ATS (lisible par les robots de tri)" if st == "ats" else "graphique (envoi direct au recruteur)"
             ok = await deliver_file(session, f"CV_{st}_{nom}.pdf", buf.getvalue(), f"📄 Ton CV *{label}*") or ok
         except Exception as e:
             logger.error(f"[cv] {st}: {e}")
     return ok
 
-def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
+def build_letter_docx(profil: dict, objet: str, corps: str, watermark: bool = False) -> io.BytesIO:
     objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     d = _DocxDocument()
     ident = profil.get("identite", {})
@@ -4299,6 +4731,8 @@ def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
     d.add_paragraph("")
     d.add_paragraph("Cordialement,")
     p = d.add_paragraph(); r = p.add_run(ident.get("nom", "") or ""); r.bold = True
+    if watermark:
+        _docx_watermark_footer(d)
     buf = io.BytesIO(); d.save(buf); return buf
 
 # ── Canaux (Telegram/WhatsApp/Messenger) extraits dans channels.py (PR-C) ──
@@ -6368,7 +6802,8 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                      if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
 DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
-{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
+{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}.
+⛔ ÉCHÉANCES : EXCLUS impérativement toute opportunité dont la date limite de candidature est ANTÉRIEURE à {today} (édition déjà close, bourse d'une année passée). En cas de doute sur une date passée, NE la sélectionne PAS. Quand une date limite À VENIR est visible dans le résultat, renseigne-la dans "deadline" (texte) ET "deadline_iso" (AAAA-MM-JJ) ; sinon laisse les deux vides (n'invente jamais de date).
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
 Sélectionne 3 à 5 résultats PERTINENTS pour CE profil. Donne l'index de chacun.
@@ -6432,12 +6867,15 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
     _today_d = datetime.now(timezone.utc).date()
     def _open(o):
         di = str(o.get("deadline_iso", "") or "")[:10]
-        if not di:
-            return True
-        try:
-            return datetime.strptime(di, "%Y-%m-%d").date() >= _today_d
-        except Exception:
-            return True
+        if di:
+            try:
+                return datetime.strptime(di, "%Y-%m-%d").date() >= _today_d
+            except Exception:
+                pass
+        # Pas d'ISO fiable : on inspecte le texte de la deadline (et le titre) pour une date
+        # clairement passée. Conservateur — on n'écarte qu'en cas de date révolue certaine.
+        blob = f"{o.get('deadline','')} {o.get('titre','')}"
+        return not _deadline_is_past(blob, _today_d)
     opps = [o for o in opps if _open(o)]
     if grounded:   # QC de sortie : on ne garde que des offres web saines (titre + URL http, sans placeholder)
         opps = [o for o in opps if _opp_quality_ok(o)]
