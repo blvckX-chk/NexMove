@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.84.1 — Durcissement anti prompt-injection
+- Le contenu web d'un lien collé (et les résultats de recherche) sont désormais encadrés comme DONNÉES NON FIABLES avec consigne explicite d'ignorer toute instruction qui y figurerait. Risque déjà faible (sortie JSON contrainte, aucun outil agentique), désormais explicitement durci.
+
 ## v2.84 — Garde-fous coût (relecture senior)
 - **Quota sur /veille et /mobilite** : jusqu'ici ces recherches (2 à 8 requêtes Tavily advanced + LLM) n'avaient AUCUNE limite, et les webhooks sont exemptés du rate-limiter -> risque de brûler le crédit Tavily/LLM. Ajout d'un quota journalier gratuit (FREE_VEILLE_DAILY=6, illimité premium/admin) + cooldown anti-rafale (VEILLE_COOLDOWN_SEC=8s).
 - **Profilage progressif throttlé** : _enrich_profile (sur le chemin de réponse) limité à 1 extraction/minute/utilisateur (latence + coût maîtrisés).
