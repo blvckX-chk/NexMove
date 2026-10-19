@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.86 — Onboarding conversationnel piloté par le LLM (refonte)
+- L'étape PREFERENCES n'est plus un questionnaire scripté : un onboarding CONVERSATIONNEL mené par le LLM comprend n'importe quel scénario, extrait ce que la personne dit EXPLICITEMENT (sans rien inventer), répond toujours à ses questions/objections, et ne pose qu'une question utile à la fois (jamais nationalité/certifs pour du télétravail). Terminé dès qu'on connaît objectif + domaine.
+- **Sans risque** : flag LLM_ONBOARDING (défaut on) + **repli automatique** sur l'ancien questionnaire scripté si le LLM échoue + plafond de tours. Réversible via .env.
+
 ## v2.85 — Onboarding adaptatif (anti-robot)
 - **Détection télétravail/freelance** : on saute les questions de mobilité (nationalité, visa, certifs de langue, financement) qui n'ont aucun sens pour du remote — questionnaire minimal (domaine, langue, niveau). type_emploi mis à « télétravail » automatiquement.
 - **Fini le robot qui ignore l'utilisateur** : si la personne pose une question au lieu de répondre (« tu en as besoin pour quoi ? »), le bot RÉPOND honnêtement (pourquoi on demande) puis repose/adapte la question — au lieu de stocker la question comme réponse et d'enchaîner.

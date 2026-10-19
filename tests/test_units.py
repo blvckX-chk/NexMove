@@ -2008,3 +2008,45 @@ def test_pref_meta_question_pas_stockee():
     msg, session = _run(main.process_text_message(session, "Tu veux en faire quoi ? Tu en as besoin ?"))
     assert session["profil"]["preferences"].get("nationalite") != "Tu veux en faire quoi ? Tu en as besoin ?"
     assert "nationalite" not in session["profil"]["preferences"]   # non stockée
+
+# ── Onboarding conversationnel piloté par LLM (v2.86) ──
+def test_onboard_llm_extraction_et_done(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"extracted": {"objectif": "télétravail", "mots_cles": "rédaction web", "niveau": "",
+                              "pays_cibles": "", "nationalite": "", "langues_opportunite": "français", "type_emploi": ""},
+                "reply": "Super, je note.", "done": True}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "u1", "profil": {}, "historique": []}
+    reply, done = _run(main._onboard_llm_turn(session, "je veux du télétravail en rédaction web"))
+    p = session["profil"]["preferences"]
+    assert p["objectif"] == "télétravail" and p["mots_cles"] == "rédaction web"
+    assert p["langues_opportunite"] == "français" and "nationalite" not in p   # vide non stocké
+    assert done is True
+
+def test_onboard_llm_ninvente_pas(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"extracted": {"objectif": "", "mots_cles": "", "nationalite": "non concerné"}, "reply": "ok", "done": False}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "u2", "profil": {}, "historique": []}
+    _run(main._onboard_llm_turn(session, "salut"))
+    assert session["profil"]["preferences"] == {}   # rien d'explicite -> rien stocké
+
+def test_onboard_llm_turn_vers_confirmation(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"extracted": {"objectif": "emploi", "mots_cles": "data"}, "reply": "Parfait.", "done": True}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    monkeypatch.setattr(main, "LLM_ONBOARDING", True)
+    session = {"user_id": "u3", "etape": "PREFERENCES", "profil": {}, "historique": []}
+    msg, session = _run(main.process_text_message(session, "je cherche un emploi en data"))
+    assert session["etape"] == "CONFIRMATION" and "Parfait" in msg
+
+def test_onboard_llm_fallback_si_echec(monkeypatch):
+    async def boom(system, user, **kw):
+        raise RuntimeError("llm down")
+    monkeypatch.setattr(main, "call_groq", boom)
+    monkeypatch.setattr(main, "LLM_ONBOARDING", True)
+    # pref_current défini -> le repli scripté doit reprendre la main sans crash
+    session = {"user_id": "u4", "etape": "PREFERENCES", "pref_current": "mots_cles",
+               "profil": {"preferences": {"objectif": "travailler"}}, "historique": []}
+    msg, session = _run(main.process_text_message(session, "cybersécurité"))
+    assert isinstance(msg, str) and len(msg) > 0   # pas de crash, repli opérationnel

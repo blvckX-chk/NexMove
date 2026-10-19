@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.85.0"
+VERSION         = "2.86.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -124,6 +124,8 @@ FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (sco
 FREE_APPLY_DAILY    = int(os.getenv("FREE_APPLY_DAILY", "3"))    # /commentpostuler (guide de candidature) / jour (gratuit)
 FREE_LINK_DAILY     = int(os.getenv("FREE_LINK_DAILY", "4"))     # audit d'un lien d'opportunité / jour (gratuit)
 FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "6"))   # recherches /veille + /mobilite / jour (gratuit) — borne le coût Tavily/LLM
+# Onboarding CONVERSATIONNEL piloté par le LLM (comprend n'importe quel scénario) ; 0 = ancien questionnaire scripté.
+LLM_ONBOARDING      = os.getenv("LLM_ONBOARDING", "1").strip().lower() in ("1", "true", "yes", "on", "oui")
 VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en rafale d'une recherche à l'autre
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
@@ -893,6 +895,53 @@ def _build_pref_plan(prefs: dict, remote: bool = False) -> list[str]:
         plan.append("certifs_langue")
     plan += ["langues_opportunite", "niveau", "mots_cles"]
     return plan
+
+# ── Onboarding CONVERSATIONNEL piloté par le LLM (comprend n'importe quel scénario) ──
+_ONBOARD_FIELDS = ["objectif", "mots_cles", "langues_opportunite", "niveau",
+                   "pays_cibles", "nationalite", "type_emploi"]
+_ONBOARD_VIDES = ("", "néant", "neant", "aucun", "aucune", "non précisé", "non precise",
+                  "n/a", "-", "inconnu", "non concerné", "non concerne", "?")
+
+async def _onboard_llm_turn(session: dict, t: str):
+    """Un tour d'onboarding mené par le LLM : extrait ce que la personne dit (sans rien inventer),
+    répond à ses questions, et pose AU PLUS une question utile. Retourne (reply, done) ou None si échec.
+    Ne touche PAS l'historique (le caller s'en charge)."""
+    profil = session.setdefault("profil", {})
+    prefs = profil.setdefault("preferences", {})
+    known = {k: prefs[k] for k in _ONBOARD_FIELDS if prefs.get(k)}
+    system = (CONSEILLER_PERSONA +
+              " Tu mènes un onboarding NATUREL, court et chaleureux pour cerner la personne et pouvoir l'aider. "
+              "TUTOIE, ne redis pas « Bonjour ». Ne redemande JAMAIS une info déjà connue. "
+              "Réponds TOUJOURS à ses questions/objections (brièvement, honnêtement). "
+              "Pose AU PLUS UNE question à la fois, et SEULEMENT si un champ VRAIMENT utile manque encore. "
+              "nationalité et pays ne servent QUE pour des études ou une mobilité internationale : "
+              "ne les demande JAMAIS pour du télétravail ou un emploi local. "
+              "EXTRACTION : ne capte QUE ce que la personne dit EXPLICITEMENT (n'invente rien ; laisse vide sinon). "
+              "On a ASSEZ (done=true) dès qu'on connaît son OBJECTIF et son DOMAINE/compétences (le reste est bonus). "
+              "Champs possibles : objectif (emploi/études/bourse/télétravail/mobilité/tous), mots_cles (domaine), "
+              "langues_opportunite (français/anglais/les deux), niveau (débutant/intermédiaire/confirmé), "
+              "pays_cibles, nationalite, type_emploi (temps plein/partiel/télétravail/alternance). "
+              'JSON STRICT: {"extracted":{"objectif":"","mots_cles":"","langues_opportunite":"","niveau":"",'
+              '"pays_cibles":"","nationalite":"","type_emploi":""},"reply":"<ta réponse + éventuellement UNE question, ou vide si rien à ajouter>","done":false}')
+    user = (f"DÉJÀ CONNU (ne pas redemander) : {known or 'rien encore'}\n"
+            f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 5)}\n"
+            f"NOUVEAU MESSAGE : {t}")
+    r = await call_groq(system, user, temperature=0.3, max_tokens=500, tier="smart")
+    if not isinstance(r, dict):
+        return None
+    ext = r.get("extracted", {}) or {}
+    for k in _ONBOARD_FIELDS:
+        v = str(ext.get(k, "") or "").strip()
+        if v and v.lower() not in _ONBOARD_VIDES and not prefs.get(k):
+            prefs[k] = v[:120]
+    # Télétravail : on complète le type de poste si l'intention est claire.
+    if _is_remote(session, prefs) and not prefs.get("type_emploi"):
+        prefs["type_emploi"] = "télétravail"
+    profil["preferences"] = prefs; session["profil"] = profil
+    reply = _trim_to_sentence(str(r.get("reply", "") or "").strip())
+    session["_onb_turns"] = session.get("_onb_turns", 0) + 1
+    done = bool(r.get("done")) or bool(prefs.get("objectif") and prefs.get("mots_cles")) or session["_onb_turns"] >= 7
+    return reply, done
 
 # B1 · pré-remplissage des préférences à partir du CV (réduit le nombre de questions).
 _PREF_LABELS = {"mots_cles": "tes domaines/compétences", "langues_opportunite": "ta langue de travail"}
@@ -3509,6 +3558,25 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if etape == "PREFERENCES":
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
+        # ── Onboarding conversationnel piloté par le LLM (gère N'IMPORTE QUEL scénario) ──
+        if LLM_ONBOARDING:
+            res = None
+            try:
+                res = await _onboard_llm_turn(session, t)
+            except Exception as e:
+                logger.warning(f"[onboard-llm] {e}")
+            if res is not None:
+                reply, done = res
+                _push(session, "user", t)
+                if done:
+                    session["etape"] = "CONFIRMATION"; session["_kb_options"] = _CONFIRM_KB
+                    resume = _resume_prefs(session.get("profil", {}).get("preferences", {}) or {})
+                    msg = (reply + "\n\n" + resume) if reply else resume
+                else:
+                    msg = reply or "Dis-m'en un peu plus sur ce que tu cherches 🙂"
+                _push(session, "assistant", msg); session["derniere_activite"] = now
+                return msg, session
+            # res is None -> on bascule sur le questionnaire scripté ci-dessous (repli robuste)
         field = session.get("pref_current")
         remote = _is_remote(session, prefs)
         # Télétravail détecté : on mémorise le type de poste pour sauter la question dédiée.
