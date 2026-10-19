@@ -1957,3 +1957,25 @@ def test_contexte_injecte_profil_plus():
                           "profil_plus": {"motivation": "aider sa famille", "aspiration": "analyste SOC"}}}
     ctx = main._conversation_context(session)
     assert "Motivation : aider sa famille" in ctx and "Aspiration : analyste SOC" in ctx
+
+# ── Garde-fou coût /veille (v2.84) ──
+def test_veille_gate_cooldown():
+    import time as _t
+    session = {"user_id": "u1", "_veille_at": _t.time()}   # vient de lancer
+    ok, msg = main._veille_gate(session)
+    assert ok is False and "patiente" in msg.lower()
+
+def test_veille_gate_quota_free(monkeypatch):
+    monkeypatch.setattr(main, "FREE_VEILLE_DAILY", 6)
+    monkeypatch.setattr(main.usage_store, "count", lambda uid, feat, day=None: 6)  # quota atteint
+    monkeypatch.setattr(main, "_is_premium", lambda s: False)
+    session = {"user_id": "u2", "_veille_at": 0}
+    ok, msg = main._veille_gate(session)
+    assert ok is False and "limite" in msg.lower()
+
+def test_veille_gate_premium_illimite(monkeypatch):
+    monkeypatch.setattr(main.usage_store, "count", lambda uid, feat, day=None: 999)
+    monkeypatch.setattr(main, "_is_premium", lambda s: True)
+    session = {"user_id": "u3", "_veille_at": 0}
+    ok, _ = main._veille_gate(session)
+    assert ok is True

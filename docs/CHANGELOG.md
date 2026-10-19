@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.84 — Garde-fous coût (relecture senior)
+- **Quota sur /veille et /mobilite** : jusqu'ici ces recherches (2 à 8 requêtes Tavily advanced + LLM) n'avaient AUCUNE limite, et les webhooks sont exemptés du rate-limiter -> risque de brûler le crédit Tavily/LLM. Ajout d'un quota journalier gratuit (FREE_VEILLE_DAILY=6, illimité premium/admin) + cooldown anti-rafale (VEILLE_COOLDOWN_SEC=8s).
+- **Profilage progressif throttlé** : _enrich_profile (sur le chemin de réponse) limité à 1 extraction/minute/utilisateur (latence + coût maîtrisés).
+
 ## v2.83 — Profilage progressif (hors onboarding)
 - Le bot enrichit le profil AU FIL des conversations, sans alourdir l'onboarding : quand la personne exprime explicitement une motivation, une aspiration, une contrainte, un centre d'intérêt ou un trait de savoir-être, c'est capté (déclenché seulement sur un message porteur d'indices, modèle rapide) et stocké dans profil_plus. N'invente rien : seulement ce qui est dit.
 - Ce profil profond est injecté dans le contexte du routeur (réponses plus logiques et personnalisées) et affiché dans /profil (transparence : « ce que j'ai appris de toi »).
