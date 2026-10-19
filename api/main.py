@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.90.0"
+VERSION         = "2.91.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6025,6 +6025,27 @@ _NAT_PAYS = {
     "tunisienne": "Tunisie", "algérienne": "Algérie", "algerienne": "Algérie",
 }
 
+# Indicatifs téléphoniques -> pays (le numéro WhatsApp révèle le pays réel de l'utilisateur,
+# sans rien lui demander). Couvre la sous-région CEDEAO/UEMOA + voisins + diaspora courante.
+_PHONE_CC = {
+    "229": "Bénin", "225": "Côte d'Ivoire", "221": "Sénégal", "228": "Togo", "226": "Burkina Faso",
+    "223": "Mali", "227": "Niger", "224": "Guinée", "245": "Guinée", "237": "Cameroun", "234": "Nigéria",
+    "233": "Ghana", "235": "Tchad", "241": "Gabon", "242": "Congo", "243": "Congo", "222": "Mauritanie",
+    "220": "Gambie", "231": "Liberia", "232": "Sierra Leone", "238": "Cap-Vert",
+    "212": "Maroc", "216": "Tunisie", "213": "Algérie",
+    "33": "France", "32": "Belgique", "41": "Suisse", "1": "Canada",
+}
+
+def _pays_from_phone(number: str) -> str:
+    """Déduit le pays à partir d'un numéro international (ex. WhatsApp 22962… -> Bénin)."""
+    d = re.sub(r"\D", "", str(number or ""))
+    if d.startswith("00"):
+        d = d[2:]
+    for ln in (3, 2, 1):
+        if len(d) > ln and d[:ln] in _PHONE_CC:
+            return _PHONE_CC[d[:ln]]
+    return ""
+
 def _pays_from_nat(nat: str) -> str:
     n = str(nat or "").strip().lower()
     if n in _NAT_PAYS:
@@ -6261,7 +6282,9 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
     # Champ élargi : proposer aussi des opportunités LOCALES (pas seulement à l'étranger)
-    local_pays = _pays_from_nat(nationalite)
+    # Pays RÉEL de l'utilisateur : d'abord l'indicatif du numéro (WhatsApp/Messenger), sinon la nationalité.
+    phone_pays = _pays_from_phone(user_id) if channel in ("whatsapp", "messenger") else ""
+    local_pays = phone_pays or _pays_from_nat(nationalite)
     _pc_low = (pays_cibles or "").lower()
     _pc_vide = (not pays_cibles) or _pc_low in ("tous", "local", "sur place", "mon pays", "")
     veut_local = _pc_vide or "afrique" in _pc_low or (local_pays and local_pays.lower() in (_pc_low + " " + cible_lower))
