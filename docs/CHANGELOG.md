@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.82 — Modèle smart via Gemini + profilage injecté dans le contexte
+- **Tier smart conduit par le fournisseur préféré** (SMART_LEAD_PROVIDER, défaut Gemini) : meilleur suivi du contexte et des consignes anti-invention, chaîne de repli préservée. Tier "quality" (CV/lettre) reste configurable via OPENROUTER_GENERATE_MODEL.
+- **Profilage "en profondeur" injecté** : points forts, axes à renforcer, savoir-être, séniorité et contraintes (déjà extraits du CV) sont maintenant donnés au routeur conversationnel, qui raisonne comme un conseiller d'orientation (réponses logiques et personnalisées, sans rien inventer).
+
 ## v2.81 — Fiabilité anti-troncature généralisée + ajout manuel d'offres
 - **Anti-troncature partout** : helper réutilisable (_gen_text) qui détecte un texte coupé (ponctuation suspendue, parenthèse ouverte), relance avec plus de tokens, et coupe proprement à la dernière phrase complète (_trim_to_sentence). Appliqué au routeur des utilisateurs onboardés (tokens 380->650 + coupe propre), au pré-onboarding et au débrief de simulation.
 - **Ajout manuel d'offres (admin)** : /offre <type> | <titre> | <url> | <description> | <local|intl> injecte une offre curée dans le pool de veille, proposée ensuite aux profils correspondants.

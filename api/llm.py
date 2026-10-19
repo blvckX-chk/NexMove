@@ -35,6 +35,9 @@ OPENROUTER_MODEL      = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_MODEL_FAST = os.getenv("OPENROUTER_MODEL_FAST", "openai/gpt-oss-20b")
 # Modèle PREMIUM optionnel pour la rédaction CV/lettre (tier="quality"). Ex : "anthropic/claude-3.5-sonnet".
 OPENROUTER_GENERATE_MODEL = os.getenv("OPENROUTER_GENERATE_MODEL", OPENROUTER_MODEL)
+# Fournisseur PRÉFÉRÉ pour le tier "smart" (conversation, sélection, conseils) : meilleur suivi du
+# contexte et des consignes anti-invention. Par défaut Gemini (fort, long contexte, déjà configuré).
+SMART_LEAD_PROVIDER = os.getenv("SMART_LEAD_PROVIDER", "gemini").strip().lower()
 
 # Pillow (utilisé par la vision) — import tolérant
 try:
@@ -127,6 +130,10 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
                    "model_fast": OPENROUTER_GENERATE_MODEL, "api": "openai", "max_ctx": 120000}
             providers = [gen] + _LLM_PROVIDERS
         tier = "smart"   # fallback = qualité standard
+    elif tier == "smart" and SMART_LEAD_PROVIDER:
+        # On met le fournisseur préféré en tête pour le conversationnel (meilleur contexte/anti-invention),
+        # sans casser la chaîne de repli (tri stable : les autres gardent leur ordre).
+        providers = sorted(_LLM_PROVIDERS, key=lambda p: p["name"] != SMART_LEAD_PROVIDER)
     for prov in providers:
         if not prov["key"]:
             continue
