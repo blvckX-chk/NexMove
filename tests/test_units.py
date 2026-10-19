@@ -2050,3 +2050,17 @@ def test_onboard_llm_fallback_si_echec(monkeypatch):
                "profil": {"preferences": {"objectif": "travailler"}}, "historique": []}
     msg, session = _run(main.process_text_message(session, "cybersécurité"))
     assert isinstance(msg, str) and len(msg) > 0   # pas de crash, repli opérationnel
+
+# ── Anti-hallucination : question "version" déterministe (v2.87) ──
+def test_is_version_query():
+    assert main._is_version_query("version ?")
+    assert main._is_version_query("Version")
+    assert main._is_version_query("c'est quelle version")
+    assert not main._is_version_query("je veux la dernière version de mon CV")
+
+def test_version_query_renvoie_vraie_version():
+    # même non onboardé, "Version ?" doit renvoyer la VRAIE version (jamais inventée par le LLM)
+    session = {"user_id": "u1", "etape": "ATTENTE_CV", "onboarding_complete": False,
+               "profil": {}, "historique": []}
+    msg, _ = _run(main.process_text_message(session, "Version ?"))
+    assert main.VERSION in msg
