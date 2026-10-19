@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.93 — Filigrane NexMove (comptes gratuits) + suivi des codes
+- Tous les documents générés par un compte GRATUIT (CV ATS/graphique, lettre, projet d'études, en PDF comme en .docx) portent désormais un **filigrane NexMove** : texte diagonal discret + mention « Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane ». Les abonnés (premium/pro/vip/admin) reçoivent le même document **sans filigrane**.
+- Nouvelle commande admin `/codes` pour suivre les codes premium générés : `/codes` (tout), `/codes valides` (non utilisés), `/codes utilises` (déjà activés, avec qui et quand). Affiche aussi le total valides/utilisés.
+- Rappel : un code premium collé tel quel dans la conversation (ex. `PRM-9Q5C7SW8`) active l'abonnement directement, sans taper de commande — la méthode de soumission « dans la conversation » fonctionne.
+
 ## v2.92 — Deadlines passées écartées + CV à la voix
 - Filtrage des échéances renforcé : le prompt de sélection EXCLUT désormais explicitement toute opportunité dont la date limite est antérieure à la date du jour, et renseigne `deadline`/`deadline_iso` quand une date À VENIR est visible. Côté code, `_open()` ne se contente plus de `deadline_iso` : à défaut, il analyse le texte de la deadline et le titre (ISO, « 15 janvier 2024 », JJ/MM/AAAA, année seule révolue) pour écarter les bourses/offres déjà clôturées — conservateur (en cas de doute, l'offre est gardée ; « rolling/permanent » n'est jamais écarté). Corrige le retour testeur « il m'a proposé des bourses déjà clôturées ».
 - Création de CV : rappel que l'on peut répondre par message *vocal* à chaque question (transcription automatique), au lieu de tout taper.

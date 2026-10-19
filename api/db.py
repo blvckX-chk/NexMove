@@ -565,6 +565,25 @@ class PremiumStore:
         con.close()
         return {s: int(n) for s, n in rows}
 
+    def list_codes(self, status: Optional[str] = None, limit: int = 100) -> list:
+        """Liste les codes (optionnellement filtrés par statut 'used'/'unused'),
+        les plus récents d'abord. Renvoie des dicts {code,tier,days,status,used_by,used_at,created_at,batch}."""
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            q = ("SELECT code,tier,days,status,used_by,used_at,created_at,batch "
+                 "FROM premium_codes")
+            args: list = []
+            if status in ("used", "unused"):
+                q += " WHERE status=?"
+                args.append(status)
+            q += " ORDER BY created_at DESC LIMIT ?"
+            args.append(int(limit))
+            rows = con.execute(q, args).fetchall()
+        finally:
+            con.close()
+        return [{"code": r[0], "tier": r[1], "days": int(r[2] or 0), "status": r[3],
+                 "used_by": r[4], "used_at": r[5], "created_at": r[6], "batch": r[7]} for r in rows]
+
 
 class CreditStore:
     """Codes de crédits FONGIBLES : chaque code = N crédits utilisables sur n'importe quelle action.

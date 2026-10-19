@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.92.0"
+VERSION         = "2.93.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1450,7 +1450,7 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
     nom = (profil.get("identite") or {}).get("nom") or data.get("nom") or "Candidat"
     try:
         comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
-        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps, "ats")
+        cv_buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", profil.get("resume_profil", ""), comps, "ats", watermark=not _is_premium(session))
         await deliver_file(session, f"CV_ats_{_slug(nom)}.pdf", cv_buf.getvalue(), "📄 Voici ton CV (format *ATS*, lisible par les robots de tri)")
     except Exception as e:
         logger.error(f"[cvbuild] pdf: {e}")
@@ -2315,7 +2315,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 try:
                     cp = _condense_profil(profil)
                     comps = (cp.get("competences", {}).get("techniques", []) + cp.get("competences", {}).get("outils", []))[:8]
-                    buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps)
+                    buf = await asyncio.to_thread(build_cv_pdf, cp, "CV", cp.get("resume_profil", ""), comps, watermark=not _is_premium(session))
                     nom = (profil.get("identite") or {}).get("nom") or "Candidat"
                     await deliver_file(session, f"CV_1page_{_slug(nom)}.pdf", buf.getvalue(), "📄 Ton CV condensé (1 page)")
                     msg = "✅ Voici ton *CV condensé* · parfait quand un recruteur veut du synthétique."
@@ -2335,7 +2335,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 try:
                     ap = _anonymize_profil(profil)
                     comps = (ap.get("competences", {}).get("techniques", []) + ap.get("competences", {}).get("outils", []))[:14]
-                    buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps)
+                    buf = await asyncio.to_thread(build_cv_pdf, ap, "CV (anonyme)", ap.get("resume_profil", ""), comps, watermark=not _is_premium(session))
                     await deliver_file(session, "CV_anonyme.pdf", buf.getvalue(), "🕶️ Ton CV anonymisé")
                     msg = "✅ *CV anonymisé* (nom et coordonnées masqués) · idéal pour une candidature à l'aveugle ou une CVthèque."
                 except Exception as e:
@@ -3015,6 +3015,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         if tier not in _PREMIUM_TIERS or days <= 0 or not (1 <= count <= 500):
             msg = ("🧰 *Génération de codes* (admin)\n`/gencodes <premium|pro|vip> <jours> <nombre>`\n"
                    "Ex : `/gencodes premium 30 50` → 50 codes Premium de 30 jours.\n"
+                   "Suivi : `/codes` · `/codes valides` · `/codes utilises`\n"
                    f"État actuel : {premium_store.stats()}")
         else:
             codes = premium_store.create_codes(tier, days, count, batch=now[:10])
@@ -3025,6 +3026,38 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"codes_{tier}_{days}j_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {premium_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/codes"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = low.split()
+        filtre = parts[1] if len(parts) > 1 else ""
+        status = "used" if filtre in ("used", "utilises", "utilisés", "u") else \
+                 "unused" if filtre in ("unused", "valides", "libres", "restants", "v") else None
+        st = premium_store.stats()
+        used_n = st.get("used", 0); free_n = st.get("unused", 0)
+        codes = premium_store.list_codes(status=status, limit=200)
+        titre = ("✅ *Codes VALIDES (non utilisés)*" if status == "unused" else
+                 "🔴 *Codes déjà utilisés*" if status == "used" else "🧾 *Tous les codes premium*")
+        lignes = [titre, f"_Total : {free_n} valides · {used_n} utilisés._", ""]
+        for c in codes[:40]:
+            if c["status"] == "used":
+                qui = str(c.get("used_by") or "?")
+                quand = str(c.get("used_at") or "")[:10]
+                lignes.append(f"🔴 `{c['code']}` · {c['tier']}/{c['days']}j · par {qui} le {quand}")
+            else:
+                lignes.append(f"✅ `{c['code']}` · {c['tier']}/{c['days']}j · libre")
+        if not codes:
+            lignes.append("_(aucun code)_")
+        elif len(codes) > 40:
+            lignes.append(f"\n… et {len(codes) - 40} autres. Astuce : `/codes valides` ou `/codes utilises`.")
+        if status is None:
+            lignes.append("\n💡 `/codes valides` · `/codes utilises`")
+        msg = "\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -3195,16 +3228,16 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
                 pack = await generate_pack(profil, cible_desc, type_cible)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté · {cible_desc[:60]}")
                 ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation · {cible_desc[:60]}")
                 if _DOCX_OK:
                     try:
-                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences)
-                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
+                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
                         await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
                         await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
                     except Exception as de:
@@ -3355,16 +3388,16 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if r.get("conseils"):
                     msg += "💡 *Conseils :*\n" + "\n".join(f"• {_md_clean(c)}" for c in r["conseils"][:5]) + "\n\n"
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
-                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""))
+                cv_buf = await asyncio.to_thread(build_cv_pdf, profil, cible_desc[:40], profil.get("resume_profil", ""), competences, watermark=not _is_premium(session))
+                lm_buf = await asyncio.to_thread(build_letter_pdf, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""), watermark=not _is_premium(session))
                 nom = _slug(ident.get("nom", "candidat"))
                 chat_id = session.get("chat_id")
                 await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), "📄 CV")
                 await deliver_file(session,f"Projet_{nom}.pdf", lm_buf.getvalue(), "✍️ Lettre / projet d'études")
                 if _DOCX_OK:
                     try:
-                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences)
-                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""))
+                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, cible_desc[:40], profil.get("resume_profil", ""), competences, watermark=not _is_premium(session))
+                        pr_dx = await asyncio.to_thread(build_letter_docx, profil, r.get("objet") or f"Projet d'études · {cible_desc}", r.get("corps", ""), watermark=not _is_premium(session))
                         await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 CV Word (modifiable)")
                         await deliver_file(session, f"Projet_{nom}.docx", pr_dx.getvalue(), "📝 Projet Word (modifiable)")
                     except Exception as de:
@@ -4178,8 +4211,53 @@ def _condense_profil(profil: dict) -> dict:
 
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
+_WM_GREY = HexColor("#c9ced6")
 
-def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats") -> io.BytesIO:
+def _draw_watermark(canvas, doc):
+    """Filigrane NexMove pour les documents des comptes GRATUITS : texte diagonal
+    répété (discret, n'empêche pas la lecture) + mention en pied de page.
+    Les abonnés premium reçoivent le même document SANS filigrane."""
+    canvas.saveState()
+    try:
+        w, h = A4
+        canvas.setFont("Helvetica-Bold", 30)
+        canvas.setFillColor(_WM_GREY)
+        try:
+            canvas.setFillAlpha(0.22)
+        except Exception:
+            pass
+        # Grille diagonale de « NexMove »
+        canvas.translate(w / 2, h / 2)
+        canvas.rotate(35)
+        step = 150
+        for yy in range(-int(h), int(h), step):
+            for xx in range(-int(w), int(w), 230):
+                canvas.drawCentredString(xx, yy, "NexMove")
+        canvas.restoreState()
+        # Pied de page discret (hors rotation)
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(GRIS)
+        try:
+            canvas.setFillAlpha(0.8)
+        except Exception:
+            pass
+        canvas.drawCentredString(w / 2, 0.8 * cm,
+                                 "Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane")
+    except Exception:
+        pass
+    finally:
+        canvas.restoreState()
+
+def _pdf_build(doc, els, watermark: bool):
+    """Construit le PDF, avec filigrane sur toutes les pages si watermark=True."""
+    if watermark:
+        doc.build(els, onFirstPage=_draw_watermark, onLaterPages=_draw_watermark)
+    else:
+        doc.build(els)
+
+def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats",
+                 watermark: bool = False) -> io.BytesIO:
     """style='ats' : sobre, noir, une colonne, polices standard -> lisible par les robots de tri (ATS).
     style='graphic' : bandeau coloré + titres de section en couleur -> pour un envoi direct / humain."""
     titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
@@ -4238,7 +4316,7 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style
         els.append(Paragraph("FORMATION", s_sec))
         for f in formation[:3]:
             els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> · {_xml(f.get('etablissement',''))}", s_body))
-    doc.build(els)
+    _pdf_build(doc, els, watermark)
     return buf
 
 def _xml(s):
@@ -4248,7 +4326,7 @@ def _slug(s):
     s = "".join(c for c in str(s or "candidat") if c.isalnum() or c in " -_")
     return (s.strip().replace(" ", "_")[:40]) or "candidat"
 
-def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
+def build_letter_pdf(profil: dict, objet: str, corps: str, watermark: bool = False) -> io.BytesIO:
     objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
@@ -4272,14 +4350,24 @@ def build_letter_pdf(profil: dict, objet: str, corps: str) -> io.BytesIO:
     els.append(Spacer(1, 12))
     els.append(Paragraph("Cordialement,", s_body))
     els.append(Paragraph(_xml(ident.get("nom", "")), s_head))
-    doc.build(els)
+    _pdf_build(doc, els, watermark)
     return buf
 
 # ---------- Export Word (.docx) : versions modifiables du CV et de la lettre ----------
 _BLEU_RGB = (0x1a, 0x23, 0x7e)
 _GRIS_RGB = (0x54, 0x6e, 0x7a)
 
-def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> io.BytesIO:
+def _docx_watermark_footer(d):
+    """Mention NexMove en pied de document (.docx) pour les comptes gratuits."""
+    try:
+        p = d.add_paragraph(); r = p.add_run(
+            "— Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane —")
+        r.italic = True; r.font.size = _DocxPt(8); r.font.color.rgb = _DocxRGB(*_GRIS_RGB)
+    except Exception:
+        pass
+
+def build_cv_docx(profil: dict, titre: str, resume: str, competences: list,
+                  watermark: bool = False) -> io.BytesIO:
     titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
     competences = [_sanitize_doc_text(c) for c in (competences or []) if _sanitize_doc_text(c)]
     d = _DocxDocument()
@@ -4311,6 +4399,8 @@ def build_cv_docx(profil: dict, titre: str, resume: str, competences: list) -> i
         section("Formation")
         for f in form[:4]:
             p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} · {f.get('etablissement','')}"); r.bold = True
+    if watermark:
+        _docx_watermark_footer(d)
     buf = io.BytesIO(); d.save(buf); return buf
 
 async def _deliver_cv(session: dict, style: str = "ats") -> bool:
@@ -4325,14 +4415,14 @@ async def _deliver_cv(session: dict, style: str = "ats") -> bool:
     ok = False
     for st in styles:
         try:
-            buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", resume, comps, st)
+            buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", resume, comps, st, watermark=not _is_premium(session))
             label = "ATS (lisible par les robots de tri)" if st == "ats" else "graphique (envoi direct au recruteur)"
             ok = await deliver_file(session, f"CV_{st}_{nom}.pdf", buf.getvalue(), f"📄 Ton CV *{label}*") or ok
         except Exception as e:
             logger.error(f"[cv] {st}: {e}")
     return ok
 
-def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
+def build_letter_docx(profil: dict, objet: str, corps: str, watermark: bool = False) -> io.BytesIO:
     objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     d = _DocxDocument()
     ident = profil.get("identite", {})
@@ -4350,6 +4440,8 @@ def build_letter_docx(profil: dict, objet: str, corps: str) -> io.BytesIO:
     d.add_paragraph("")
     d.add_paragraph("Cordialement,")
     p = d.add_paragraph(); r = p.add_run(ident.get("nom", "") or ""); r.bold = True
+    if watermark:
+        _docx_watermark_footer(d)
     buf = io.BytesIO(); d.save(buf); return buf
 
 # ── Canaux (Telegram/WhatsApp/Messenger) extraits dans channels.py (PR-C) ──

@@ -2167,3 +2167,39 @@ def test_deadline_rolling_jamais_passee():
 
 def test_deadline_jjmmaaaa_passee():
     assert main._deadline_is_past("avant le 01/02/2025", _TODAY) is True
+
+
+# ------------------ Filigrane comptes gratuits + suivi des codes (v2.93) ------------------
+_PROFIL_T = {"identite": {"nom": "Testeur", "email": "t@x.com"},
+             "formation": [{"diplome": "Licence", "etablissement": "UAC"}],
+             "experience": [], "competences": {"techniques": ["Python"]}}
+
+def test_cv_pdf_filigrane_valide():
+    b = main.build_cv_pdf(_PROFIL_T, "CV", "resume", ["Python"], "ats", watermark=True).getvalue()
+    assert b[:4] == b"%PDF" and len(b) > 1000
+
+def test_cv_pdf_sans_filigrane_valide():
+    b = main.build_cv_pdf(_PROFIL_T, "CV", "resume", ["Python"], "ats", watermark=False).getvalue()
+    assert b[:4] == b"%PDF"
+
+def test_lettre_pdf_filigrane_valide():
+    b = main.build_letter_pdf(_PROFIL_T, "Objet", "corps\n\npara2", watermark=True).getvalue()
+    assert b[:4] == b"%PDF"
+
+def test_cv_docx_filigrane_valide():
+    b = main.build_cv_docx(_PROFIL_T, "CV", "r", ["Python"], watermark=True).getvalue()
+    assert b[:2] == b"PK"
+
+def test_premium_store_list_codes():
+    import db as _db, tempfile, os as _os
+    path = _os.path.join(tempfile.mkdtemp(), "t.db")
+    st = _db.PremiumStore(path)
+    codes = st.create_codes("premium", 30, 3)
+    assert len(codes) == 3
+    allc = st.list_codes()
+    assert len(allc) == 3 and all(c["status"] == "unused" for c in allc)
+    st.redeem(codes[0], "user42")
+    used = st.list_codes(status="used")
+    assert len(used) == 1 and used[0]["used_by"] == "user42"
+    libres = st.list_codes(status="unused")
+    assert len(libres) == 2
