@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.83.0"
+VERSION         = "2.84.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -123,6 +123,8 @@ FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages voca
 FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (score d'admissibilité) / jour (gratuit)
 FREE_APPLY_DAILY    = int(os.getenv("FREE_APPLY_DAILY", "3"))    # /commentpostuler (guide de candidature) / jour (gratuit)
 FREE_LINK_DAILY     = int(os.getenv("FREE_LINK_DAILY", "4"))     # audit d'un lien d'opportunité / jour (gratuit)
+FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "6"))   # recherches /veille + /mobilite / jour (gratuit) — borne le coût Tavily/LLM
+VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en rafale d'une recherche à l'autre
 SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par simulation d'entretien
 # Parrainage : X filleuls (onboarding fini) -> Y jours Premium offerts au parrain.
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
@@ -643,6 +645,18 @@ def _apply_premium(session: dict, tier: str, days: int) -> str:
     session["premium_tier"] = tier
     session["premium_until"] = new_exp
     return new_exp
+
+def _veille_gate(session: dict) -> tuple[bool, str]:
+    """Garde-fou coût/abus sur /veille et /mobilite (multi-requêtes Tavily + LLM) :
+    cooldown anti-rafale + quota journalier gratuit (illimité pour premium/admin)."""
+    now = time.time()
+    last = session.get("_veille_at", 0) or 0
+    if now - last < VEILLE_COOLDOWN_SEC:
+        return False, "⏳ Doucement : patiente quelques secondes avant de relancer une recherche."
+    ok, _ = _quota_check(session, "veille", FREE_VEILLE_DAILY)
+    if not ok:
+        return False, _quota_exceeded_msg("la recherche d'opportunités (/veille, /mobilite)")
+    return True, ""
 
 def _quota_exceeded_msg(feature_label: str) -> str:
     return (f"🚦 Tu as atteint ta *limite gratuite du jour* pour {feature_label}.\n\n"
@@ -1595,6 +1609,11 @@ async def _enrich_profile(session: dict, t: str) -> None:
     low = (t or "").lower()
     if len(t) < 30 or not any(c in low for c in _PROF_CUES):
         return
+    # Throttle : au plus une extraction par minute et par utilisateur (coût + latence maîtrisés).
+    now_ts = time.time()
+    if now_ts - (session.get("_enrich_at", 0) or 0) < 60:
+        return
+    session["_enrich_at"] = now_ts
     system = ("Tu construis le profil d'orientation d'une personne. À partir de SON message, extrais UNIQUEMENT "
               "ce qu'elle dit EXPLICITEMENT d'elle-même. N'INVENTE RIEN, ne déduis pas : si ce n'est pas dit, laisse vide. "
               "Formule court (quelques mots). JSON: "
@@ -2945,11 +2964,16 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
     if low.startswith("/mobilite") or low.startswith("/mobilité"):
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
+        _vg_ok, _vg_msg = _veille_gate(session)
+        if not _vg_ok:
+            _push(session, "user", t); _push(session, "assistant", _vg_msg); session["derniere_activite"] = now
+            return _vg_msg, session
         try:
             seen = set(session.get("seen_urls", []))
             res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"),
                                   exclude_urls=seen, alertes=session.get("alertes", []),
                                   tier=_user_tier(session), channel=session.get("channel", "telegram"))
+            session["_veille_at"] = time.time(); _quota_bump(session, "veille")
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
             opps = res.get("opportunites", [])
             for o in opps:
@@ -3202,12 +3226,16 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         return msg, session
 
     if low.startswith("/veille"):
+        _vg_ok, _vg_msg = _veille_gate(session)
         if not session.get("onboarding_complete"):
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
+        elif not _vg_ok:
+            msg = _vg_msg
         else:
             try:
                 res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"),
                                       alertes=session.get("alertes", []), tier=_user_tier(session), channel=session.get("channel","telegram"))
+                session["_veille_at"] = time.time(); _quota_bump(session, "veille")
                 new = 0
                 for opp in res.get("opportunites", []):
                     if opp_store.add(session.get("user_id"), opp):
