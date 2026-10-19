@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.84.1"
+VERSION         = "2.85.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -837,23 +837,59 @@ def _vise_international(prefs: dict) -> bool:
         return True
     return any(h in pays for h in _INTL_HINTS)
 
-def _build_pref_plan(prefs: dict) -> list[str]:
+_REMOTE_KW = ("télétravail", "teletravail", "télé-travail", "remote", "à distance", "a distance",
+              "en ligne", "freelance", "free-lance", "free lance", "distanciel", "en remote",
+              "home office", "nomade")
+
+def _is_remote(session: dict, prefs: dict) -> bool:
+    """Détecte une intention de TÉLÉTRAVAIL/freelance (depuis les préférences OU les derniers messages).
+    Dans ce cas, les questions de mobilité (nationalité, visa, certifs de langue, financement) n'ont pas
+    de sens : on les saute."""
+    blob = " ".join([str(prefs.get("objectif", "")), str(prefs.get("mots_cles", "")),
+                     str(prefs.get("pays_cibles", "")), str(prefs.get("type_emploi", "")),
+                     _recent_dialogue(session, 6)]).lower()
+    return any(k in blob for k in _REMOTE_KW)
+
+# Pourquoi on pose chaque question (réponse honnête quand l'utilisateur demande « à quoi ça sert ? »).
+_PREF_WHY = {
+    "pays_cibles": "Ça me sert à cibler les offres : localement, à l'étranger, ou partout si c'est du télétravail.",
+    "nationalite": "C'est utile UNIQUEMENT pour les démarches de visa/immigration quand c'est pertinent. Pour du télétravail ou des offres locales, ce n'est pas nécessaire — tu peux dire « non concerné ».",
+    "certifs_langue": "C'est utile seulement pour certaines admissions/visas à l'étranger. Pour un emploi en ligne, ce n'est pas requis — tu peux répondre « aucune ».",
+    "financement": "Ça ne concerne que les études/bourses. Pour un job, réponds « non concerné ».",
+    "langues_opportunite": "Pour te proposer des offres dans la bonne langue (français, anglais, ou les deux).",
+    "niveau": "Pour calibrer les offres à ton niveau (débutant, intermédiaire, confirmé).",
+    "mots_cles": "Pour cibler ton domaine et tes compétences dans la recherche.",
+    "objectif": "Pour savoir si tu cherches un emploi, des études, une bourse… et t'orienter en conséquence.",
+}
+
+_META_Q_CUES = ("pourquoi", "pour quoi", "tu veux en faire", "en faire quoi", "c'est quoi", "cest quoi",
+                "à quoi", "a quoi", "en as besoin", "as besoin", "besoin de", "comprends pas",
+                "comprend pas", "ça sert", "ca sert", "sers à", "sert à", "utile", "obligé", "oblige")
+
+def _is_meta_question(t: str) -> bool:
+    """La « réponse » est en réalité une question/objection de l'utilisateur (pas une vraie valeur)."""
+    tl = (t or "").strip().lower()
+    if not tl:
+        return False
+    return tl.endswith("?") or any(c in tl for c in _META_Q_CUES)
+
+def _build_pref_plan(prefs: dict, remote: bool = False) -> list[str]:
     """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
-    Recalculée à chaque étape : la nationalité (passeport) et le financement d'études ne sont
-    demandés QUE s'ils ont du sens (mobilité internationale / parcours d'études-bourse)."""
+    Recalculée à chaque étape. Télétravail/freelance -> plan minimal (pas de nationalité/visa/certifs)."""
     objectif = str(prefs.get("objectif", "")).lower()
     etudes  = any(k in objectif for k in ("étud", "etud", "bourse", "fellowship", "master",
-                                          "doctorat", "licence", "tous", "tout"))
+                                          "doctorat", "licence"))
     travail = _is_travail(objectif)
+    if remote:
+        # Télétravail : on ne demande QUE l'essentiel pour chercher (domaine + langue + niveau).
+        return ["objectif", "mots_cles", "langues_opportunite", "niveau"]
+    # "tous/tout" ne force plus le parcours études complet (évite nationalité/certifs inutiles).
     plan = ["objectif", "pays_cibles"]
-    # Nationalité : mobilité internationale, études/immigration, ou objectif indéterminé.
-    if etudes or (travail and _vise_international(prefs)) or not (travail or etudes):
+    if etudes or (travail and _vise_international(prefs)):
         plan.append("nationalite")
-    # Financement d'études : pas pertinent pour un simple job.
-    if etudes or not travail:
+    if etudes:
         plan.append("financement")
-    # Certifs de langue : surtout pour l'international (admission, visa).
-    if etudes or _vise_international(prefs):
+    if etudes or (travail and _vise_international(prefs)):
         plan.append("certifs_langue")
     plan += ["langues_opportunite", "niveau", "mots_cles"]
     return plan
@@ -3473,9 +3509,25 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if etape == "PREFERENCES":
         profil = session.get("profil", {}) or {}
         prefs = profil.get("preferences", {}) or {}
-        # 1) Enregistrer la réponse à la question EN COURS (si valide).
         field = session.get("pref_current")
-        if field:
+        remote = _is_remote(session, prefs)
+        # Télétravail détecté : on mémorise le type de poste pour sauter la question dédiée.
+        if remote and not prefs.get("type_emploi"):
+            prefs["type_emploi"] = "télétravail"; profil["preferences"] = prefs; session["profil"] = profil
+        # 1) L'utilisateur pose une QUESTION au lieu de répondre -> on répond, on ne stocke RIEN,
+        #    et on saute la question si elle est devenue inutile (ex. nationalité pour du télétravail).
+        if field and _is_meta_question(t):
+            _push(session, "user", t)
+            why = _PREF_WHY.get(field, "Ça m'aide à mieux cibler les offres pour toi.")
+            plan = _build_pref_plan(prefs, remote)
+            target = field if field in plan else next((f for f in plan if not prefs.get(f)), None)
+            if target:
+                q = f"🙂 {why}\n\n{_ask_pref(session, target)}"
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            session["pref_current"] = None   # plus rien à demander -> on confirme
+        elif field:
+            # 2) Réponse normale : valider et enregistrer.
             ok, indice = valider_pref(field, t)
             if not ok:
                 _push(session, "user", t)
@@ -3484,9 +3536,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 return q, session
             prefs[field] = t
             profil["preferences"] = prefs; session["profil"] = profil
-        _push(session, "user", t)
-        # 2) Prochaine question du plan ADAPTATIF (recalculé selon les réponses déjà données).
-        plan = _build_pref_plan(prefs)
+            _push(session, "user", t)
+        else:
+            _push(session, "user", t)
+        # 3) Prochaine question du plan ADAPTATIF (recalculé selon les réponses + télétravail).
+        plan = _build_pref_plan(prefs, _is_remote(session, prefs))
         nxt = next((f for f in plan if not prefs.get(f)), None)
         if nxt:
             q = _ask_pref(session, nxt)
