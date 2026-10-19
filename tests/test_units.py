@@ -2095,3 +2095,16 @@ def test_awaiting_domain_lance_recherche(monkeypatch):
     assert "RECHERCHE[rédaction web]" in msg
     assert session["profil"]["preferences"]["mots_cles"] == "rédaction web"
     assert session.get("awaiting_domain") is False
+
+# ── Télétravail = sans frontière géographique (v2.90) ──
+def test_is_remote_profil():
+    assert main._is_remote_profil({"type_emploi": "télétravail"})
+    assert main._is_remote_profil({"objectif": "tous"}, "freelance en ligne")
+    assert not main._is_remote_profil({"objectif": "travailler", "mots_cles": "soudure"})
+
+def test_build_queries_remote_sans_pays():
+    terms = {"domaine": "rédaction web", "keywords": ["rédaction web", "seo"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "télétravail", "emploi", "", "Bénin", "télétravail", False, remote=True)
+    blob = " ".join(qs).lower()
+    assert "bénin" not in blob and "benin" not in blob          # pas de restriction pays
+    assert "remoteok" in blob or "remote" in blob                # job boards remote
