@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.96 — Sortie claire des flux guidés (CV / dépôt d'offre)
+- En pleine création de CV ou dépôt d'offre, taper une commande (ex. `/statistiques`) renvoyait un sec « Réponds sans commande » sans dire comment sortir. Désormais le message indique clairement de taper **/annuler** pour lancer une commande, et distingue le cas « réponse trop courte » du cas « commande ».
+- `/stats` accepte maintenant les alias `/statistiques` et `/stat` (évite de rester bloqué parce que la commande exacte n'était pas reconnue).
+- Rappel : un texte simple (sans `/`) envoyé pendant la création de CV est enregistré comme **réponse** à la question en cours — d'où l'intérêt de `/annuler` avant de faire autre chose.
+
 ## v2.95 — Filigrane ATS corrigé + crédits de diffusion
 - **Correctif qualité (régression v2.93)** : le filigrane diagonal polluait l'extraction du CV **ATS** (un robot de tri lisait « NexMove » 15× avant le nom). Désormais : filigrane visuel diagonal **uniquement sur le CV graphique** (destiné à l'œil humain) ; sur le CV **ATS** et les lettres, une seule mention discrète en **pied de page** qui ne gêne pas le parsing.
 - **`/valider` sécurisé** : d'abord un **aperçu** (nombre de destinataires + coût en crédits + solde du recruteur, alerte si deadline passée), puis diffusion réelle seulement avec le mot `envoyer`. `force` pour diffuser sans débiter (offert). Plus de diffusion massive accidentelle, et blocage si l'offre a déjà été diffusée.

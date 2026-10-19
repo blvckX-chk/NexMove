@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.95.0"
+VERSION         = "2.96.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3424,7 +3424,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    if low.startswith("/stats") or low.startswith("/dashboard") or low.startswith("/panel"):
+    if (low.startswith("/stats") or low.startswith("/statistiques") or low.startswith("/stat ")
+            or low == "/stat" or low.startswith("/dashboard") or low.startswith("/panel")):
         if not _is_admin(session):
             msg = "🔒 Commande réservée à l'administrateur."
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -3998,9 +3999,15 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if 0 <= step < len(CVBUILD_STEPS):
             field = CVBUILD_STEPS[step][0]
             val = t.strip()
-            if val.lower().startswith("/") or len(val) < 2:
+            if val.lower().startswith("/"):
                 _push(session, "user", t)
-                q = "🤔 Réponds à la question (sans commande).\n\n" + CVBUILD_STEPS[step][1]
+                q = ("📝 Tu es en pleine *création de CV*. Pour lancer une commande, tape d'abord */annuler*.\n"
+                     "Sinon, réponds simplement à la question 👇\n\n" + CVBUILD_STEPS[step][1])
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            if len(val) < 2:
+                _push(session, "user", t)
+                q = "🤔 Donne un peu plus de détail 🙂\n\n" + CVBUILD_STEPS[step][1]
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
             data[field] = val
@@ -4019,9 +4026,15 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if 0 <= step < len(RECRUIT_STEPS):
             field = RECRUIT_STEPS[step][0]
             val = t.strip()
-            if val.lower().startswith("/") or len(val) < 2:
+            if val.lower().startswith("/"):
                 _push(session, "user", t)
-                q = "🤔 Réponds à la question (sans commande).\n\n" + RECRUIT_STEPS[step][1]
+                q = ("📢 Tu es en plein *dépôt d'offre*. Pour lancer une commande, tape d'abord */annuler*.\n"
+                     "Sinon, réponds simplement à la question 👇\n\n" + RECRUIT_STEPS[step][1])
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            if len(val) < 2:
+                _push(session, "user", t)
+                q = "🤔 Donne un peu plus de détail 🙂\n\n" + RECRUIT_STEPS[step][1]
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
             data[field] = val
