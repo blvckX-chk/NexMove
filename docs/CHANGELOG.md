@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.90 — Télétravail = sans frontière géographique
+- Pour une intention de télétravail/freelance, la recherche ne restreint PLUS au pays local : requêtes sans pays, ciblant les job boards remote (RemoteOK, Remotive, WeWorkRemotely, Jobicy) et plateformes freelance (Upwork, Malt, Freelancer), portée mondiale. Le prompt de sélection sait aussi que c'est du remote (aucune préférence locale).
+
 ## v2.89 — Demander le domaine avant une recherche générique
 - Si l'utilisateur demande des opportunités SANS CV, sans mots-clés et sans expérience connue, le bot demande d'abord son DOMAINE/compétences (au lieu de sortir des offres génériques), puis lance la recherche ciblée sur sa réponse. Garde-fou qualité sur /veille et /mobilite.
 

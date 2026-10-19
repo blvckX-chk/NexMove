@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.89.0"
+VERSION         = "2.90.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -868,6 +868,13 @@ def _is_remote(session: dict, prefs: dict) -> bool:
     blob = " ".join([str(prefs.get("objectif", "")), str(prefs.get("mots_cles", "")),
                      str(prefs.get("pays_cibles", "")), str(prefs.get("type_emploi", "")),
                      _recent_dialogue(session, 6)]).lower()
+    return any(k in blob for k in _REMOTE_KW)
+
+def _is_remote_profil(prefs: dict, cible: str = "") -> bool:
+    """Variante sans session (pour run_osint) : télétravail détecté depuis les préférences + la cible."""
+    blob = " ".join([str(prefs.get("objectif", "")), str(prefs.get("mots_cles", "")),
+                     str(prefs.get("type_emploi", "")), str(prefs.get("pays_cibles", "")),
+                     str(cible or "")]).lower()
     return any(k in blob for k in _REMOTE_KW)
 
 # Pourquoi on pose chaque question (réponse honnête quand l'utilisateur demande « à quoi ça sert ? »).
@@ -6133,12 +6140,28 @@ def _profil_search_terms(profil: dict) -> dict:
     return {"domaine": domaine, "keywords": kw[:6], "mots_list": mots_list}
 
 def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
-                         local_pays: str, type_emploi: str, veut_local: bool) -> list:
+                         local_pays: str, type_emploi: str, veut_local: bool, remote: bool = False) -> list:
     """Construit une liste ORDONNÉE de requêtes complémentaires (angles différents).
     Les comptes gratuits en prennent les 2 premières (les plus utiles), les premium plus."""
     domaine = terms["domaine"]; kws = terms["keywords"]; year = datetime.now(timezone.utc).year
     z = zone or ""
     Q = []
+    if remote:
+        # Télétravail : SANS pays, sur les job boards remote + freelance (portée mondiale).
+        Q.append(f"{domaine} emploi télétravail OR remote OR freelance à distance {year}")
+        Q.append(f"remote {domaine} jobs site:remoteok.com OR site:remotive.com OR site:weworkremotely.com OR site:jobicy.com")
+        Q.append(f"{domaine} freelance mission à distance site:upwork.com OR site:malt.fr OR site:freelancer.com")
+        if len(kws) > 1:
+            Q.append(f"{kws[1]} remote OR télétravail {year}")
+        Q.append(f"{domaine} emploi francophone télétravail OR remote {year}")
+        if len(kws) > 2:
+            Q.append(f"{kws[2]} remote freelance")
+        seen = set(); out = []
+        for q in Q:
+            q = re.sub(r"\s+", " ", q).strip()
+            if q and q.lower() not in seen:
+                seen.add(q.lower()); out.append(q)
+        return out
     Q.append(f"{type_mot} {domaine} {type_emploi} {z} {year} candidature")
     if veut_local and local_pays:
         locs = " OR ".join(p.split()[0] for p in LOCAL_JOB_SOURCES.get(local_pays, [])[:3])
@@ -6258,20 +6281,27 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     else:
         type_mot = {"étudier": "bourse", "etudier": "bourse", "bourse": "bourse",
                     "fellowship": "fellowship", "travailler": "emploi"}.get(objectif, "bourse OR emploi OR formation")
+    # TÉLÉTRAVAIL : pas de frontière géographique -> on NE restreint PAS au pays local,
+    # on vise les offres remote (job boards à distance) partout.
+    remote = _is_remote_profil(prefs, cible)
+    if remote:
+        veut_local = False
     if pays_detecte:
         zone = pays_detecte
     elif not _pc_vide:
         zone = pays_cibles
+    elif remote:
+        zone = ""                      # remote = sans pays
     else:
         zone = local_pays if veut_local else ""
-    prefer_scope = None if _vise_international(prefs) else ("local" if _is_travail(objectif) else None)
+    prefer_scope = "intl" if remote else (None if _vise_international(prefs) else ("local" if _is_travail(objectif) else None))
 
     grounded = []
     if TAVILY_API_KEY:
         # Multi-requêtes PARALLÈLES : nombre selon le tier (free 2 … admin 8), filtrage commun ensuite.
         nq = n_queries if isinstance(n_queries, int) and n_queries > 0 else _TIER_QUERIES.get(tier, 2)
         conc = _TIER_CONC.get(tier, 2)
-        queries = _build_osint_queries(terms, objectif, type_mot, zone, local_pays, type_emploi, veut_local)[:nq]
+        queries = _build_osint_queries(terms, objectif, type_mot, zone, local_pays, type_emploi, veut_local, remote)[:nq]
         sem = asyncio.Semaphore(max(1, conc))
         async def _one_query(q):
             async with sem:
@@ -6314,7 +6344,7 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                       f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
                      if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent')}
+DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
 {diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
