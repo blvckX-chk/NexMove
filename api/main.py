@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.86.0"
+VERSION         = "2.87.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1286,6 +1286,8 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "réponds que tu vas lancer une recherche sur des sources RÉELLES et invite à envoyer le CV (ou dis « je cherche »). "
         "Tu peux seulement mentionner des portails ultra-connus et vérifiables (Campus France, DAAD, Erasmus Mundus, "
         "Chevening) SANS inventer de détail ni d'URL.\n"
+        "NE DONNE JAMAIS de numéro de version, de prix précis ni de date de mémoire (tu te tromperais) : "
+        "pour la version, invite à taper /version ; pour les tarifs, invite à taper /offres.\n"
         "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) · sans forcer, sans répéter "
         "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON).\n\n"
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
@@ -1724,6 +1726,15 @@ async def _enrich_profile(session: dict, t: str) -> None:
         session["profil"] = profil
         logger.info(f"[enrich] profil_plus mis à jour pour {session.get('user_id')}")
 
+def _is_version_query(low: str) -> bool:
+    """Détecte une demande de numéro de VERSION, ponctuation incluse (« Version ? », « c'est quelle version »)."""
+    c = (low or "").lower().strip().strip(" ?!.·:").strip()
+    if c in ("version", "quelle version", "c'est quelle version", "cest quelle version",
+             "numero de version", "numéro de version", "ta version", "quelle est ta version",
+             "version du bot", "quelle version tu es", "tu es en quelle version"):
+        return True
+    return c.startswith("version ") or "version du bot" in c or "quelle version" in c
+
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
@@ -1739,6 +1750,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if session.get("sim_mode") and not low.startswith("/"):
         _push(session, "user", t)
         return await _simulation_turn(session, t)
+
+    # Question « version » (fait produit) -> réponse DÉTERMINISTE (jamais le LLM, qui l'inventerait).
+    # Vaut dans N'IMPORTE QUEL état (onboarding, pré-onboarding, actif).
+    if not session.get("sim_mode") and _is_version_query(low):
+        t = "/version"; low = "/version"
 
     # Code premium collé tel quel (sans /premium) -> activation directe (UX client sur Chariow).
     if not low.startswith("/") and not session.get("sim_mode"):

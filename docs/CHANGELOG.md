@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.87 — Fin de l'hallucination de « version » (et faits produit)
+- À la question « Version ? » (ponctuation incluse), réponse DÉTERMINISTE via /version (la vraie version), dans n'importe quel état — fini le LLM qui inventait un numéro (« 2.4.1 »).
+- Prompt pré-onboarding durci : ne JAMAIS inventer de version/prix/date de mémoire (renvoie vers /version et /offres).
+
 ## v2.86 — Onboarding conversationnel piloté par le LLM (refonte)
 - L'étape PREFERENCES n'est plus un questionnaire scripté : un onboarding CONVERSATIONNEL mené par le LLM comprend n'importe quel scénario, extrait ce que la personne dit EXPLICITEMENT (sans rien inventer), répond toujours à ses questions/objections, et ne pose qu'une question utile à la fois (jamais nationalité/certifs pour du télétravail). Terminé dès qu'on connaît objectif + domaine.
 - **Sans risque** : flag LLM_ONBOARDING (défaut on) + **repli automatique** sur l'ancien questionnaire scripté si le LLM échoue + plafond de tours. Réversible via .env.
