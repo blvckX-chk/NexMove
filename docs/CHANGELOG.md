@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.89 — Demander le domaine avant une recherche générique
+- Si l'utilisateur demande des opportunités SANS CV, sans mots-clés et sans expérience connue, le bot demande d'abord son DOMAINE/compétences (au lieu de sortir des offres génériques), puis lance la recherche ciblée sur sa réponse. Garde-fou qualité sur /veille et /mobilite.
+
 ## v2.88 — Nettoyage du bloc d'offres (conseil + raisons)
 - Le conseil des offres ne fuit plus les index internes (« index 0/3/8 »), tutoie, et n'est plus coupé (coupe propre à la dernière phrase). Raisons des offres idem (anti-troncature). max_tokens de la sélection relevé.
 
