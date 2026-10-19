@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.87.0"
+VERSION         = "2.88.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6282,8 +6282,11 @@ DOMAINE VISÉ: {domaine} · PAYS: {pays_detecte or pays_cibles or (local_pays + 
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
 Sélectionne 3 à 5 résultats PERTINENTS pour CE profil. Donne l'index de chacun.
+RÈGLES DE RÉDACTION : "raison" = 1 phrase courte et COMPLÈTE (≤ 20 mots). "conseil_principal" = 1 à 2 phrases
+actionnables, qui TUTOIENT (jamais « vous »), SANS jamais mentionner un « index » ni un numéro de résultat
+(l'utilisateur ne les voit pas), et uniquement sur des offres réellement sélectionnées.
 JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation","financement":"total|partiel|aucun","deadline":"","deadline_iso":"","confiance":"haute|moyenne|faible","score_composite":0,"raison":"pourquoi ça matche CE profil"}}],"conseil_principal":""}}"""
-        result = await call_groq(system, prompt, temperature=0.1, max_tokens=1500)
+        result = await call_groq(system, prompt, temperature=0.1, max_tokens=2000)
         clean = []
         for o in result.get("opportunites", []):
             try:
@@ -6384,7 +6387,7 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         # 1 SEUL lien propre par offre : court maison pour les offres web, URL officielle directe pour les portails.
         lien = (_short(raw) if grounded else raw) if raw else ""
         deadline = _md_clean(opp.get("deadline", ""))
-        raison = _md_clean(_sanitize_doc_text(opp.get("raison", "")))[:150]
+        raison = _md_clean(_trim_to_sentence(_sanitize_doc_text(str(opp.get("raison", "") or ""))))[:160]
         meta = f"   {_type_label(opp.get('type',''))} · {score}/100 {conf}".rstrip()
         if deadline:
             meta += f" · 📅 {deadline}"
@@ -6395,7 +6398,11 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
             msg += f"   {_offer_link(lien, channel)}\n"
         msg += "\n"
     if result.get("conseil_principal"):
-        msg += f"💡 *Conseil :* {_md_clean(result['conseil_principal'])[:240]}\n\n"
+        _cons = str(result["conseil_principal"] or "")
+        _cons = re.sub(r"\s*\(?\bind(?:ex|ice)s?\s*:?\s*\d+(?:\s*(?:,|et|&)\s*\d+)*\)?", "", _cons, flags=re.I)
+        _cons = _trim_to_sentence(re.sub(r"\s{2,}", " ", _cons).strip())
+        if _cons:
+            msg += f"💡 *Conseil :* {_md_clean(_cons)[:260]}\n\n"
     if not opps:
         msg += "Aucune opportunité pertinente trouvée. Précise un domaine : /mobilite <pays> <domaine>.\n\n"
     msg += footer

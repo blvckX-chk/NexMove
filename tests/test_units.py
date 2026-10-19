@@ -2064,3 +2064,11 @@ def test_version_query_renvoie_vraie_version():
                "profil": {}, "historique": []}
     msg, _ = _run(main.process_text_message(session, "Version ?"))
     assert main.VERSION in msg
+
+# ── Nettoyage du conseil OSINT : plus d'« index » ni de phrase coupée (v2.88) ──
+def test_conseil_strip_index():
+    import re
+    _cons = "Commencez par JobBénin (index 0) et Offresdemplois (index 3). Postule à l'offre index 8 qui"
+    _cons = re.sub(r"\s*\(?\bind(?:ex|ice)s?\s*:?\s*\d+(?:\s*(?:,|et|&)\s*\d+)*\)?", "", _cons, flags=re.I)
+    _cons = main._trim_to_sentence(re.sub(r"\s{2,}", " ", _cons).strip())
+    assert "index" not in _cons.lower() and not main._looks_truncated(_cons)

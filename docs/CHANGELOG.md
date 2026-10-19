@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.88 — Nettoyage du bloc d'offres (conseil + raisons)
+- Le conseil des offres ne fuit plus les index internes (« index 0/3/8 »), tutoie, et n'est plus coupé (coupe propre à la dernière phrase). Raisons des offres idem (anti-troncature). max_tokens de la sélection relevé.
+
 ## v2.87 — Fin de l'hallucination de « version » (et faits produit)
 - À la question « Version ? » (ponctuation incluse), réponse DÉTERMINISTE via /version (la vraie version), dans n'importe quel état — fini le LLM qui inventait un numéro (« 2.4.1 »).
 - Prompt pré-onboarding durci : ne JAMAIS inventer de version/prix/date de mémoire (renvoie vers /version et /offres).
