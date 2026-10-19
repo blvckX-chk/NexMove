@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.91 — Pays réel détecté depuis le numéro (toute la sous-région)
+- Le pays « local » n'est plus un défaut : il est déduit de l'indicatif du numéro WhatsApp/Messenger (229 Bénin, 225 Côte d'Ivoire, 221 Sénégal, 228 Togo, 226 Burkina, 223 Mali, 227 Niger, 237 Cameroun, 234 Nigéria, 233 Ghana…), sinon la nationalité. L'outil cible donc les bons portails locaux pour CHAQUE pays de la sous-région.
+
 ## v2.90 — Télétravail = sans frontière géographique
 - Pour une intention de télétravail/freelance, la recherche ne restreint PLUS au pays local : requêtes sans pays, ciblant les job boards remote (RemoteOK, Remotive, WeWorkRemotely, Jobicy) et plateformes freelance (Upwork, Malt, Freelancer), portée mondiale. Le prompt de sélection sait aussi que c'est du remote (aucune préférence locale).
 

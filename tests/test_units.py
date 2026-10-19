@@ -2108,3 +2108,33 @@ def test_build_queries_remote_sans_pays():
     blob = " ".join(qs).lower()
     assert "bénin" not in blob and "benin" not in blob          # pas de restriction pays
     assert "remoteok" in blob or "remote" in blob                # job boards remote
+
+# ── Pays réel depuis l'indicatif téléphonique (v2.91) ──
+def test_pays_from_phone_sous_region():
+    assert main._pays_from_phone("22962118761") == "Bénin"
+    assert main._pays_from_phone("2250700000000") == "Côte d'Ivoire"
+    assert main._pays_from_phone("221771234567") == "Sénégal"
+    assert main._pays_from_phone("+228 90 00 00 00") == "Togo"
+    assert main._pays_from_phone("33612345678") == "France"
+    assert main._pays_from_phone("00225070000") == "Côte d'Ivoire"   # préfixe 00
+    assert main._pays_from_phone("abc") == ""
+
+def test_run_osint_local_depuis_numero(monkeypatch):
+    cap = {"q": []}
+    async def fake_tavily(q, n=8):
+        cap["q"].append(q)
+        return [{"title": "Emploi Abidjan", "url": "https://emploi.ci/offre/1", "content": "dev"}]
+    async def fake_sem(t, items, fn): return [0.9] * len(items)
+    async def fake_groq(s, p, **k):
+        return {"opportunites": [{"index": 0, "type": "emploi", "confiance": "haute", "score_composite": 80, "raison": "ok"}], "conseil_principal": ""}
+    monkeypatch.setattr(main, "TAVILY_API_KEY", "x")
+    monkeypatch.setattr(main, "tavily_search", fake_tavily)
+    monkeypatch.setattr(main, "semantic_scores", fake_sem)
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    monkeypatch.setattr(main.opp_store, "search_sources", lambda kws, prefer_scope=None: [])
+    monkeypatch.setattr(main.opp_store, "feedback_delta", lambda *a, **k: 0)
+    # numéro ivoirien, emploi local (pas remote, pas de pays précisé) -> requêtes doivent viser la Côte d'Ivoire
+    profil = {"preferences": {"objectif": "travailler", "mots_cles": "développeur"}}
+    _run(main.run_osint(profil, "", "2250700000000", tier="free", channel="whatsapp"))
+    blob = " ".join(cap["q"]).lower()
+    assert "ivoire" in blob or "emploi.ci" in blob or "educarriere" in blob
