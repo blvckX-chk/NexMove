@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.92 — Deadlines passées écartées + CV à la voix
+- Filtrage des échéances renforcé : le prompt de sélection EXCLUT désormais explicitement toute opportunité dont la date limite est antérieure à la date du jour, et renseigne `deadline`/`deadline_iso` quand une date À VENIR est visible. Côté code, `_open()` ne se contente plus de `deadline_iso` : à défaut, il analyse le texte de la deadline et le titre (ISO, « 15 janvier 2024 », JJ/MM/AAAA, année seule révolue) pour écarter les bourses/offres déjà clôturées — conservateur (en cas de doute, l'offre est gardée ; « rolling/permanent » n'est jamais écarté). Corrige le retour testeur « il m'a proposé des bourses déjà clôturées ».
+- Création de CV : rappel que l'on peut répondre par message *vocal* à chaque question (transcription automatique), au lieu de tout taper.
+
 ## v2.91 — Pays réel détecté depuis le numéro (toute la sous-région)
 - Le pays « local » n'est plus un défaut : il est déduit de l'indicatif du numéro WhatsApp/Messenger (229 Bénin, 225 Côte d'Ivoire, 221 Sénégal, 228 Togo, 226 Burkina, 223 Mali, 227 Niger, 237 Cameroun, 234 Nigéria, 233 Ghana…), sinon la nationalité. L'outil cible donc les bons portails locaux pour CHAQUE pays de la sous-région.
 

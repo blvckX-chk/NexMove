@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.91.0"
+VERSION         = "2.92.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1124,6 +1124,56 @@ def _md_clean(s):
         s = s.replace(c, "")
     return s.strip()
 
+_FR_MONTHS = {
+    "janvier": 1, "fevrier": 2, "février": 2, "mars": 3, "avril": 4, "mai": 5,
+    "juin": 6, "juillet": 7, "aout": 8, "août": 8, "septembre": 9, "octobre": 10,
+    "novembre": 11, "decembre": 12, "décembre": 12,
+    "jan": 1, "feb": 2, "fev": 2, "fév": 2, "apr": 4, "avr": 4, "jun": 6, "jul": 7,
+    "jui": 6, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12, "déc": 12,
+}
+
+def _deadline_is_past(text, today):
+    """Best-effort : renvoie True seulement si le texte contient une date clairement
+    PASSÉE (deadline déjà close). Conservateur : en cas de doute → False (on garde l'offre).
+    Gère l'ISO (AAAA-MM-JJ), le français (« 15 janvier 2024 »), « janvier 2023 » et
+    une année seule nettement révolue. N'écarte jamais une mention « rolling / permanent »."""
+    t = str(text or "").lower().strip()
+    if not t:
+        return False
+    if any(k in t for k in ("rolling", "permanent", "continu", "toute l'année", "ouvert", "à venir", "prochaine")):
+        return False
+    # ISO : AAAA-MM-JJ
+    m = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", t)
+    if m:
+        try:
+            d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+            return d < today
+        except Exception:
+            pass
+    # JJ/MM/AAAA ou JJ-MM-AAAA
+    m = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", t)
+    if m:
+        try:
+            d = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+            return d < today
+        except Exception:
+            pass
+    # « 15 janvier 2024 » ou « janvier 2024 »
+    for mm in re.finditer(r"(?:(\d{1,2})\s+)?([a-zéûôà]+)\s+(20\d{2})", t):
+        mois = _FR_MONTHS.get(mm.group(2))
+        if mois:
+            try:
+                jour = int(mm.group(1)) if mm.group(1) else 28  # fin de mois par défaut → prudent
+                d = datetime(int(mm.group(3)), mois, min(jour, 28)).date()
+                return d < today
+            except Exception:
+                continue
+    # Année seule : on n'écarte que si elle est strictement < année en cours.
+    for ym in re.findall(r"\b(20\d{2})\b", t):
+        if int(ym) < today.year:
+            return True
+    return False
+
 def _type_label(typ):
     tp = str(typ or "").lower()
     if "bourse" in tp or "scholarship" in tp:
@@ -1365,6 +1415,7 @@ async def _cvbuild_start(session: dict) -> tuple[str, dict]:
     session["cvbuild_data"] = {}
     session["tool_mode"] = None; session["guide_mode"] = False; session["sim_mode"] = False
     msg = ("📝 *Créons ton CV ensemble* · 5 petites questions, puis je te génère un CV et j'analyse ton profil.\n"
+           "🎤 _Pas envie de tout taper ? Envoie un message vocal à chaque question, je le transcris._\n"
            "_Tape /annuler pour arrêter._\n\n" + CVBUILD_STEPS[0][1])
     _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     return msg, session
@@ -6368,7 +6419,8 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                      if veut_local and local_pays else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
 DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
-{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}. Exclus les deadlines passées.
+{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}.
+⛔ ÉCHÉANCES : EXCLUS impérativement toute opportunité dont la date limite de candidature est ANTÉRIEURE à {today} (édition déjà close, bourse d'une année passée). En cas de doute sur une date passée, NE la sélectionne PAS. Quand une date limite À VENIR est visible dans le résultat, renseigne-la dans "deadline" (texte) ET "deadline_iso" (AAAA-MM-JJ) ; sinon laisse les deux vides (n'invente jamais de date).
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}
 Sélectionne 3 à 5 résultats PERTINENTS pour CE profil. Donne l'index de chacun.
@@ -6432,12 +6484,15 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
     _today_d = datetime.now(timezone.utc).date()
     def _open(o):
         di = str(o.get("deadline_iso", "") or "")[:10]
-        if not di:
-            return True
-        try:
-            return datetime.strptime(di, "%Y-%m-%d").date() >= _today_d
-        except Exception:
-            return True
+        if di:
+            try:
+                return datetime.strptime(di, "%Y-%m-%d").date() >= _today_d
+            except Exception:
+                pass
+        # Pas d'ISO fiable : on inspecte le texte de la deadline (et le titre) pour une date
+        # clairement passée. Conservateur — on n'écarte qu'en cas de date révolue certaine.
+        blob = f"{o.get('deadline','')} {o.get('titre','')}"
+        return not _deadline_is_past(blob, _today_d)
     opps = [o for o in opps if _open(o)]
     if grounded:   # QC de sortie : on ne garde que des offres web saines (titre + URL http, sans placeholder)
         opps = [o for o in opps if _opp_quality_ok(o)]

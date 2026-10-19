@@ -2138,3 +2138,32 @@ def test_run_osint_local_depuis_numero(monkeypatch):
     _run(main.run_osint(profil, "", "2250700000000", tier="free", channel="whatsapp"))
     blob = " ".join(cap["q"]).lower()
     assert "ivoire" in blob or "emploi.ci" in blob or "educarriere" in blob
+
+
+# ------------------ Filtrage des deadlines passées (v2.92) ------------------
+from datetime import date as _date
+_TODAY = _date(2026, 10, 19)
+
+def test_deadline_past_iso():
+    assert main._deadline_is_past("2024-01-15", _TODAY) is True
+
+def test_deadline_future_iso():
+    assert main._deadline_is_past("2027-06-30", _TODAY) is False
+
+def test_deadline_past_francais():
+    assert main._deadline_is_past("Date limite : 15 janvier 2024", _TODAY) is True
+
+def test_deadline_future_francais():
+    assert main._deadline_is_past("candidatures jusqu'au 10 décembre 2026", _TODAY) is False
+
+def test_deadline_annee_seule_passee():
+    assert main._deadline_is_past("Bourse 2023", _TODAY) is True
+
+def test_deadline_vide_garde_offre():
+    assert main._deadline_is_past("", _TODAY) is False
+
+def test_deadline_rolling_jamais_passee():
+    assert main._deadline_is_past("rolling admission 2022", _TODAY) is False
+
+def test_deadline_jjmmaaaa_passee():
+    assert main._deadline_is_past("avant le 01/02/2025", _TODAY) is True
