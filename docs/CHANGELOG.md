@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.95 — Filigrane ATS corrigé + crédits de diffusion
+- **Correctif qualité (régression v2.93)** : le filigrane diagonal polluait l'extraction du CV **ATS** (un robot de tri lisait « NexMove » 15× avant le nom). Désormais : filigrane visuel diagonal **uniquement sur le CV graphique** (destiné à l'œil humain) ; sur le CV **ATS** et les lettres, une seule mention discrète en **pied de page** qui ne gêne pas le parsing.
+- **`/valider` sécurisé** : d'abord un **aperçu** (nombre de destinataires + coût en crédits + solde du recruteur, alerte si deadline passée), puis diffusion réelle seulement avec le mot `envoyer`. `force` pour diffuser sans débiter (offert). Plus de diffusion massive accidentelle, et blocage si l'offre a déjà été diffusée.
+- **Crédits de diffusion** : une diffusion consomme des crédits du portefeuille du recruteur (barème configurable `DIFFUSION_BASE_COST` / `DIFFUSION_PER_RECIP` / `DIFFUSION_ALL_EXTRA` — plancher + par tranche de destinataires + surcoût « à tous »). Le recruteur achète ses crédits sur la **vitrine** (nouvelle section Recruteurs) qui redirige vers le **WhatsApp de l'admin** pour paiement manuel, reçoit un code `CRD-…` et l'active via `/credits`. Le débit est automatique à la diffusion, le recruteur est notifié de son nouveau solde.
+
 ## v2.94 — Dépôt d'offres par les recruteurs (payant, validé par l'admin)
 - Un recruteur peut déposer une offre directement au bot : soit en langage naturel (« je veux publier une offre », « nous recrutons »… détecté automatiquement), soit via `/publier`. Le bot pose 9 questions (intitulé, entreprise, lieu, contrat, missions, profil recherché, rémunération, comment postuler, deadline) et annonce d'emblée que **la diffusion est payante** (tarif `RECRUIT_POST_PRICE`, contact `RECRUIT_PAY_CONTACT`).
 - L'offre part en **validation chez l'admin** (notification avec tous les détails + commandes). L'admin dispose de : `/annonces` (file des offres en attente/validées/refusées), `/annonce_voir <id>`, `/valider <id>` (diffusion aux **candidats emploi**), `/valider <id> tous` (à tout le monde), `/refuser <id>`. Le déposant est notifié automatiquement de la validation ou du refus.

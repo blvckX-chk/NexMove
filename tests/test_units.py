@@ -2248,3 +2248,30 @@ def test_recruit_flow_depot(monkeypatch):
         msg, session = _run(main.process_text_message(session, r))
     assert session["etape"] == "ACTIF"
     assert "reçue" in msg.lower() or "merci" in msg.lower()
+
+
+# ------------------ Filigrane ATS non polluant + crédits diffusion (v2.95) ------------------
+def test_filigrane_ats_ne_pollue_pas_extraction():
+    import fitz
+    p = {"identite": {"nom": "Ornella Dakia", "email": "o@x.com"},
+         "formation": [{"diplome": "Licence", "etablissement": "UAC"}],
+         "experience": [], "competences": {"techniques": ["Python"]}}
+    b = main.build_cv_pdf(p, "CV", "resume", ["Python"], style="ats", watermark=True).getvalue()
+    txt = fitz.open(stream=b, filetype="pdf")[0].get_text()
+    # 1 seule mention (le pied de page), pas la grille diagonale de 15 occurrences.
+    assert txt.count("NexMove") == 1
+    assert "Ornella Dakia" in txt and "Python" in txt
+
+def test_filigrane_graphique_garde_la_grille():
+    import fitz
+    p = {"identite": {"nom": "Ornella", "email": "o@x.com"}, "formation": [], "experience": [],
+         "competences": {"techniques": ["Python"]}}
+    b = main.build_cv_pdf(p, "CV", "r", ["Python"], style="graphic", watermark=True).getvalue()
+    txt = fitz.open(stream=b, filetype="pdf")[0].get_text()
+    assert txt.count("NexMove") > 5   # grille diagonale présente pour l'œil humain
+
+def test_diffusion_cost_bareme():
+    base = main.DIFFUSION_BASE_COST
+    assert main._diffusion_cost(0, tous=False) == max(1, base)
+    assert main._diffusion_cost(main.DIFFUSION_PER_RECIP, tous=False) == max(1, base + 1)
+    assert main._diffusion_cost(0, tous=True) == max(1, base + main.DIFFUSION_ALL_EXTRA)
