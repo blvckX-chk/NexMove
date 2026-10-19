@@ -1907,3 +1907,24 @@ def test_offres_premium_non_masque(monkeypatch):
     session = {"user_id": "7", "chat_id": "7", "profil": {}, "historique": [], "onboarding_complete": True}
     msg, _ = _run(main.process_text_message(session, "/offres"))
     assert "réservée à l'administrateur" not in msg.lower()
+
+# ── Profilage injecté dans le contexte (réponses logiques) v2.82 ──
+def test_conversation_context_profil_profond():
+    session = {"user_id": "u1", "cv_parsed": True,
+               "profil": {"identite": {"nom": "Awa"},
+                          "preferences": {"objectif": "travailler", "pays_cibles": "Canada"},
+                          "competences": {"techniques": ["Python"], "soft_skills": ["rigueur", "esprit d'équipe"]},
+                          "bilan": {"forces": ["réseau", "SOC"], "axes": ["anglais"], "pistes": []},
+                          "niveau_global": "junior",
+                          "contraintes": {"budget": "limité"}}}
+    ctx = main._conversation_context(session)
+    assert "Points forts" in ctx and "réseau" in ctx
+    assert "À renforcer" in ctx and "anglais" in ctx
+    assert "Savoir-être" in ctx and "rigueur" in ctx
+    assert "Séniorité" in ctx and "junior" in ctx
+    assert "Contraintes" in ctx and "budget" in ctx
+
+def test_smart_lead_provider_default():
+    import importlib, llm
+    importlib.reload(llm)
+    assert llm.SMART_LEAD_PROVIDER == "gemini"

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.81.0"
+VERSION         = "2.82.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1514,6 +1514,22 @@ def _conversation_context(session: dict) -> str:
         lignes.append(f"- Compétences : {', '.join(skills)}")
     if prefs.get("mots_cles"):
         lignes.append(f"- Domaine / mots-clés : {prefs['mots_cles']}")
+    # Profil « en profondeur » : forces, axes à renforcer, savoir-être, niveau global, contraintes.
+    # Le routeur raisonne AVEC ça (réponses logiques et personnalisées), sans jamais inventer.
+    bilan = profil.get("bilan", {}) or {}
+    if bilan.get("forces"):
+        lignes.append(f"- Points forts : {', '.join([str(x) for x in bilan['forces'][:3]])}")
+    if bilan.get("axes"):
+        lignes.append(f"- À renforcer : {', '.join([str(x) for x in bilan['axes'][:3]])}")
+    soft = [s for s in (comp.get("soft_skills", []) or []) if isinstance(s, str)][:4]
+    if soft:
+        lignes.append(f"- Savoir-être : {', '.join(soft)}")
+    if profil.get("niveau_global"):
+        lignes.append(f"- Séniorité : {profil['niveau_global']}")
+    contr = profil.get("contraintes", {}) or {}
+    _cv = [f"{k} : {v}" for k, v in contr.items() if v][:3]
+    if _cv:
+        lignes.append(f"- Contraintes : {', '.join(_cv)}")
     tier = session.get("premium_tier")
     if tier and tier in _PREMIUM_TIERS:
         lignes.append(f"- Abonnement : {tier}")
@@ -3552,7 +3568,7 @@ L'utilisateur écrit librement. Deux cas :
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
 RÈGLE CLÉ : dès qu'il demande de TROUVER/CHERCHER des opportunités, bourses, offres, emplois, stages ou programmes → renvoie TOUJOURS action="mobilite" (recherche sur sources web RÉELLES) avec son argument. Ne liste JAMAIS d'opportunités toi-même dans "message".
 COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
-REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Raisonne comme un conseiller d'orientation : appuie tes conseils sur ses POINTS FORTS, ses AXES à renforcer, son SAVOIR-ÊTRE et ses CONTRAINTES quand ils sont connus (réponse logique et personnalisée). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
     try:
         r = await call_groq(system, t, temperature=0.3, max_tokens=650)   # marge suffisante : le JSON ne se coupe plus
