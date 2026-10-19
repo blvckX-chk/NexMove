@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.88.0"
+VERSION         = "2.89.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -647,6 +647,24 @@ def _apply_premium(session: dict, tier: str, days: int) -> str:
     session["premium_tier"] = tier
     session["premium_until"] = new_exp
     return new_exp
+
+def _needs_domain(session: dict) -> bool:
+    """A-t-on de quoi faire une recherche UTILE (ciblée) ? Sinon on demandera le domaine avant de chercher
+    (évite les résultats génériques quand il n'y a ni CV, ni mots-clés, ni expérience connue)."""
+    if session.get("cv_parsed"):
+        return False
+    profil = session.get("profil", {}) or {}
+    prefs = profil.get("preferences", {}) or {}
+    if str(prefs.get("mots_cles") or "").strip():
+        return False
+    exp = profil.get("experience") or []
+    if exp and isinstance(exp[0], dict) and str(exp[0].get("poste") or "").strip():
+        return False
+    return True
+
+_ASK_DOMAIN_MSG = ("🔎 Pour te trouver les *bonnes* offres (pas du générique), dis-moi ton *domaine* ou tes "
+                   "*compétences*.\n_ex : rédaction, saisie de données, graphisme, développement web, "
+                   "community management, traduction…_\n\nTu peux aussi m'envoyer ton *CV* : je personnalise tout.")
 
 def _veille_gate(session: dict) -> tuple[bool, str]:
     """Garde-fou coût/abus sur /veille et /mobilite (multi-requêtes Tavily + LLM) :
@@ -1755,6 +1773,16 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # Vaut dans N'IMPORTE QUEL état (onboarding, pré-onboarding, actif).
     if not session.get("sim_mode") and _is_version_query(low):
         t = "/version"; low = "/version"
+
+    # On attendait le DOMAINE pour lancer une recherche ciblée : on le capte puis on cherche.
+    if session.get("awaiting_domain") and not low.startswith("/") and len(t.strip()) >= 2 and not session.get("sim_mode"):
+        session["awaiting_domain"] = False
+        dom = t.strip()[:80]
+        prefs = session.setdefault("profil", {}).setdefault("preferences", {})
+        if not str(prefs.get("mots_cles") or "").strip():
+            prefs["mots_cles"] = dom
+        _push(session, "user", t)
+        return await process_text_message(session, "/mobilite " + dom)
 
     # Code premium collé tel quel (sans /premium) -> activation directe (UX client sur Chariow).
     if not low.startswith("/") and not session.get("sim_mode"):
@@ -3065,6 +3093,11 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
     if low.startswith("/mobilite") or low.startswith("/mobilité"):
         parts = t.split(maxsplit=1)
         cible = parts[1].strip() if len(parts) > 1 else ""
+        # Pas de cible et aucun profil exploitable -> on DEMANDE le domaine avant de chercher (qualité).
+        if not cible and _needs_domain(session):
+            session["awaiting_domain"] = True
+            _push(session, "user", t); _push(session, "assistant", _ASK_DOMAIN_MSG); session["derniere_activite"] = now
+            return _ASK_DOMAIN_MSG, session
         _vg_ok, _vg_msg = _veille_gate(session)
         if not _vg_ok:
             _push(session, "user", t); _push(session, "assistant", _vg_msg); session["derniere_activite"] = now
@@ -3327,6 +3360,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         return msg, session
 
     if low.startswith("/veille"):
+        if _needs_domain(session):
+            session["awaiting_domain"] = True
+            _push(session, "user", t); _push(session, "assistant", _ASK_DOMAIN_MSG); session["derniere_activite"] = now
+            return _ASK_DOMAIN_MSG, session
         _vg_ok, _vg_msg = _veille_gate(session)
         if not session.get("onboarding_complete"):
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."

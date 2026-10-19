@@ -2072,3 +2072,26 @@ def test_conseil_strip_index():
     _cons = re.sub(r"\s*\(?\bind(?:ex|ice)s?\s*:?\s*\d+(?:\s*(?:,|et|&)\s*\d+)*\)?", "", _cons, flags=re.I)
     _cons = main._trim_to_sentence(re.sub(r"\s{2,}", " ", _cons).strip())
     assert "index" not in _cons.lower() and not main._looks_truncated(_cons)
+
+# ── Garde-fou : demander le domaine avant une recherche générique (v2.89) ──
+def test_needs_domain():
+    assert main._needs_domain({"profil": {}})
+    assert not main._needs_domain({"cv_parsed": True, "profil": {}})
+    assert not main._needs_domain({"profil": {"preferences": {"mots_cles": "dev web"}}})
+    assert not main._needs_domain({"profil": {"experience": [{"poste": "Technicien"}]}})
+
+def test_mobilite_demande_domaine_si_vide():
+    session = {"user_id": "u1", "etape": "ATTENTE_CV", "profil": {}, "historique": [], "onboarding_complete": False}
+    msg, session = _run(main.process_text_message(session, "/mobilite"))
+    assert session.get("awaiting_domain") is True and "domaine" in msg.lower()
+
+def test_awaiting_domain_lance_recherche(monkeypatch):
+    async def fake_osint(profil, cible="", user_id="", **kw):
+        return {"message": f"RECHERCHE[{cible}]", "opportunites": [], "visa_info": {}, "grounded": True}
+    monkeypatch.setattr(main, "run_osint", fake_osint)
+    session = {"user_id": "u2", "etape": "ATTENTE_CV", "profil": {}, "historique": [],
+               "onboarding_complete": False, "awaiting_domain": True}
+    msg, session = _run(main.process_text_message(session, "rédaction web"))
+    assert "RECHERCHE[rédaction web]" in msg
+    assert session["profil"]["preferences"]["mots_cles"] == "rédaction web"
+    assert session.get("awaiting_domain") is False
