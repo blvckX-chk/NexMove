@@ -1928,3 +1928,32 @@ def test_smart_lead_provider_default():
     import importlib, llm
     importlib.reload(llm)
     assert llm.SMART_LEAD_PROVIDER == "gemini"
+
+# ── Profilage progressif (v2.83) ──
+def test_enrich_profile_capte_explicite(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"motivation": "aider sa famille", "aspiration": "devenir analyste SOC",
+                "contraintes": "", "interets": "cybersécurité", "savoir_etre": ""}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "u1", "profil": {}}
+    _run(main._enrich_profile(session, "je veux travailler dans la cyber pour aider ma famille plus tard"))
+    pp = session["profil"]["profil_plus"]
+    assert pp["motivation"] == "aider sa famille" and pp["aspiration"] == "devenir analyste SOC"
+    assert pp["interets"] == "cybersécurité" and "contraintes" not in pp   # vide non stocké
+
+def test_enrich_profile_gate_messages_courts(monkeypatch):
+    called = {"n": 0}
+    async def fake_groq(system, user, **kw):
+        called["n"] += 1; return {}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "u2", "profil": {}}
+    _run(main._enrich_profile(session, "ok merci"))          # court + sans indice -> pas d'appel
+    _run(main._enrich_profile(session, "quelles sont les offres disponibles aujourd'hui ?"))  # pas d'indice perso
+    assert called["n"] == 0
+
+def test_contexte_injecte_profil_plus():
+    session = {"user_id": "u3", "cv_parsed": True,
+               "profil": {"preferences": {"objectif": "travailler"},
+                          "profil_plus": {"motivation": "aider sa famille", "aspiration": "analyste SOC"}}}
+    ctx = main._conversation_context(session)
+    assert "Motivation : aider sa famille" in ctx and "Aspiration : analyste SOC" in ctx

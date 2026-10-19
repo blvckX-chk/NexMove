@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.82.0"
+VERSION         = "2.83.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1530,6 +1530,13 @@ def _conversation_context(session: dict) -> str:
     _cv = [f"{k} : {v}" for k, v in contr.items() if v][:3]
     if _cv:
         lignes.append(f"- Contraintes : {', '.join(_cv)}")
+    # Profil PROFOND appris au fil des conversations (profilage progressif).
+    pp = profil.get("profil_plus", {}) or {}
+    _PP_LABELS = {"motivation": "Motivation", "aspiration": "Aspiration", "contraintes": "Contraintes perso",
+                  "interets": "Centres d'intérêt", "savoir_etre": "Savoir-être"}
+    for k, lab in _PP_LABELS.items():
+        if pp.get(k):
+            lignes.append(f"- {lab} : {pp[k]}")
     tier = session.get("premium_tier")
     if tier and tier in _PREMIUM_TIERS:
         lignes.append(f"- Abonnement : {tier}")
@@ -1573,6 +1580,45 @@ def _recent_dialogue(session: dict, n: int = 4) -> str:
         if txt:
             out.append(f"{who}: {txt[:160]}")
     return "\n".join(out) if out else "(début de conversation)"
+
+# Indices qu'un message contient de l'info de PROFIL PROFOND (motivation, contraintes, aspirations…).
+_PROF_CUES = ("je veux", "j'aimerais", "j'aimerai", "mon rêve", "mon but", "mon objectif", "parce que",
+              "je préfère", "je prefere", "je ne peux pas", "je peux pas", "j'ai besoin", "ma famille",
+              "budget", "je suis motiv", "je dois", "contrainte", "à long terme", "a long terme",
+              "plus tard", "idéalement", "idealement", "je cherche à", "passionn", "j'aime",
+              "mon projet", "je souhaite", "je vise", "pour moi")
+
+async def _enrich_profile(session: dict, t: str) -> None:
+    """Profilage PROGRESSIF : capte, au fil des conversations (hors onboarding), ce que l'utilisateur
+    DIT de lui (motivation, aspiration, contraintes, intérêts, savoir-être) et l'enrichit. N'invente RIEN :
+    seulement ce qui est explicitement exprimé. Gardé léger (tier fast, déclenché seulement si pertinent)."""
+    low = (t or "").lower()
+    if len(t) < 30 or not any(c in low for c in _PROF_CUES):
+        return
+    system = ("Tu construis le profil d'orientation d'une personne. À partir de SON message, extrais UNIQUEMENT "
+              "ce qu'elle dit EXPLICITEMENT d'elle-même. N'INVENTE RIEN, ne déduis pas : si ce n'est pas dit, laisse vide. "
+              "Formule court (quelques mots). JSON: "
+              '{"motivation":"","aspiration":"","contraintes":"","interets":"","savoir_etre":""}')
+    user = f"Message de la personne : {t}\n\nContexte récent :\n{_recent_dialogue(session, 3)}"
+    try:
+        r = await call_groq(system, user, temperature=0.1, max_tokens=300, tier="fast")
+    except Exception as e:
+        logger.warning(f"[enrich] {e}")
+        return
+    if not isinstance(r, dict):
+        return
+    profil = session.setdefault("profil", {})
+    pp = profil.setdefault("profil_plus", {})
+    _VIDES = ("", "néant", "neant", "aucun", "aucune", "non précisé", "non precise", "n/a", "-", "rien")
+    changed = False
+    for k in ("motivation", "aspiration", "contraintes", "interets", "savoir_etre"):
+        v = str(r.get(k, "") or "").strip()
+        if v and v.lower() not in _VIDES and v != pp.get(k):
+            pp[k] = v[:300]
+            changed = True
+    if changed:
+        session["profil"] = profil
+        logger.info(f"[enrich] profil_plus mis à jour pour {session.get('user_id')}")
 
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
@@ -2648,9 +2694,16 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             ident = profil.get("identite", {})
             recap = _resume_prefs(profil.get("preferences", {}) or {}).replace(
                 "\n\nTout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.", "")
-            msg = (f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\n\n" + recap +
-                   "\n\n✏️ *Pour corriger*, écris `champ: valeur` · ex. `objectif: travailler`, "
-                   "`pays: Canada`, `langue: anglais`, `mots-clés: data, python`.")
+            msg = (f"👤 *Ton profil*\nNom : {ident.get('nom','—')}\n\n" + recap)
+            pp = profil.get("profil_plus", {}) or {}
+            _pp_lab = {"motivation": "🎯 Motivation", "aspiration": "🌟 Aspiration",
+                       "contraintes": "⛓️ Contraintes", "interets": "💡 Centres d'intérêt",
+                       "savoir_etre": "🤝 Savoir-être"}
+            lignes_pp = [f"{lab} : {_md_clean(str(pp[k]))}" for k, lab in _pp_lab.items() if pp.get(k)]
+            if lignes_pp:
+                msg += "\n\n*Ce que j'ai appris de toi au fil de nos échanges :*\n" + "\n".join(lignes_pp)
+            msg += ("\n\n✏️ *Pour corriger*, écris `champ: valeur` · ex. `objectif: travailler`, "
+                    "`pays: Canada`, `langue: anglais`, `mots-clés: data, python`.")
         else:
             msg = "Aucun profil pour l'instant. Fais /start puis envoie ton CV (PDF, Word ou image)."
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -3582,6 +3635,11 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<r
     message = _trim_to_sentence((r.get("message") or "").strip()) \
         or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…)."
     _push(session, "user", t); _push(session, "assistant", message)
+    # Profilage progressif : on capte en douceur ce que la personne révèle d'elle (sans l'interroger).
+    try:
+        await _enrich_profile(session, t)
+    except Exception as e:
+        logger.warning(f"[enrich] {e}")
     session["derniere_activite"] = now
     return message, session
 
