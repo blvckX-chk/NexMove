@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.83 — Profilage progressif (hors onboarding)
+- Le bot enrichit le profil AU FIL des conversations, sans alourdir l'onboarding : quand la personne exprime explicitement une motivation, une aspiration, une contrainte, un centre d'intérêt ou un trait de savoir-être, c'est capté (déclenché seulement sur un message porteur d'indices, modèle rapide) et stocké dans profil_plus. N'invente rien : seulement ce qui est dit.
+- Ce profil profond est injecté dans le contexte du routeur (réponses plus logiques et personnalisées) et affiché dans /profil (transparence : « ce que j'ai appris de toi »).
+
 ## v2.82 — Modèle smart via Gemini + profilage injecté dans le contexte
 - **Tier smart conduit par le fournisseur préféré** (SMART_LEAD_PROVIDER, défaut Gemini) : meilleur suivi du contexte et des consignes anti-invention, chaîne de repli préservée. Tier "quality" (CV/lettre) reste configurable via OPENROUTER_GENERATE_MODEL.
 - **Profilage "en profondeur" injecté** : points forts, axes à renforcer, savoir-être, séniorité et contraintes (déjà extraits du CV) sont maintenant donnés au routeur conversationnel, qui raisonne comme un conseiller d'orientation (réponses logiques et personnalisées, sans rien inventer).
