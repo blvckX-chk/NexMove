@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.4.2 — Finitions pour la démo (liens, récap, /supprimer)
+- Aperçu d'offres après le CV : les liens sont désormais **raccourcis** (fini les URL techniques à rallonge type `jobbenin.com/index.php/offres/eyJpdi6…` sur WhatsApp).
+- Récapitulatif du profil : la **langue des offres** ne s'affiche plus en liste brute `['fr', 'en']` mais « français, anglais » ; un objectif trop long est raccourci. Rendu via `_fmt_pref`.
+- La commande d'effacement accepte les variantes `/supprime`, `/supprimé`, `/effacer`, `/reset`, `/purger` (avant, seul `/supprimer` exact marchait).
+
 ## v3.4.1 — Correctif : nom du MODÈLE de CV pris pour le nom de la personne
 - Sur un CV fait avec un modèle (Canva, Word…), le bot pouvait afficher le nom du *template* (ex. « Français Simple Moderne », tiré du fichier `CV Français Simple Moderne Bleu.pdf`) au lieu du vrai nom (ex. GANSE MARTHE). Corrigé à 3 niveaux : (1) prompts d'extraction (texte + vision) durcis — `identite.nom` = vrai nom de la personne, jamais un nom de modèle/style/fichier ; (2) garde-fou `_looks_like_template_name` qui rejette un « nom » composé uniquement de mots de template/style ; (3) le repli par nom de fichier filtre aussi ces mots. Si aucun vrai nom n'est trouvé, le bot le dit et demande le nom au lieu d'en inventer un.
 

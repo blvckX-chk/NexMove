@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.4.1"
+VERSION         = "3.4.2"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1472,21 +1472,42 @@ def _render_scored_offers(opps, n: int = 3) -> str:
             ligne += f"\n   💬 {raison[:110]}"
         lien = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
         if lien:
-            ligne += f"\n   🔗 {lien}"
+            ligne += f"\n   🔗 {_short(lien)}"   # lien court maison (évite les URL techniques à rallonge)
         lignes.append(ligne)
     return "\n".join(lignes)
 
+_LANG_LABELS = {"fr": "français", "en": "anglais", "français": "français", "anglais": "anglais",
+                "francais": "français", "english": "anglais", "les deux": "français, anglais"}
+
+def _fmt_pref(v) -> str:
+    """Rend une valeur de préférence LISIBLE : liste -> texte, codes langue -> mots, sinon tel quel."""
+    if v is None or v == "":
+        return "—"
+    if isinstance(v, (list, tuple)):
+        out = [_LANG_LABELS.get(str(x).strip().lower(), str(x).strip()) for x in v if str(x).strip()]
+        # dédoublonne en gardant l'ordre
+        seen, uniq = set(), []
+        for x in out:
+            if x and x not in seen:
+                seen.add(x); uniq.append(x)
+        return ", ".join(uniq) or "—"
+    s = str(v).strip()
+    return _LANG_LABELS.get(s.lower(), s)
+
 def _resume_prefs(prefs):
+    objectif = _fmt_pref(prefs.get("objectif"))
+    if len(objectif) > 70:                     # une phrase entière collée -> on raccourcit proprement
+        objectif = _trim_to_sentence(objectif)[:70].rstrip(" .,") + "…"
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
-            f"• Objectif : {prefs.get('objectif','—')}\n"
-            f"• Nationalité : {prefs.get('nationalite','—')}\n"
-            f"• Pays cibles : {prefs.get('pays_cibles','—')}\n"
-            f"• Financement : {prefs.get('financement','—')}\n"
-            f"• Certifs langue : {prefs.get('certifs_langue','—')}\n"
-            f"• Langue des offres : {prefs.get('langues_opportunite','—')}\n"
-            f"• Niveau : {prefs.get('niveau','—')}\n"
-            + (f"• Type de poste : {prefs.get('type_emploi')}\n" if prefs.get('type_emploi') else "")
-            + f"• Mots-clés : {prefs.get('mots_cles','—')}\n\n"
+            f"• Objectif : {objectif}\n"
+            f"• Nationalité : {_fmt_pref(prefs.get('nationalite'))}\n"
+            f"• Pays cibles : {_fmt_pref(prefs.get('pays_cibles'))}\n"
+            f"• Financement : {_fmt_pref(prefs.get('financement'))}\n"
+            f"• Certifs langue : {_fmt_pref(prefs.get('certifs_langue'))}\n"
+            f"• Langue des offres : {_fmt_pref(prefs.get('langues_opportunite'))}\n"
+            f"• Niveau : {_fmt_pref(prefs.get('niveau'))}\n"
+            + (f"• Type de poste : {_fmt_pref(prefs.get('type_emploi'))}\n" if prefs.get('type_emploi') else "")
+            + f"• Mots-clés : {_fmt_pref(prefs.get('mots_cles'))}\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
 
 # ── Récap de profil ÉDITABLE : l'utilisateur corrige un champ en écrivant "champ: valeur" ──
@@ -3756,7 +3777,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    if low.startswith("/supprimer"):
+    if (low.startswith("/supprimer") or low.startswith("/supprime") or low.startswith("/supprimé")
+            or low.startswith("/effacer") or low.startswith("/reset") or low.startswith("/purger")):
         cleared = {"user_id": session.get("user_id"), "chat_id": session.get("chat_id"),
                    "username": session.get("username"), "etape": "WELCOME", "profil": {},
                    "historique": [], "cv_parsed": False, "cv_file_id": None,
