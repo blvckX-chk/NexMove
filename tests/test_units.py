@@ -1235,7 +1235,7 @@ def test_render_scored_offers():
                "portail_officiel": "https://ex.co/2"}]
     out = main._render_scored_offers(offers, 3)
     assert "Compatibilité : 88% · Excellent" in out
-    assert "Dev Python" in out and "https://ex.co/1" in out
+    assert "Dev Python" in out and "/l/" in out   # lien raccourci (plus d'URL technique à rallonge)
     assert "62% · Correct" in out
     # n limite le nombre d'offres affichées
     assert main._render_scored_offers(offers, 1).count("Compatibilité") == 1
@@ -2528,3 +2528,15 @@ def test_name_from_filename_ignore_template():
     assert main._name_from_filename("CV Français Simple Moderne Bleu.pdf") == ""
     assert main._name_from_filename("cv-jean-dupont.pdf") == "Jean Dupont"
     assert main._name_from_filename("CV_Judicael.pdf") == "Judicael"
+
+# ------------------ Affichage propre du récap + variantes /supprimer (v3.4.2) ------------------
+def test_fmt_pref_listes_et_langues():
+    assert main._fmt_pref(["fr", "en"]) == "français, anglais"
+    assert main._fmt_pref("les deux") == "français, anglais"
+    assert main._fmt_pref([]) == "—"
+    assert main._fmt_pref("") == "—"
+    assert main._fmt_pref("professionnel") == "professionnel"
+
+def test_resume_prefs_pas_de_liste_brute():
+    txt = main._resume_prefs({"langues_opportunite": ["fr", "en"], "niveau": "professionnel"})
+    assert "['fr'" not in txt and "français, anglais" in txt
