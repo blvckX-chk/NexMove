@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.10 — Multimodal : analyser une annonce prise en photo
+- Avant, toute image non-CV était rejetée. Désormais, si la photo/le scan est une *annonce d'opportunité* (offre d'emploi, bourse, stage), le bot la *lit* (OCR/vision), l'analyse comme un lien : titre, type, compatibilité avec le profil, éligibilité, critères, et *comment postuler* — puis propose la suite (`/commentpostuler`, `/chances`, `/postuler`). Idéal pour le public mobile : on voit une annonce sur un mur / un groupe, on la prend en photo, on obtient l'analyse. Détection `_looks_like_opportunity` + `_analyze_opportunity_text` (repli propre si illisible ou non pertinent). Le message de non-CV est aussi plus utile (propose CV / offre / lien / texte).
+
 ## v3.9 — Conseiller : un plan B quand les chances sont faibles
 - `/chances` ne se contente plus de dire « c'est difficile ». Quand le score est faible (< 45), le bot propose une *alternative réaliste et plus accessible* (autre pays plus ouvert, financement par bourse plutôt qu'auto-financement, poste junior/alternance, programme-passerelle) avec une justification, et un raccourci pour l'évaluer tout de suite (`/chances <plan B>`). Comme un conseiller : ne pas laisser quelqu'un dans une impasse, lui ouvrir une porte. Aucun appel LLM en plus (champ `plan_b` ajouté à l'estimation existante).
 

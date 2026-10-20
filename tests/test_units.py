@@ -2708,3 +2708,28 @@ def test_chances_pas_de_plan_b_si_score_bon(monkeypatch):
          "profil": {"identite": {"nom": "X"}, "preferences": {}}}
     msg, s = _run(main.process_text_message(s, "/chances master en France"))
     assert "Plan B" not in msg   # score élevé -> pas de plan B
+
+
+# ------------------ Multimodal : annonce lue sur photo (v3.10) ------------------
+def test_looks_like_opportunity():
+    assert main._looks_like_opportunity("Nous recrutons un comptable H/F en CDI. Profil: licence. Postuler avant le 30/11.") is True
+    assert main._looks_like_opportunity("salut ça va") is False
+
+def test_analyse_opportunite_depuis_texte(monkeypatch):
+    async def _fake(system, prompt, **k):
+        return {"est_opportunite": True, "titre": "Comptable junior", "organisation": "ACME",
+                "type": "emploi", "lieu": "Cotonou", "deadline": "30/11/2026", "admissible": "plutot_oui",
+                "criteres": ["licence compta"], "manques": ["anglais"], "comment_postuler": "email RH",
+                "score_composite": 72, "raison": "profil proche"}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    s = {"user_id": "mm1", "profil": {"resume_profil": "comptable", "preferences": {}}, "historique": []}
+    msg = _run(main._analyze_opportunity_text(s, "Nous recrutons un comptable...", source="ta photo"))
+    assert msg and "Comptable junior" in msg and "Compatibilité" in msg and "ta photo" in msg
+    assert s["last_link_cible"] == "Comptable junior"
+
+def test_analyse_opportunite_rejet_si_pas_offre(monkeypatch):
+    async def _fake(system, prompt, **k):
+        return {"est_opportunite": False}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    s = {"user_id": "mm2", "profil": {}, "historique": []}
+    assert _run(main._analyze_opportunity_text(s, "texte", source="ta photo")) is None
