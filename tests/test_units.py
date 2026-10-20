@@ -2474,3 +2474,42 @@ def test_mem_injectee_dans_contexte():
 def test_mem_vide_pas_de_bruit():
     s = {"profil": {}, "historique": []}
     assert main._mem_events_block(s) == ""
+
+
+# ------------------ #4 Proactivité ciblée revenu : /api/nudge (v3.4) ------------------
+def test_nudge_cible_recruteur_sans_credits(monkeypatch):
+    import db as _db, tempfile, os as _os, asyncio as _aio
+    # Base isolée
+    path = _os.path.join(tempfile.mkdtemp(), "n.db")
+    rstore = _db.RecruiterOfferStore(path)
+    rid = rstore.add({"user_id": "recN", "channel": "whatsapp", "chat_id": "22990", "name": "DRH"},
+                     {"titre": "Dev", "entreprise": "ACME"})
+    monkeypatch.setattr(main, "recruiter_offer_store", rstore)
+    # Session recruteur sans crédits
+    rec_sess = {"user_id": "recN", "channel": "whatsapp", "chat_id": "22990", "credits": 0}
+    monkeypatch.setattr(main.session_manager, "get", lambda uid: rec_sess if uid == "recN" else None)
+    saved = {}
+    monkeypatch.setattr(main.session_manager, "set", lambda uid, s: saved.update({uid: s}))
+    envois = {"n": 0}
+    async def _deliver(dest, msg, *a, **k):
+        envois["n"] += 1
+        assert "diffus" in msg.lower()
+        return True
+    monkeypatch.setattr(main, "deliver_text", _deliver)
+    out = _run(main.nudge(_auth=True))
+    assert out["ok"] and out["nudges_cibles"] == 1 and envois["n"] == 1
+    assert "recN" in saved and saved["recN"].get("nudge_sent")
+
+def test_nudge_ignore_recruteur_avec_credits(monkeypatch):
+    import db as _db, tempfile, os as _os
+    path = _os.path.join(tempfile.mkdtemp(), "n2.db")
+    rstore = _db.RecruiterOfferStore(path)
+    rstore.add({"user_id": "recC", "channel": "telegram", "chat_id": "111", "name": "RH"}, {"titre": "Dev"})
+    monkeypatch.setattr(main, "recruiter_offer_store", rstore)
+    monkeypatch.setattr(main.session_manager, "get",
+                        lambda uid: {"user_id": "recC", "channel": "telegram", "chat_id": "111", "credits": 10})
+    async def _deliver(*a, **k):
+        raise AssertionError("ne doit PAS relancer un recruteur qui a déjà des crédits")
+    monkeypatch.setattr(main, "deliver_text", _deliver)
+    out = _run(main.nudge(_auth=True))
+    assert out["nudges_cibles"] == 0
