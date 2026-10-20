@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.0.1"
+VERSION         = "3.1.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6905,6 +6905,51 @@ def _feed_candidates(kws: list, type_mot: str, prefer_scope) -> list:
                     "content": (s.get("resume") or "")[:300], "_feed": True})
     return out
 
+async def _qc_review_offers(profil_txt: str, domaine: str, opps: list, want_type: str, today: str):
+    """RELECTURE systématique (#3) : une passe LLM légère qui relit les offres DÉJÀ sélectionnées
+    et filtrées, pour écarter les cas clairement mauvais que les filtres déterministes ratent
+    (hors-sujet, mauvais type, deadline manifestement passée, portail générique sans offre précise)
+    et corriger le conseil (ton juste, pas de fausse certitude).
+    CONSERVATEUR : en cas de doute on GARDE ; ne vide jamais la liste. Repli sûr = aucun changement.
+    Retourne (opps_filtrées, conseil_corrigé_ou_None)."""
+    if not opps or len(opps) < 2:
+        return opps, None
+    lignes = []
+    for i, o in enumerate(opps[:8]):
+        lignes.append(f"[{i}] type={o.get('type','?')} · deadline={o.get('deadline','') or '?'} · "
+                      f"{str(o.get('titre',''))[:70]} · {_domain(o.get('url',''))} · raison: {str(o.get('raison',''))[:80]}")
+    srcs = "\n".join(lignes)
+    type_txt = f"TYPE demandé : {want_type}.\n" if want_type else ""
+    system = ("Tu es un RELECTEUR qualité pour un assistant d'emploi/mobilité. On te donne un PROFIL et des "
+              "offres DÉJÀ sélectionnées. Ta mission : repérer UNIQUEMENT celles à ÉCARTER avec certitude : "
+              "hors-sujet pour ce profil, mauvais type demandé, deadline manifestement PASSÉE, ou simple portail "
+              "générique sans offre précise. Sois CONSERVATEUR : au moindre doute, on GARDE. Ne propose JAMAIS "
+              "d'écarter toutes les offres. Corrige aussi le conseil s'il est faux, vague ou trop sûr de lui "
+              "(tutoie, 1-2 phrases, honnête, sans fausse certitude). "
+              'JSON STRICT : {"ecarter":[index à retirer],"conseil":"<conseil corrigé ou vide>"}')
+    user = f"PROFIL : {profil_txt[:400]}\nDOMAINE VISÉ : {domaine}\n{type_txt}DATE DU JOUR : {today}\nOFFRES :\n{srcs}"
+    try:
+        r = await call_groq(system, user, temperature=0.0, max_tokens=300, json_mode=True, tier="fast")
+    except Exception as e:
+        logger.warning(f"[qc-review] {e}")
+        return opps, None
+    if not isinstance(r, dict):
+        return opps, None
+    drop = set()
+    for x in (r.get("ecarter") or []):
+        try:
+            drop.add(int(x))
+        except Exception:
+            continue
+    kept = [o for i, o in enumerate(opps) if i not in drop]
+    # Garde-fou : ne JAMAIS tout vider à cause de la relecture.
+    if not kept:
+        kept = opps
+    elif len(kept) < len(opps):
+        logger.info(f"[qc-review] {len(opps) - len(kept)} offre(s) écartée(s) à la relecture")
+    conseil = str(r.get("conseil", "") or "").strip()
+    return kept, (conseil or None)
+
 def _opp_quality_ok(opp: dict) -> bool:
     """QC de sortie d'une offre : titre réel, URL http valide, pas de placeholder."""
     titre = str(opp.get("titre", "") or "").strip()
@@ -7132,6 +7177,14 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
         opps = _f or opps
     if exclude_urls:   # anti-doublons entre deux /mobilite d'affilée
         opps = [o for o in opps if str(o.get("url", "") or o.get("portail_officiel", "")) not in exclude_urls]
+    # RELECTURE systématique (#3) : passe LLM de vérification sur les offres web réelles, avant affichage.
+    if grounded and len(opps) >= 2:
+        try:
+            opps, _conseil_qc = await _qc_review_offers(profil_txt, domaine, opps, want_type, today)
+            if _conseil_qc:
+                result["conseil_principal"] = _conseil_qc
+        except Exception as e:
+            logger.warning(f"[qc-review] wrap: {e}")
     # Alertes mots-clés : les offres qui matchent remontent en tête + tag 🔔.
     n_alertes = 0
     if alertes and opps:

@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.1 — Relecture systématique des résultats (self-review)
+- Nouvelle passe de **relecture qualité** (`_qc_review_offers`) sur les offres réelles avant affichage : un dernier regard LLM écarte les cas clairement mauvais que les filtres déterministes ratent (hors-sujet pour le profil, mauvais type, deadline manifestement passée, portail générique sans offre précise) et corrige le conseil (ton juste, pas de fausse certitude). **Conservateur** (au doute on garde, ne vide jamais la liste), **économe** (1 appel rapide, seulement s'il y a ≥ 2 offres web) et **sûr** (repli = aucun changement si le modèle est indisponible). Première brique de la « couche de compréhension » appliquée à la qualité des sorties.
+
 ## v3.0.1 — Audit OODA : durcissement avant déploiement
 - **Correctif critique** : les cues de « changement de sujet » dans les flux guidés étaient trop larges (« change », « stop », « arrête », « sortir »…) et auraient bloqué de vraies réponses (ex. *gestion du changement*, *arrêté* juridique, *stop motion*). Resserrés à des phrases d'abandon non ambiguës — en cas de doute, on stocke la réponse plutôt que de bloquer.
 - **Routeur recruteur** : le repli LLM exige maintenant une confiance **haute** (mieux vaut rater un recruteur, qui peut taper /publier, que piéger un candidat sur une erreur du modèle gratuit).

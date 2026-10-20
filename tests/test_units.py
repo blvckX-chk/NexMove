@@ -2385,3 +2385,44 @@ def test_wants_post_offer_confiance_moyenne_refusee(monkeypatch):
     monkeypatch.setattr(main, "_route_intent", _fake)
     # Confiance « moyenne » ne suffit plus -> on ne piège pas un candidat.
     assert _run(main._wants_to_post_offer({"historique": []}, "un poste à faire connaître")) is False
+
+
+# ------------------ #3 Relecture systématique des offres (v3.1) ------------------
+def test_qc_review_ecarte_les_mauvaises(monkeypatch):
+    async def _fake(system, user, **k):
+        return {"ecarter": [1], "conseil": "Concentre-toi sur l'offre 1, candidate vite."}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    opps = [{"titre": "Dev web Cotonou", "type": "emploi", "url": "https://a.bj/1"},
+            {"titre": "Bourse périmée 2019", "type": "bourse", "url": "https://b.org/2"},
+            {"titre": "Data analyst", "type": "emploi", "url": "https://c.io/3"}]
+    kept, conseil = _run(main._qc_review_offers("profil dev", "informatique", opps, "emploi", "2026-10-20"))
+    assert len(kept) == 2 and all("2019" not in o["titre"] for o in kept)
+    assert conseil and "candidate" in conseil.lower()
+
+def test_qc_review_ne_vide_jamais(monkeypatch):
+    async def _fake(system, user, **k):
+        return {"ecarter": [0, 1], "conseil": ""}   # le modèle veut tout écarter
+    monkeypatch.setattr(main, "call_groq", _fake)
+    opps = [{"titre": "A", "type": "emploi", "url": "https://a/1"},
+            {"titre": "B", "type": "emploi", "url": "https://b/2"}]
+    kept, conseil = _run(main._qc_review_offers("p", "d", opps, "emploi", "2026-10-20"))
+    assert kept == opps and conseil is None   # garde-fou : on ne vide pas
+
+def test_qc_review_repli_sur_erreur(monkeypatch):
+    async def _boom(system, user, **k):
+        raise RuntimeError("llm down")
+    monkeypatch.setattr(main, "call_groq", _boom)
+    opps = [{"titre": "A", "type": "emploi", "url": "https://a/1"},
+            {"titre": "B", "type": "emploi", "url": "https://b/2"}]
+    kept, conseil = _run(main._qc_review_offers("p", "d", opps, "", "2026-10-20"))
+    assert kept == opps and conseil is None   # repli sûr
+
+def test_qc_review_une_seule_offre_pas_dappel(monkeypatch):
+    called = {"n": 0}
+    async def _spy(system, user, **k):
+        called["n"] += 1
+        return {"ecarter": [0]}
+    monkeypatch.setattr(main, "call_groq", _spy)
+    opps = [{"titre": "A", "type": "emploi", "url": "https://a/1"}]
+    kept, _ = _run(main._qc_review_offers("p", "d", opps, "", "2026-10-20"))
+    assert kept == opps and called["n"] == 0   # <2 offres -> pas de relecture
