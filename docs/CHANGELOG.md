@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.2 — Confiance calibrée (honnêteté sur les jugements à enjeu)
+- Les estimations de chances ne donnent plus un chiffre faussement précis. `/chances` affiche maintenant un **niveau de confiance** (🟢/🟡/🔴 selon la richesse des infos), une **fourchette** réaliste (ex. « 52/100 · fourchette 45–60 ») et un **cadre honnête** (« estimation indicative, pas une garantie — l'issue dépend aussi du dossier complet et du jury/employeur »).
+- Directive de confiance calibrée (`_CONFIANCE_DIRECTIVE`) réutilisable, aussi appliquée à l'analyse d'un lien (admissibilité). La fourchette est nettoyée/validée (cohérente avec le score, bornée 0-100), sinon masquée. Renforce la confiance des utilisateurs : le bot assume ce qu'il ne sait pas au lieu de bluffer.
+
 ## v3.1 — Relecture systématique des résultats (self-review)
 - Nouvelle passe de **relecture qualité** (`_qc_review_offers`) sur les offres réelles avant affichage : un dernier regard LLM écarte les cas clairement mauvais que les filtres déterministes ratent (hors-sujet pour le profil, mauvais type, deadline manifestement passée, portail générique sans offre précise) et corrige le conseil (ton juste, pas de fausse certitude). **Conservateur** (au doute on garde, ne vide jamais la liste), **économe** (1 appel rapide, seulement s'il y a ≥ 2 offres web) et **sûr** (repli = aucun changement si le modèle est indisponible). Première brique de la « couche de compréhension » appliquée à la qualité des sorties.
 

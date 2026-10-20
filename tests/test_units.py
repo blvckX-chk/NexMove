@@ -2426,3 +2426,23 @@ def test_qc_review_une_seule_offre_pas_dappel(monkeypatch):
     opps = [{"titre": "A", "type": "emploi", "url": "https://a/1"}]
     kept, _ = _run(main._qc_review_offers("p", "d", opps, "", "2026-10-20"))
     assert kept == opps and called["n"] == 0   # <2 offres -> pas de relecture
+
+
+# ------------------ #5 Confiance calibrée (v3.2) ------------------
+def test_confiance_line():
+    assert "élevée" in main._confiance_line("haute")
+    assert "moyenne" in main._confiance_line("moyenne")
+    assert "faible" in main._confiance_line("faible")
+    assert main._confiance_line("n'importe quoi") == ""
+
+def test_fourchette_clean():
+    assert main._fourchette_clean("45-60", 52) == "45–60"
+    assert main._fourchette_clean("45 à 60", 50) == "45–60"
+    assert main._fourchette_clean("70-80", 52) == ""      # score hors fourchette -> rejeté
+    assert main._fourchette_clean("60-45", 50) == "45–60"  # réordonné
+    assert main._fourchette_clean("bla", 50) == ""
+    assert main._fourchette_clean("50-50", 50) == ""       # dégénérée
+
+def test_confiance_directive_presente():
+    assert "CONFIANCE CALIBRÉE" in main._CONFIANCE_DIRECTIVE
+    assert "jamais" in main._HEDGE_SCORE.lower() or "garantie" in main._HEDGE_SCORE.lower()
