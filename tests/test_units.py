@@ -2632,3 +2632,55 @@ def test_reconversion_avec_base_vise_junior(monkeypatch):
          "onboarding_complete": True, "reconv_pending": True, "reconv_resume": "/veille"}
     msg, s = _run(main.process_text_message(s, "oui j'ai suivi un bootcamp"))
     assert "junior" in msg.lower() or "valoris" in msg.lower()
+
+
+# ------------------ Mécanisme général « clarifier avant d'agir » (v3.8) ------------------
+def test_clarify_pose_question_puis_cherche(monkeypatch):
+    calls = {"osint": 0}
+    async def _osint(*a, **k):
+        calls["osint"] += 1
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    async def _clar(system, user, **k):
+        return {"question": "Quel pays vises-tu pour tes études ?", "champ": "pays_cibles"}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "call_groq", _clar)
+    prof = {"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python"]},
+            "preferences": {"mots_cles": "informatique", "objectif": "étudier"}}
+    s = {"user_id": "clr1", "etape": "ACTIF", "profil": prof, "historique": [], "cv_parsed": True,
+         "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/veille"))
+    assert s.get("clarify_pending") is True and calls["osint"] == 0   # on clarifie AVANT
+    assert "pays" in msg.lower()
+    # la réponse est mémorisée puis la recherche part
+    msg, s = _run(main.process_text_message(s, "le Canada"))
+    assert calls["osint"] == 1
+    assert s["profil"]["preferences"]["pays_cibles"] == "le Canada"
+
+def test_clarify_profil_suffisant_ne_bloque_pas(monkeypatch):
+    calls = {"osint": 0}
+    async def _osint(*a, **k):
+        calls["osint"] += 1
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    async def _clar(system, user, **k):
+        return {"question": "", "champ": ""}   # rien de crucial ne manque
+    monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "call_groq", _clar)
+    prof = {"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python"]},
+            "preferences": {"mots_cles": "informatique"}}
+    s = {"user_id": "clr2", "etape": "ACTIF", "profil": prof, "historique": [], "cv_parsed": True,
+         "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/veille"))
+    assert calls["osint"] == 1 and not s.get("clarify_pending")   # cherche directement
+
+def test_clarify_une_seule_fois(monkeypatch):
+    async def _osint(*a, **k):
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    async def _clar(system, user, **k):
+        return {"question": "Une question ?", "champ": "autre"}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "call_groq", _clar)
+    s = {"user_id": "clr3", "etape": "ACTIF", "cv_parsed": True, "onboarding_complete": True,
+         "clarify_done": True, "historique": [],
+         "profil": {"preferences": {"mots_cles": "informatique"}}}
+    msg, s = _run(main.process_text_message(s, "/veille"))
+    assert not s.get("clarify_pending")   # déjà clarifié -> on ne redemande pas
