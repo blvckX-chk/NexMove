@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.98 — Routeur d'intention (le bot raisonne mieux sur ce qu'on veut)
+- Nouveau **routeur d'intention piloté par le LLM** (`_route_intent`) : au lieu de deviner par mots-clés, le bot classe ce que veut la personne (recruteur qui propose un poste · candidat qui cherche · question · gestion de profil · salutation). Économe et sûr : la regex rapide tranche d'abord (gratuit, instantané), le routeur LLM n'est appelé qu'en cas d'ambiguïté réelle, et en cas d'échec on retombe sur l'ancien comportement.
+- Premier branchement : la distinction **recruteur vs candidat** (`_wants_to_post_offer`). Un employeur qui formule son besoin autrement que prévu (« nous aurions un poste à faire connaître ») est maintenant bien dirigé vers le dépôt d'offre, sans jamais confondre avec un candidat qui cherche. Base réutilisable pour fiabiliser d'autres carrefours de la conversation.
+
 ## v2.97 — Le CV n'est plus redemandé à l'onboarding
 - Après l'envoi d'un CV, le bot reposait parfois des questions dont la réponse figurait sur le CV (domaine, niveau d'expérience, langues). Désormais : (1) l'onboarding piloté par le LLM reçoit un **résumé du CV** (`_cv_brief` : domaine, compétences, postes, niveau, langues) avec consigne de **ne jamais redemander** ce qui y figure ; (2) le **niveau** (junior/mid/senior → débutant/intermédiaire/confirmé) est désormais pré-rempli depuis le CV, en plus des mots-clés et langues déjà gérés. Il ne reste en général qu'une seule question : l'**objectif** (emploi / études / bourse…), qui ne se déduit pas d'un CV.
 

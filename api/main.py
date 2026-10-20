@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.97.0"
+VERSION         = "2.98.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -962,6 +962,58 @@ def _is_recruiter_intent(t: str) -> bool:
                              "je postule", "chercher du travail")):
         return False
     return bool(_RECRUIT_INTENT_RE.search(tl))
+
+# ── Routeur d'INTENTION piloté par le LLM : raisonne sur ce que veut la personne
+#    au lieu de faire du pattern-matching rigide. Économe (appelé seulement aux
+#    carrefours ambigus, jamais sur chaque message) et sûr (repli = None). ──
+_ROUTE_INTENTS = ("recruteur_offre", "recherche_opportunite", "question_info",
+                  "gestion_profil", "salutation", "autre")
+# Indices qui autorisent un appel au routeur (sinon on ne dépense rien).
+_ROUTE_HINTS = ("offre", "recrut", "poste", "candidat", "embauch", "diffus", "publi",
+                "annonce", "cv", "profil", "emploi", "stage", "bourse", "entreprise", "société", "societe")
+
+async def _route_intent(session: dict, t: str):
+    """Classe l'intention d'un message en une étiquette de _ROUTE_INTENTS.
+    Retourne {"intent": str, "confiance": "haute|moyenne|faible"} ou None si indisponible."""
+    tl = (t or "").strip()
+    if not tl or len(tl) > 400:
+        return None
+    system = ("Tu es un routeur d'intention pour un assistant d'emploi/mobilité (NexMove). "
+              "Classe le DERNIER message de l'utilisateur en UNE catégorie, selon ce qu'il VEUT faire :\n"
+              "- recruteur_offre : un RECRUTEUR/employeur veut publier/diffuser une offre d'emploi (il PROPOSE un poste).\n"
+              "- recherche_opportunite : un CANDIDAT cherche un emploi/stage/bourse/formation (il CHERCHE pour lui).\n"
+              "- question_info : une question d'information (comment ça marche, prix, visa, un pays…).\n"
+              "- gestion_profil : gérer son compte/CV/préférences (modifier, supprimer, voir).\n"
+              "- salutation : simple bonjour/merci sans demande.\n"
+              "- autre : rien de ce qui précède.\n"
+              "Ne confonds JAMAIS recruteur (propose un poste) et candidat (cherche un poste). "
+              'JSON STRICT uniquement : {"intent":"<catégorie>","confiance":"haute|moyenne|faible"}')
+    user = f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 3)}\nMESSAGE À CLASSER : {tl}"
+    try:
+        r = await call_groq(system, user, temperature=0.0, max_tokens=60, json_mode=True, tier="fast")
+    except Exception as e:
+        logger.warning(f"[route] {e}")
+        return None
+    if not isinstance(r, dict):
+        return None
+    intent = str(r.get("intent", "") or "").strip().lower()
+    if intent not in _ROUTE_INTENTS:
+        return None
+    return {"intent": intent, "confiance": str(r.get("confiance", "moyenne") or "moyenne").lower()}
+
+async def _wants_to_post_offer(session: dict, t: str) -> bool:
+    """Recruteur qui veut déposer une offre. Regex d'abord (gratuit, instantané) ; sinon, si le
+    message contient un indice pertinent, on demande au routeur LLM (raisonnement, cas non prévus)."""
+    if _is_recruiter_intent(t):
+        return True
+    tl = (t or "").strip().lower()
+    if len(tl) < 6 or len(tl) > 300 or not any(h in tl for h in _ROUTE_HINTS):
+        return False
+    # Posture candidat explicite -> ce n'est pas un dépôt d'offre.
+    if any(k in tl for k in ("je cherche", "je recherche", "trouver un", "je postule", "pour moi")):
+        return False
+    res = await _route_intent(session, t)
+    return bool(res and res["intent"] == "recruteur_offre" and res["confiance"] in ("haute", "moyenne"))
 
 def _build_pref_plan(prefs: dict, remote: bool = False) -> list[str]:
     """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
@@ -2051,8 +2103,9 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             return await process_text_message(session, "/premium " + _mprem.group(0).upper())
 
     # Un RECRUTEUR écrit directement pour déposer une offre -> on lance le dépôt guidé (payant, validé admin).
+    # Détection = regex rapide, puis routeur d'intention LLM pour les formulations non prévues.
     if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")
-            and not session.get("recruit_step") and _is_recruiter_intent(t)):
+            and not session.get("recruit_step") and await _wants_to_post_offer(session, t)):
         _push(session, "user", t)
         return await _recruit_start(session)
 

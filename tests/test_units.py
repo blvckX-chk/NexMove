@@ -2277,7 +2277,7 @@ def test_diffusion_cost_bareme():
     assert main._diffusion_cost(0, tous=True) == max(1, base + main.DIFFUSION_ALL_EXTRA)
 
 
-# ------------------ CV -> onboarding : ne pas redemander ce qui est sur le CV (v2.96) ------------------
+# ------------------ CV -> onboarding : ne pas redemander ce qui est sur le CV (v2.97) ------------------
 def test_prefill_niveau_depuis_cv():
     prof = {"identite": {"langues": ["français", "anglais"]},
             "formation": [{"domaine": "Informatique"}], "experience": [{"poste": "Dev"}],
@@ -2294,3 +2294,37 @@ def test_cv_brief_resume():
             "experience": [{"poste": "Juriste"}], "niveau_global": "mid", "identite": {"langues": ["français"]}}
     b = main._cv_brief(prof)
     assert "Droit" in b and "Juriste" in b and "Contrats" in b
+
+# ------------------ Routeur d'intention LLM : recruteur vs candidat (v2.98) ------------------
+def test_wants_post_offer_regex_fast_path(monkeypatch):
+    # Formulation claire -> regex, aucun appel LLM.
+    called = {"n": 0}
+    async def _boom(*a, **k):
+        called["n"] += 1
+        return None
+    monkeypatch.setattr(main, "_route_intent", _boom)
+    assert _run(main._wants_to_post_offer({"historique": []}, "je veux publier une offre")) is True
+    assert called["n"] == 0
+
+def test_wants_post_offer_exclut_candidat_sans_llm(monkeypatch):
+    called = {"n": 0}
+    async def _boom(*a, **k):
+        called["n"] += 1
+        return {"intent": "recruteur_offre", "confiance": "haute"}
+    monkeypatch.setattr(main, "_route_intent", _boom)
+    # Posture candidat explicite -> exclue avant tout appel LLM.
+    assert _run(main._wants_to_post_offer({"historique": []}, "je cherche un emploi, un CV")) is False
+    assert called["n"] == 0
+
+def test_wants_post_offer_llm_fallback(monkeypatch):
+    async def _fake(session, t):
+        return {"intent": "recruteur_offre", "confiance": "haute"}
+    monkeypatch.setattr(main, "_route_intent", _fake)
+    # Formulation non prévue par la regex mais avec indice -> le routeur tranche.
+    assert _run(main._wants_to_post_offer({"historique": []}, "nous aurions un poste à faire connaître")) is True
+
+def test_wants_post_offer_llm_dit_candidat(monkeypatch):
+    async def _fake(session, t):
+        return {"intent": "recherche_opportunite", "confiance": "haute"}
+    monkeypatch.setattr(main, "_route_intent", _fake)
+    assert _run(main._wants_to_post_offer({"historique": []}, "un poste en marketing m'intéresserait")) is False
