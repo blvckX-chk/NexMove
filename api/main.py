@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.10.0"
+VERSION         = "3.11.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -867,6 +867,12 @@ _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "ent
                   "chances", "compatibilite", "simulation", "creercv", "outils", "extraire",
                   "compresserimage", "enimages", "cv1page", "anonymiser", "mescandidatures",
                   "timeline", "parrainage", "offres", "credits", "commentpostuler"}
+
+# Actions SÛRES à enchaîner en 2e pas d'une boucle d'agent (conseil/lecture seule, pas d'état
+# lourd, pas de coût caché, pas de confirmation requise). Volontairement restreint.
+_CHAINABLE_ACTIONS = {"chances", "compatibilite", "commentpostuler", "formations", "ecoles",
+                      "budget", "eligibilite", "logement", "entretien", "parcours", "status",
+                      "campusfrance", "canada", "procedure", "profil", "mescandidatures"}
 
 # Intentions informatives SÛRES à exécuter même avant d'avoir un profil (pas de CV requis).
 _PREONB_DIRECT = {"campusfrance", "canada", "procedure", "ecoles", "formations", "budget", "logement",
@@ -4816,7 +4822,8 @@ L'utilisateur écrit librement. Deux cas :
 RÈGLE CLÉ : dès qu'il demande de TROUVER/CHERCHER des opportunités, bourses, offres, emplois, stages ou programmes → renvoie TOUJOURS action="mobilite" (recherche sur sources web RÉELLES) avec son argument. Ne liste JAMAIS d'opportunités toi-même dans "message".
 COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
 REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Raisonne comme un conseiller d'orientation : appuie tes conseils sur ses POINTS FORTS, ses AXES à renforcer, son SAVOIR-ÊTRE et ses CONTRAINTES quand ils sont connus (réponse logique et personnalisée). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
-JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<réponse si pas d'action>"}}"""
+MULTI-ÉTAPES : si la demande contient DEUX besoins enchaînés (ex. « cherche X ET dis-moi mes chances », « trouve une bourse PUIS prépare mon dossier »), renseigne aussi "then" avec la 2e action (sinon laisse "then" vide). Max 2 actions.
+JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"action":"","argument":""}},"message":"<réponse si pas d'action>"}}"""
     try:
         r = await call_groq(system, t, temperature=0.3, max_tokens=650)   # marge suffisante : le JSON ne se coupe plus
     except Exception as e:
@@ -4825,7 +4832,20 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","message":"<r
     action = str(r.get("action", "") or "").strip().lower().lstrip("/")
     if action in _VALID_INTENTS:
         arg = str(r.get("argument", "") or "").strip()
-        return await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
+        msg1, session = await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
+        # Boucle d'agent (bornée à 2 pas) : une 2e action « advice » enchaînée si demandée.
+        then = r.get("then") if isinstance(r.get("then"), dict) else {}
+        act2 = str(then.get("action", "") or "").strip().lower().lstrip("/")
+        arg2 = str(then.get("argument", "") or "").strip()
+        if act2 in _CHAINABLE_ACTIONS and act2 != action and not session.get("awaiting_domain") \
+                and not session.get("reconv_pending") and not session.get("clarify_pending"):
+            try:
+                msg2, session = await process_text_message(session, "/" + act2 + ((" " + arg2) if arg2 else ""))
+                if msg2:
+                    return (f"{msg1}\n\n━━━━━━\n{msg2}").strip(), session
+            except Exception as e:
+                logger.warning(f"[agent-chain] {act2}: {e}")
+        return msg1, session
     message = _trim_to_sentence((r.get("message") or "").strip()) \
         or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…)."
     _push(session, "user", t); _push(session, "assistant", message)

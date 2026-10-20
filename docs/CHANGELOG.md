@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.11 — Boucle d'agent : enchaîner deux actions (bornée)
+- Le bot peut maintenant traiter une demande en DEUX temps dans un seul tour : « cherche une bourse ET dis-moi mes chances » → recherche puis évaluation, enchaînées. Le routeur conversationnel renvoie une 2e action optionnelle (`then`) ; elle n'est exécutée que si elle fait partie d'une liste BLANCHE d'actions de conseil sûres (`_CHAINABLE_ACTIONS` : chances, compatibilite, commentpostuler, formations, budget…), jamais une action à état ou à confirmation (creercv, publier, supprimer, 2e recherche…). Borné à 2 pas, repli sur une seule action en cas de souci. C'est la dernière brique de l'agent : raisonner → agir → enchaîner, sans jamais partir en vrille.
+
 ## v3.10 — Multimodal : analyser une annonce prise en photo
 - Avant, toute image non-CV était rejetée. Désormais, si la photo/le scan est une *annonce d'opportunité* (offre d'emploi, bourse, stage), le bot la *lit* (OCR/vision), l'analyse comme un lien : titre, type, compatibilité avec le profil, éligibilité, critères, et *comment postuler* — puis propose la suite (`/commentpostuler`, `/chances`, `/postuler`). Idéal pour le public mobile : on voit une annonce sur un mur / un groupe, on la prend en photo, on obtient l'analyse. Détection `_looks_like_opportunity` + `_analyze_opportunity_text` (repli propre si illisible ou non pertinent). Le message de non-CV est aussi plus utile (propose CV / offre / lien / texte).
 
