@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.96.0"
+VERSION         = "2.97.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -990,6 +990,34 @@ _ONBOARD_FIELDS = ["objectif", "mots_cles", "langues_opportunite", "niveau",
 _ONBOARD_VIDES = ("", "néant", "neant", "aucun", "aucune", "non précisé", "non precise",
                   "n/a", "-", "inconnu", "non concerné", "non concerne", "?")
 
+def _cv_brief(profil: dict) -> str:
+    """Résumé COURT du CV analysé, injecté dans l'onboarding pour ne pas redemander ce qui y figure."""
+    if not isinstance(profil, dict):
+        return ""
+    bits = []
+    comp = profil.get("competences", {}) or {}
+    skills = []
+    for k in ("techniques", "outils"):
+        skills += [c for c in (comp.get(k) or []) if isinstance(c, str) and c.strip()]
+    form = profil.get("formation") or []
+    dom = (form[0].get("domaine") or form[0].get("diplome") if form and isinstance(form[0], dict) else "") or ""
+    if dom:
+        bits.append(f"domaine/formation : {dom}")
+    if skills:
+        bits.append("compétences : " + ", ".join(dict.fromkeys(skills))[:120])
+    exp = profil.get("experience") or []
+    if exp:
+        postes = [e.get("poste", "") for e in exp if isinstance(e, dict) and e.get("poste")][:3]
+        if postes:
+            bits.append("expérience : " + ", ".join(postes))
+    niv = profil.get("niveau_global")
+    if niv:
+        bits.append(f"niveau : {niv}")
+    langs = [str(l) for l in ((profil.get("identite") or {}).get("langues") or []) if str(l).strip()]
+    if langs:
+        bits.append("langues : " + ", ".join(langs)[:60])
+    return " · ".join(bits)
+
 async def _onboard_llm_turn(session: dict, t: str):
     """Un tour d'onboarding mené par le LLM : extrait ce que la personne dit (sans rien inventer),
     répond à ses questions, et pose AU PLUS une question utile. Retourne (reply, done) ou None si échec.
@@ -1011,8 +1039,11 @@ async def _onboard_llm_turn(session: dict, t: str):
               "pays_cibles, nationalite, type_emploi (temps plein/partiel/télétravail/alternance). "
               'JSON STRICT: {"extracted":{"objectif":"","mots_cles":"","langues_opportunite":"","niveau":"",'
               '"pays_cibles":"","nationalite":"","type_emploi":""},"reply":"<ta réponse + éventuellement UNE question, ou vide si rien à ajouter>","done":false}')
+    cv_ctx = _cv_brief(profil) if session.get("cv_parsed") else ""
     user = (f"DÉJÀ CONNU (ne pas redemander) : {known or 'rien encore'}\n"
-            f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 5)}\n"
+            + (f"DÉJÀ SUR SON CV (ne JAMAIS redemander ce qui y figure — domaine, expérience, "
+               f"niveau, langues) : {cv_ctx}\n" if cv_ctx else "")
+            + f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 5)}\n"
             f"NOUVEAU MESSAGE : {t}")
     r = await call_groq(system, user, temperature=0.3, max_tokens=500, tier="smart")
     if not isinstance(r, dict):
@@ -1054,6 +1085,15 @@ def _prefill_prefs_from_cv(session: dict) -> list[str]:
         if kws:
             prefs["mots_cles"] = ", ".join(dict.fromkeys(kws))   # dédup, ordre conservé
             filled.append("mots_cles")
+    # niveau <- niveau_global du CV (junior/mid/senior -> débutant/intermédiaire/confirmé)
+    if not prefs.get("niveau"):
+        niv = str(profil.get("niveau_global", "") or "").lower()
+        mapping = {"junior": "débutant", "entry": "débutant", "débutant": "débutant", "debutant": "débutant",
+                   "mid": "intermédiaire", "intermédiaire": "intermédiaire", "intermediaire": "intermédiaire",
+                   "senior": "confirmé", "confirmé": "confirmé", "confirme": "confirmé", "expert": "confirmé"}
+        for key, lab in mapping.items():
+            if key in niv:
+                prefs["niveau"] = lab; filled.append("niveau"); break
     # langues_opportunite <- langues déclarées dans le CV
     if not prefs.get("langues_opportunite"):
         langs = " ".join(str(l) for l in ((profil.get("identite") or {}).get("langues") or [])).lower()
