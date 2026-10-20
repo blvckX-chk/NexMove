@@ -2756,3 +2756,22 @@ def test_agent_pas_de_chainage_hors_whitelist(monkeypatch):
          "profil": {"identite": {"nom": "T"}, "preferences": {}}, "cv_parsed": True}
     msg, s = _run(main.process_text_message(s, "mon statut puis crée un cv"))
     assert "━━━━━━" not in msg and s.get("etape") != "CVBUILD"   # pas d'enchaînement risqué
+
+
+# ------------------ QC : analyse à-une-offre ancrée dans la source (v3.12) ------------------
+def test_opp_grounded():
+    src = "Nous recrutons un comptable chez ACME à Cotonou. Licence requise."
+    assert main._opp_grounded({"titre": "Comptable junior", "organisation": "ACME"}, src) is True
+    assert main._opp_grounded({"titre": "Ingénieur aéronautique", "organisation": "Airbus"}, src) is False
+    assert main._opp_grounded({"titre": "[titre]"}, src) is False
+    assert main._opp_grounded({"titre": "Comptable"}, "") is True   # pas de source -> on ne bloque pas
+
+def test_analyse_photo_ecarte_si_non_ancree(monkeypatch):
+    async def _fake(system, prompt, **k):
+        return {"est_opportunite": True, "titre": "Pilote de ligne", "organisation": "Air France",
+                "type": "emploi", "score_composite": 80}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    s = {"user_id": "qc1", "profil": {"preferences": {}}, "historique": []}
+    # La source parle de comptabilité, l'analyse « pilote » n'est pas ancrée -> écartée.
+    out = _run(main._analyze_opportunity_text(s, "Offre de comptable à Cotonou, licence requise, CDI.", source="ta photo"))
+    assert out is None
