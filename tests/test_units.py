@@ -2275,3 +2275,22 @@ def test_diffusion_cost_bareme():
     assert main._diffusion_cost(0, tous=False) == max(1, base)
     assert main._diffusion_cost(main.DIFFUSION_PER_RECIP, tous=False) == max(1, base + 1)
     assert main._diffusion_cost(0, tous=True) == max(1, base + main.DIFFUSION_ALL_EXTRA)
+
+
+# ------------------ CV -> onboarding : ne pas redemander ce qui est sur le CV (v2.96) ------------------
+def test_prefill_niveau_depuis_cv():
+    prof = {"identite": {"langues": ["français", "anglais"]},
+            "formation": [{"domaine": "Informatique"}], "experience": [{"poste": "Dev"}],
+            "competences": {"techniques": ["Python"]}, "niveau_global": "senior"}
+    sess = {"profil": dict(prof, preferences={})}
+    filled = main._prefill_prefs_from_cv(sess)
+    prefs = sess["profil"]["preferences"]
+    assert "niveau" in filled and prefs["niveau"] == "confirmé"
+    assert "mots_cles" in filled and "Python" in prefs["mots_cles"]
+    assert prefs.get("langues_opportunite") == "les deux"
+
+def test_cv_brief_resume():
+    prof = {"formation": [{"domaine": "Droit"}], "competences": {"techniques": ["Contrats"]},
+            "experience": [{"poste": "Juriste"}], "niveau_global": "mid", "identite": {"langues": ["français"]}}
+    b = main._cv_brief(prof)
+    assert "Droit" in b and "Juriste" in b and "Contrats" in b

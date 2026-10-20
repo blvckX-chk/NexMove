@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v2.97 — Le CV n'est plus redemandé à l'onboarding
+- Après l'envoi d'un CV, le bot reposait parfois des questions dont la réponse figurait sur le CV (domaine, niveau d'expérience, langues). Désormais : (1) l'onboarding piloté par le LLM reçoit un **résumé du CV** (`_cv_brief` : domaine, compétences, postes, niveau, langues) avec consigne de **ne jamais redemander** ce qui y figure ; (2) le **niveau** (junior/mid/senior → débutant/intermédiaire/confirmé) est désormais pré-rempli depuis le CV, en plus des mots-clés et langues déjà gérés. Il ne reste en général qu'une seule question : l'**objectif** (emploi / études / bourse…), qui ne se déduit pas d'un CV.
+
 ## v2.96 — Sortie claire des flux guidés (CV / dépôt d'offre)
 - En pleine création de CV ou dépôt d'offre, taper une commande (ex. `/statistiques`) renvoyait un sec « Réponds sans commande » sans dire comment sortir. Désormais le message indique clairement de taper **/annuler** pour lancer une commande, et distingue le cas « réponse trop courte » du cas « commande ».
 - `/stats` accepte maintenant les alias `/statistiques` et `/stat` (évite de rester bloqué parce que la commande exacte n'était pas reconnue).
