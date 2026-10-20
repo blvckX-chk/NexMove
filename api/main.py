@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.0.0"
+VERSION         = "3.0.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -131,9 +131,10 @@ VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en 
 RECRUIT_PAY_CONTACT = os.getenv("RECRUIT_PAY_CONTACT", "")            # ex. « +229 62 11 87 61 » ; vide -> on dit « l'équipe te recontacte »
 RECRUIT_BUY_URL     = os.getenv("RECRUIT_BUY_URL", "")               # page vitrine « acheter des crédits » (redirige vers WhatsApp admin)
 # Coût d'une diffusion en CRÉDITS (ajustable : « on verra combien selon les critères »).
-DIFFUSION_BASE_COST = int(os.getenv("DIFFUSION_BASE_COST", "1"))      # coût plancher d'une diffusion
+# Barème B « à l'audience » (wallet unique ; 1 crédit ≈ 500 FCFA). Ajustable par variables d'env.
+DIFFUSION_BASE_COST = int(os.getenv("DIFFUSION_BASE_COST", "3"))      # coût plancher d'une diffusion
 DIFFUSION_PER_RECIP = int(os.getenv("DIFFUSION_PER_RECIP", "50"))     # +1 crédit par tranche de N destinataires
-DIFFUSION_ALL_EXTRA = int(os.getenv("DIFFUSION_ALL_EXTRA", "2"))      # surcoût d'une diffusion « à tous » (hors candidats ciblés)
+DIFFUSION_ALL_EXTRA = int(os.getenv("DIFFUSION_ALL_EXTRA", "3"))      # surcoût d'une diffusion « à tous » (hors candidats ciblés)
 
 def _diffusion_cost(n_targets: int, tous: bool = False) -> int:
     """Crédits consommés par une diffusion. Barème simple et CONFIGURABLE (à affiner selon les
@@ -946,9 +947,12 @@ def _is_meta_question(t: str) -> bool:
 
 # Carrefour 2 & 4 : dans un flux guidé (CV / dépôt d'offre), un message n'est pas
 # toujours une réponse — ça peut être une question, ou l'envie de faire autre chose.
-_SWITCH_CUES = ("en fait", "finalement", "plutôt", "annule", "laisse tomber", "laisse tombé",
-                "arrête", "arrete", "stop", "je préfère", "je prefere", "autre chose",
-                "change", "je veux plutôt", "revenir", "sortir", "quitter")
+# Phrases d'abandon à HAUTE précision uniquement : on préfère stocker une vraie réponse
+# que bloquer en boucle. (Ex. évités : « gestion du changement », « arrêté » juridique,
+# « stop motion », « revenir sur… » dans une description.)
+_SWITCH_CUES = ("en fait je", "laisse tomber", "laisse tombé", "j'annule", "je veux annuler",
+                "je préfère faire autre", "je veux arrêter", "on arrête tout", "je veux plutôt faire",
+                "annule tout", "je veux changer de")
 
 def _flow_input_kind(t: str) -> str:
     """Classe un message reçu PENDANT un flux guidé : 'command' | 'question' | 'switch' | 'empty' | 'answer'.
@@ -1049,7 +1053,9 @@ async def _wants_to_post_offer(session: dict, t: str) -> bool:
     if any(k in tl for k in ("je cherche", "je recherche", "trouver un", "je postule", "pour moi")):
         return False
     res = await _route_intent(session, t)
-    return bool(res and res["intent"] == "recruteur_offre" and res["confiance"] in ("haute", "moyenne"))
+    # Confiance HAUTE requise : mieux vaut rater un recruteur (il peut taper /publier) que
+    # piéger un candidat dans le flux de dépôt d'offre sur une erreur du modèle gratuit.
+    return bool(res and res["intent"] == "recruteur_offre" and res["confiance"] == "haute")
 
 def _build_pref_plan(prefs: dict, remote: bool = False) -> list[str]:
     """Liste ORDONNÉE des questions d'onboarding à poser, selon les réponses déjà données.
@@ -1361,9 +1367,9 @@ def _deadline_is_past(text, today):
             except Exception:
                 continue
     # Année seule : on n'écarte que si elle est strictement < année en cours.
-    for ym in re.findall(r"\b(20\d{2})\b", t):
-        if int(ym) < today.year:
-            return True
+    years = [int(y) for y in re.findall(r"\b(20\d{2})\b", t)]
+    if years and max(years) < today.year:   # toutes les années citées sont révolues
+        return True
     return False
 
 def _type_label(typ):
