@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.7.0"
+VERSION         = "3.8.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1340,6 +1340,43 @@ def _reconv_ask_if_needed(session: dict, resume_cmd: str):
         return _reconversion_question(session)
     return None
 
+# Mécanisme GÉNÉRAL « clarifier avant d'agir » : avant une recherche, le bot se demande (via LLM)
+# s'il manque UNE info vraiment cruciale, et pose alors une seule question — sinon il agit.
+# Sûr : une seule fois par session, repli = on cherche quand même si le modèle n'aide pas.
+_CLARIFY_FIELDS = {"pays_cibles", "nationalite", "financement", "niveau", "type_emploi",
+                   "certifs_langue", "langues_opportunite", "mots_cles"}
+
+async def _clarify_before_search(session: dict, resume_cmd: str):
+    """Renvoie UNE question de clarification si une info cruciale manque (sinon None).
+    Prépare la reprise de la recherche après la réponse. N'intervient qu'une fois par session."""
+    if session.get("clarify_done") or not session.get("onboarding_complete"):
+        return None
+    try:
+        contexte = _conversation_context(session)
+        system = ("Tu es un conseiller d'orientation. On va lancer une recherche d'opportunités pour cette "
+                  "personne. À partir de CE QU'ON SAIT et de sa DEMANDE, détermine s'il manque UNE information "
+                  "VRAIMENT cruciale, sans laquelle le résultat serait générique ou à côté (ex. pays visé pour "
+                  "des études à l'étranger, niveau/diplôme pour une bourse, type de contrat, budget). "
+                  "Si le profil suffit pour un BON résultat, renvoie une question VIDE (n'invente pas de besoin). "
+                  "Ne demande JAMAIS une info déjà connue. Tutoie, une seule question courte. "
+                  'JSON STRICT : {"question":"","champ":"<pays_cibles|niveau|financement|type_emploi|certifs_langue|autre>"}')
+        user = f"CE QU'ON SAIT :\n{contexte}\n\nDEMANDE : {resume_cmd}"
+        r = await call_groq(system, user, temperature=0.0, max_tokens=120, json_mode=True, tier="fast")
+    except Exception as e:
+        logger.warning(f"[clarify] {e}")
+        session["clarify_done"] = True
+        return None
+    session["clarify_done"] = True   # une seule tentative, quoi qu'il arrive
+    if not isinstance(r, dict):
+        return None
+    q = _trim_to_sentence(str(r.get("question", "") or "").strip())
+    if not q or len(q) < 6:
+        return None
+    session["clarify_pending"] = True
+    session["clarify_resume"] = resume_cmd
+    session["clarify_champ"] = str(r.get("champ", "") or "").strip().lower()
+    return "🧭 " + q
+
 def valider_pref(field: str, value: str) -> tuple[bool, str]:
     """Vérifie la cohérence d'une réponse d'onboarding.
     Retourne (valide, indice). L'indice est affiché quand la réponse est incohérente."""
@@ -2386,10 +2423,26 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         else:
             lead = f"🧭 Ok, on explore *{_md_clean(cible)}* ensemble 👇"
         profil["preferences"] = prefs; session["profil"] = profil
+        session["clarify_done"] = True   # on vient déjà de clarifier -> pas de 2e question d'affilée
         resume = session.pop("reconv_resume", "") or "/veille"
         _push(session, "user", t)
         res_msg, session = await process_text_message(session, resume)
         return (lead + "\n\n" + (res_msg or "")).strip(), session
+
+    # On attendait une réponse à une question de CLARIFICATION -> on la mémorise et on relance la recherche.
+    if session.get("clarify_pending") and not low.startswith("/") and len(t.strip()) >= 2:
+        session["clarify_pending"] = False
+        champ = str(session.pop("clarify_champ", "") or "")
+        profil = session.setdefault("profil", {})
+        prefs = profil.setdefault("preferences", {})
+        if champ in _CLARIFY_FIELDS and not str(prefs.get(champ) or "").strip():
+            prefs[champ] = t.strip()[:120]
+        else:
+            profil.setdefault("profil_plus", {})["precision"] = t.strip()[:200]
+        profil["preferences"] = prefs; session["profil"] = profil
+        resume = session.pop("clarify_resume", "") or "/veille"
+        _push(session, "user", t)
+        return await process_text_message(session, resume)
 
     # On attendait le DOMAINE pour lancer une recherche ciblée : on le capte puis on cherche.
     if session.get("awaiting_domain") and not low.startswith("/") and len(t.strip()) >= 2 and not session.get("sim_mode"):
@@ -3953,6 +4006,11 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             if _rq:
                 _push(session, "user", t); _push(session, "assistant", _rq); session["derniere_activite"] = now
                 return _rq, session
+            # Mécanisme général : une info cruciale manque ? -> on pose UNE question avant d'agir.
+            _cq = await _clarify_before_search(session, t)
+            if _cq:
+                _push(session, "user", t); _push(session, "assistant", _cq); session["derniere_activite"] = now
+                return _cq, session
         _vg_ok, _vg_msg = _veille_gate(session)
         if not _vg_ok:
             _push(session, "user", t); _push(session, "assistant", _vg_msg); session["derniere_activite"] = now
@@ -4225,6 +4283,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if _rq:
             _push(session, "user", t); _push(session, "assistant", _rq); session["derniere_activite"] = now
             return _rq, session
+        _cq = await _clarify_before_search(session, "/veille")
+        if _cq:
+            _push(session, "user", t); _push(session, "assistant", _cq); session["derniere_activite"] = now
+            return _cq, session
         _vg_ok, _vg_msg = _veille_gate(session)
         if not session.get("onboarding_complete"):
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."

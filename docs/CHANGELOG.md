@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.8 — « Clarifier avant d'agir » (mécanisme général)
+- Généralise ce qu'on faisait pour la reconversion/le domaine à TOUTE recherche : avant de lancer, le bot évalue (1 appel LLM rapide) s'il manque UNE information vraiment cruciale (pays visé pour des études, niveau/diplôme pour une bourse, type de contrat, budget…). Si oui, il pose UNE question courte, mémorise la réponse (dans le bon champ de préférences) puis relance la recherche ; sinon il agit directement. C'est le cœur du raisonnement d'un conseiller : ne pas chercher à l'aveugle.
+- Sûr par conception : **une seule fois par session** (jamais de harcèlement de questions), priorité aux gates déterministes (domaine, reconversion), et **repli systématique sur « on cherche quand même »** si le modèle est indisponible ou n'identifie rien. Première brique de la boucle d'agent (l'étape « demander une précision »), sans l'enchaînement multi-pas (gardé pour après le salon).
+
 ## v3.7 — Conseiller : la reconversion débouche sur un vrai plan
 - Après avoir détecté une reconversion et demandé les bases, le bot AGIT selon la réponse, comme un conseiller : s'il part de *zéro*, il oriente d'abord vers une *formation/certification* (le pont crédible) via `/formations <domaine>` + des offres *débutant* ; s'il a *déjà des bases*, il vise directement *débutant/junior* et *alternances* pour les valoriser. Le niveau est ajusté (`niveau=débutant`) pour que la recherche et les scores soient réalistes. Détection via `_reconv_has_base` (oui/non/incertain).
 
