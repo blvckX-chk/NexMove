@@ -2684,3 +2684,27 @@ def test_clarify_une_seule_fois(monkeypatch):
          "profil": {"preferences": {"mots_cles": "informatique"}}}
     msg, s = _run(main.process_text_message(s, "/veille"))
     assert not s.get("clarify_pending")   # déjà clarifié -> on ne redemande pas
+
+
+# ------------------ Conseiller : plan B si chances faibles (v3.9) ------------------
+def test_chances_plan_b_si_score_faible(monkeypatch):
+    async def _fake(system, prompt, **k):
+        return {"score": 25, "fourchette": "20-30", "confiance": "moyenne", "verdict": "Difficile en l'état",
+                "forces": ["motivation"], "manques": ["niveau de langue"], "actions": ["passer le TCF"],
+                "plan_b": {"cible": "bourse au Maroc", "pourquoi": "Admission plus ouverte et francophone."},
+                "conseil": "Commence par la langue."}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    s = {"user_id": "pb1", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
+         "profil": {"identite": {"nom": "X"}, "preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "/chances master en France"))
+    assert "Plan B" in msg and "bourse au Maroc" in msg and "/chances bourse au Maroc"[:40] in msg
+
+def test_chances_pas_de_plan_b_si_score_bon(monkeypatch):
+    async def _fake(system, prompt, **k):
+        return {"score": 78, "verdict": "Solide", "forces": ["profil complet"], "manques": [],
+                "actions": ["postuler tôt"], "plan_b": {"cible": "autre chose", "pourquoi": "x"}, "conseil": "Fonce."}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    s = {"user_id": "pb2", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
+         "profil": {"identite": {"nom": "X"}, "preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "/chances master en France"))
+    assert "Plan B" not in msg   # score élevé -> pas de plan B

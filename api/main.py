@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.8.0"
+VERSION         = "3.9.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2800,11 +2800,15 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             system = ("Tu es évaluateur d'admissibilité HONNÊTE (études/visa/bourse/emploi) pour un candidat "
                       "d'Afrique de l'Ouest. À partir de son PROFIL et de la CIBLE, estime ses chances de façon "
                       "réaliste (ni faussement rassurant, ni décourageant). Donne un score sur 100, un verdict "
-                      "court, 3 forces, 3 manques/risques, et 3 ACTIONS concrètes pour AUGMENTER ses chances."
+                      "court, 3 forces, 3 manques/risques, et 3 ACTIONS concrètes pour AUGMENTER ses chances. "
+                      "PLAN B : si les chances sont FAIBLES (score < 45), propose une alternative RÉALISTE et plus "
+                      "ACCESSIBLE qui augmente nettement les chances (autre pays plus ouvert, financement par bourse "
+                      "plutôt qu'auto-financement, poste junior/alternance plutôt que senior, programme-passerelle), "
+                      "avec une phrase de justification. Sinon laisse plan_b vide."
                       + _CONFIANCE_DIRECTIVE + " Réponds en JSON.")
             prompt = (f"PROFIL: {_profil_txt_court(profil)}\nCIBLE: {cible}\n"
                       'JSON: {"score":0,"fourchette":"X-Y","confiance":"haute|moyenne|faible","verdict":"",'
-                      '"forces":["",""],"manques":["",""],"actions":["",""],"conseil":""}')
+                      '"forces":["",""],"manques":["",""],"actions":["",""],"plan_b":{"cible":"","pourquoi":""},"conseil":""}')
             r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
             _quota_bump(session, "score")
             _focus_touch(session, cible, "chances")
@@ -2826,6 +2830,15 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg += "\n⚠️ *À combler :*\n" + "\n".join(f"• {_md_clean(x)}" for x in r["manques"][:3]) + "\n"
             if r.get("actions"):
                 msg += "\n🚀 *Pour augmenter tes chances :*\n" + "\n".join(f"{i}. {_md_clean(x)}" for i, x in enumerate(r["actions"][:3], 1)) + "\n"
+            # Plan B : quand les chances sont faibles, un conseiller propose une voie plus accessible.
+            pb = r.get("plan_b") or {}
+            pb_cible = _md_clean(str(pb.get("cible", "") or "")).strip() if isinstance(pb, dict) else ""
+            if sc < 45 and pb_cible:
+                pb_pourquoi = _md_clean(str(pb.get("pourquoi", "") or "")).strip()
+                msg += f"\n🅱️ *Plan B plus accessible :* {pb_cible}\n"
+                if pb_pourquoi:
+                    msg += f"   {pb_pourquoi[:160]}\n"
+                msg += f"   _Évalue-le : /chances {pb_cible[:34]}_\n"
             if r.get("conseil"):
                 msg += f"\n💡 {_md_clean(r['conseil'])}\n"
             msg += "\n" + _HEDGE_SCORE + "\n"

@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.9 — Conseiller : un plan B quand les chances sont faibles
+- `/chances` ne se contente plus de dire « c'est difficile ». Quand le score est faible (< 45), le bot propose une *alternative réaliste et plus accessible* (autre pays plus ouvert, financement par bourse plutôt qu'auto-financement, poste junior/alternance, programme-passerelle) avec une justification, et un raccourci pour l'évaluer tout de suite (`/chances <plan B>`). Comme un conseiller : ne pas laisser quelqu'un dans une impasse, lui ouvrir une porte. Aucun appel LLM en plus (champ `plan_b` ajouté à l'estimation existante).
+
 ## v3.8 — « Clarifier avant d'agir » (mécanisme général)
 - Généralise ce qu'on faisait pour la reconversion/le domaine à TOUTE recherche : avant de lancer, le bot évalue (1 appel LLM rapide) s'il manque UNE information vraiment cruciale (pays visé pour des études, niveau/diplôme pour une bourse, type de contrat, budget…). Si oui, il pose UNE question courte, mémorise la réponse (dans le bon champ de préférences) puis relance la recherche ; sinon il agit directement. C'est le cœur du raisonnement d'un conseiller : ne pas chercher à l'aveugle.
 - Sûr par conception : **une seule fois par session** (jamais de harcèlement de questions), priorité aux gates déterministes (domaine, reconversion), et **repli systématique sur « on cherche quand même »** si le modèle est indisponible ou n'identifie rien. Première brique de la boucle d'agent (l'étape « demander une précision »), sans l'enchaînement multi-pas (gardé pour après le salon).
