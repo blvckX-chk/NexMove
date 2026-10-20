@@ -2356,3 +2356,32 @@ def test_cvbuild_question_ne_stocke_pas(monkeypatch):
     assert session["cvbuild_step"] == 1                      # on n'a pas avancé
     assert "formation" not in session.get("cvbuild_data", {})  # rien stocké
     assert "/annuler" in msg or "revient" in msg.lower()
+
+
+# ------------------ Audit OODA v3.0.1 : corrections ------------------
+def test_switch_cues_haute_precision():
+    # Du CONTENU légitime court ne doit PLUS être pris pour un abandon.
+    assert main._flow_input_kind("conduite du changement") == "answer"
+    assert main._flow_input_kind("gestion du changement climatique") == "answer"
+    assert main._flow_input_kind("arrêté ministériel 2021") == "answer"
+    assert main._flow_input_kind("stop motion et montage") == "answer"
+    # Les vraies phrases d'abandon restent détectées.
+    assert main._flow_input_kind("en fait je veux arrêter") == "switch"
+    assert main._flow_input_kind("laisse tomber") == "switch"
+
+def test_deadline_multi_annees_garde_edition_courante():
+    from datetime import date as _d
+    today = _d(2026, 10, 20)
+    # Un intervalle qui inclut l'année courante/future est GARDÉ (année max >= année courante).
+    assert main._deadline_is_past("Programme 2026-2027", today) is False
+    assert main._deadline_is_past("Campagne 2025-2026", today) is False    # 2026 présent -> gardé
+    # Tout révolu -> écarté.
+    assert main._deadline_is_past("Programme 2023-2024", today) is True
+    assert main._deadline_is_past("Bourse 2023", today) is True
+
+def test_wants_post_offer_confiance_moyenne_refusee(monkeypatch):
+    async def _fake(session, t):
+        return {"intent": "recruteur_offre", "confiance": "moyenne"}
+    monkeypatch.setattr(main, "_route_intent", _fake)
+    # Confiance « moyenne » ne suffit plus -> on ne piège pas un candidat.
+    assert _run(main._wants_to_post_offer({"historique": []}, "un poste à faire connaître")) is False

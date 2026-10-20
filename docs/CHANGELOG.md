@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.0.1 — Audit OODA : durcissement avant déploiement
+- **Correctif critique** : les cues de « changement de sujet » dans les flux guidés étaient trop larges (« change », « stop », « arrête », « sortir »…) et auraient bloqué de vraies réponses (ex. *gestion du changement*, *arrêté* juridique, *stop motion*). Resserrés à des phrases d'abandon non ambiguës — en cas de doute, on stocke la réponse plutôt que de bloquer.
+- **Routeur recruteur** : le repli LLM exige maintenant une confiance **haute** (mieux vaut rater un recruteur, qui peut taper /publier, que piéger un candidat sur une erreur du modèle gratuit).
+- **Filtre deadline** : un intervalle « 2025-2026 » n'est plus écarté à tort — on se base sur l'année **maximale** citée (édition en cours gardée).
+- **Barème de diffusion « à l'audience » (B)** câblé par défaut (wallet unique) : plancher 3 crédits + 1 par tranche de 50 destinataires + 3 si « à tous ». Ajustable par variables d'env.
+
 ## v3.0 — Couche de compréhension : le bot « fait les distinctions » 🎯
 Jalon. NexMove ne devine plus seulement par mots-clés : il **raisonne sur ce que veut la personne** aux carrefours clés de la conversation. Quatre carrefours fiabilisés, base extensible pour la suite.
 
