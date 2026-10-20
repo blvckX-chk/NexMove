@@ -242,6 +242,9 @@ async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg") ->
         return {}
     system = ("Tu es expert en analyse de CV. Sur cette IMAGE de CV, extrais toutes les informations. "
               "Si ce n'est PAS un CV, mets \"est_cv\": false. Ajoute un \"bilan\" court (forces, axes, pistes). "
+              "identite.nom = le VRAI nom de la personne (prénom + nom, l'en-tête le plus visible) — JAMAIS "
+              "un nom de modèle/template ou de style (« CV Moderne », « Français Simple Moderne », « Bleu »), "
+              "ni un titre de document, ni un intitulé de poste. Si tu n'es pas sûr du nom réel, laisse-le vide. "
               "Réponds en JSON strict, uniquement le JSON.")
     schema = ('{"est_cv":true,"raison_rejet":"","identite":{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]},'
               '"formation":[{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}],'

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.4.0"
+VERSION         = "3.4.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -780,10 +780,31 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
     return secrets.choice(nudges.get(moment, nudges["generic"]))
 
 # Mots parasites d'un nom de fichier de CV (à ignorer pour deviner le nom du candidat).
+# Mots de « bruit » dans un nom de fichier de CV : commandes/formats + noms de MODÈLES/STYLES
+# (Canva, Word…) qu'il ne faut JAMAIS prendre pour le nom de la personne.
+_CV_TEMPLATE_WORDS = {"moderne", "modern", "simple", "classique", "classic", "elegant", "élégant",
+                      "elegante", "élégante", "minimaliste", "minimalist", "template", "modele",
+                      "modèle", "professionnel", "professionnelle", "pro", "design", "clean",
+                      "basic", "standard", "original", "creatif", "créatif", "creative",
+                      "bleu", "blue", "rouge", "red", "vert", "green", "noir", "black", "gris",
+                      "gray", "grey", "blanc", "white", "jaune", "orange", "violet", "rose",
+                      "francais", "français", "anglais", "english", "canva", "francaise", "française"}
 _CV_FILENAME_NOISE = {"cv", "resume", "résumé", "resumé", "curriculum", "vitae", "final", "finale",
                       "copie", "copy", "doc", "document", "def", "version", "new", "nouveau",
                       "mon", "my", "the", "pdf", "docx", "word", "scan", "scanned", "photo",
-                      "img", "image", "portfolio", "profil", "profile", "candidature", "maj"}
+                      "img", "image", "portfolio", "profil", "profile", "candidature", "maj"} | _CV_TEMPLATE_WORDS
+
+def _looks_like_template_name(nom: str) -> bool:
+    """True si le « nom » extrait ressemble à un nom de MODÈLE/STYLE de CV (ex. « Français Simple
+    Moderne ») plutôt qu'à un vrai nom de personne. On regarde si tous les mots signifiants sont
+    des mots de template/bruit."""
+    mots = [m for m in re.sub(r"[^A-Za-zÀ-ÿ ]", " ", str(nom or "")).lower().split() if len(m) > 1]
+    if not mots:
+        return False
+    noise = _CV_FILENAME_NOISE
+    signifiants = [m for m in mots if m not in noise]
+    # Si aucun mot « réel » ne subsiste (que du template/bruit) -> c'est un nom de modèle.
+    return len(signifiants) == 0
 
 def _name_from_filename(filename: str) -> str:
     """Devine un nom à partir du nom de fichier du CV · repli quand l'OCR/LLM ne trouve pas le nom
@@ -5548,7 +5569,12 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
               "un CV (facture, article, cours, lettre, relevé, capture, texte quelconque), mets \"est_cv\": false "
               "et laisse les autres champs vides. Sinon, remplis aussi un \"bilan\" d'orientation bref et "
               "personnalisé (forces réelles, axes à renforcer, 2-3 pistes réalistes de destinations/programmes "
-              "adaptées au profil). Réponds en JSON uniquement.")
+              "adaptées au profil). "
+              "ATTENTION identite.nom = le VRAI nom de la personne (prénom + nom, en général l'en-tête le plus "
+              "visible du CV) — JAMAIS un titre de document, un nom de modèle/template ou de style de CV "
+              "(ex. « CV Moderne », « Français Simple Moderne », « Bleu », « Resume Template »), ni un intitulé "
+              "de poste, ni un nom de fichier. Si le vrai nom n'est pas clair, laisse identite.nom vide. "
+              "Réponds en JSON uniquement.")
     prompt = f"""Analyse ce document:
 {{"est_cv":true,"raison_rejet":"","identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","github":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","ville":"","pays":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"frameworks":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","type":"","duree":"","date_debut":"","date_fin":"","localisation":"","missions":[]}}],"projets":[{{"nom":"","description":"","technologies":[],"url":""}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse","fellowship"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"bilan":{{"forces":["..."],"axes":["..."],"pistes":["..."]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
 Document: {cv_text[:6000]}"""
@@ -5576,8 +5602,13 @@ Document: {cv_text[:6000]}"""
     # Diplôme principal en premier (le plus élevé/récent) · sinon le bot retenait la licence au lieu du master
     profil["formation"] = _sort_formations(profil.get("formation"))
     nom = (profil.get("identite", {}).get("nom") or "").strip()
-    if not nom or nom.upper() in ("N/A", "NA", "-", "—"):
-        # Repli : deviner le nom depuis le nom de fichier du CV (ex. « CV_Judicael.pdf »).
+    # On rejette aussi un nom qui est en réalité un nom de MODÈLE/STYLE (ex. « Français Simple
+    # Moderne » venant d'un template Canva), pas un vrai nom de personne.
+    if not nom or nom.upper() in ("N/A", "NA", "-", "—") or _looks_like_template_name(nom):
+        if nom and _looks_like_template_name(nom):
+            logger.info(f"[cv] nom de template ignoré : {nom!r}")
+            profil.setdefault("identite", {})["nom"] = ""   # on n'affiche pas le nom du modèle
+        # Repli : deviner le nom depuis le nom de fichier (filtré des mots de template).
         devine = _name_from_filename(filename)
         nom = devine or "—"
         if devine:
@@ -5598,7 +5629,8 @@ Document: {cv_text[:6000]}"""
     else:
         formation_txt = "   • _Aucune formation détectée dans ton CV · dis-le-moi si c'est une erreur._"
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
-    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
+    nom_aff = nom if nom and nom != "—" else "_(je n'ai pas trouvé ton nom — dis-le-moi)_"
+    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom_aff}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
     bilan = profil.get("bilan", {}) or {}
     if bilan.get("forces"):
         message += "\n💪 *Tes atouts :* " + _md_clean(", ".join(bilan["forces"][:3])) + "\n"

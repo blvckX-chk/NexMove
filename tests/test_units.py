@@ -2513,3 +2513,18 @@ def test_nudge_ignore_recruteur_avec_credits(monkeypatch):
     monkeypatch.setattr(main, "deliver_text", _deliver)
     out = _run(main.nudge(_auth=True))
     assert out["nudges_cibles"] == 0
+
+
+# ------------------ Nom de modèle de CV ≠ nom de la personne (v3.4.1) ------------------
+def test_looks_like_template_name():
+    assert main._looks_like_template_name("Français Simple Moderne") is True
+    assert main._looks_like_template_name("CV Moderne Bleu") is True
+    assert main._looks_like_template_name("Resume Template") is True
+    assert main._looks_like_template_name("Ganse Marthe") is False
+    assert main._looks_like_template_name("Jean Dupont") is False
+    assert main._looks_like_template_name("") is False
+
+def test_name_from_filename_ignore_template():
+    assert main._name_from_filename("CV Français Simple Moderne Bleu.pdf") == ""
+    assert main._name_from_filename("cv-jean-dupont.pdf") == "Jean Dupont"
+    assert main._name_from_filename("CV_Judicael.pdf") == "Judicael"
