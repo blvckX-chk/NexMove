@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.2.0"
+VERSION         = "3.3.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1995,6 +1995,47 @@ def _focus_next(session: dict) -> tuple[str, str]:
     missing = next((st for st in _FOCUS_STEPS if st not in done), None)
     return _FOCUS_NEXT_ACTION.get(missing, ("", ""))
 
+# ── #2 Mémoire qui compose : un journal durable du parcours de l'utilisateur AVEC le bot
+#    (offres déjà vues pour ne pas les répéter d'une session à l'autre + événements clés),
+#    stocké dans profil["memoire"], injecté dans le contexte, et utilisé par la recherche. ──
+_MEM_VUS_CAP = 80
+_MEM_EVT_CAP = 15
+_MEM_EVT_LABELS = {"recherche": "recherche d'opportunités", "cv": "CV généré",
+                   "chances": "score d'admissibilité estimé", "lien": "analyse d'un lien",
+                   "candidature": "candidature suivie", "dossier": "dossier préparé"}
+
+def _mem(session: dict) -> dict:
+    return session.setdefault("profil", {}).setdefault("memoire", {})
+
+def _mem_seen(session: dict) -> set:
+    return set(_mem(session).get("vus", []) or [])
+
+def _mem_mark_seen(session: dict, urls) -> None:
+    m = _mem(session)
+    vus = list(m.get("vus", []) or [])
+    seen = set(vus)
+    for u in urls or []:
+        u = str(u or "").strip()
+        if u and u not in seen:
+            vus.append(u); seen.add(u)
+    m["vus"] = vus[-_MEM_VUS_CAP:]
+
+def _mem_add_event(session: dict, kind: str, detail: str = "") -> None:
+    m = _mem(session)
+    evs = list(m.get("events", []) or [])
+    evs.append({"t": datetime.now(timezone.utc).isoformat(), "k": str(kind), "d": str(detail or "")[:80]})
+    m["events"] = evs[-_MEM_EVT_CAP:]
+
+def _mem_events_block(session: dict) -> str:
+    """Résumé lisible des derniers événements du parcours (pour le contexte conversationnel)."""
+    evs = (_mem(session).get("events", []) or [])[-5:]
+    parts = []
+    for e in evs:
+        lab = _MEM_EVT_LABELS.get(e.get("k"), str(e.get("k") or ""))
+        d = str(e.get("d") or "").strip()
+        parts.append(f"{lab}{(' · ' + d) if d else ''}")
+    return " ; ".join(p for p in parts if p)
+
 def _conversation_context(session: dict) -> str:
     """Mémoire compacte et LISIBLE pour le routeur conversationnel : ce que le bot SAIT déjà
     (pour ne pas le redemander) + ce qui manque encore + dernier lien analysé + candidatures."""
@@ -2072,6 +2113,14 @@ def _conversation_context(session: dict) -> str:
         if lbl:
             ligne += f" → PROCHAINE ÉTAPE proposée : {lbl} ({cmd})"
         lignes.append(ligne)
+    # Mémoire qui compose : ce que l'utilisateur a DÉJÀ fait avec le bot (pour rebondir dessus,
+    # ne pas répéter, et donner une continuité d'une session à l'autre).
+    _evb = _mem_events_block(session)
+    if _evb:
+        lignes.append(f"- Déjà fait ensemble (mémoire) : {_evb}")
+    _nvus = len(_mem(session).get("vus", []) or [])
+    if _nvus:
+        lignes.append(f"- {_nvus} opportunité(s) déjà montrée(s) auparavant (les recherches en proposent de NOUVELLES).")
     return "\n".join(lignes) if lignes else "(aucune info encore · l'utilisateur débute)"
 
 def _recent_dialogue(session: dict, n: int = 4) -> str:
@@ -2523,6 +2572,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
             _quota_bump(session, "score")
             _focus_touch(session, cible, "chances")
+            _mem_add_event(session, "chances", cible[:40])
             sc = int(r.get("score", 0) or 0)
             emoji = "🟢" if sc >= 66 else ("🟡" if sc >= 40 else "🔴")
             barre = "▓" * round(sc / 10) + "░" * (10 - round(sc / 10))
@@ -3710,7 +3760,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             seen = set(session.get("seen_urls", []))
             res = await run_osint(session.get("profil", {}) or {}, cible, session.get("user_id"),
                                   exclude_urls=seen, alertes=session.get("alertes", []),
-                                  tier=_user_tier(session), channel=session.get("channel", "telegram"))
+                                  tier=_user_tier(session), channel=session.get("channel", "telegram"),
+                                  session=session)
             session["_veille_at"] = time.time(); _quota_bump(session, "veille")
             msg = res.get("message") or "Aucune opportunité trouvée pour le moment."
             opps = res.get("opportunites", [])
@@ -3976,7 +4027,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         else:
             try:
                 res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"),
-                                      alertes=session.get("alertes", []), tier=_user_tier(session), channel=session.get("channel","telegram"))
+                                      alertes=session.get("alertes", []), tier=_user_tier(session), channel=session.get("channel","telegram"),
+                                      session=session)
                 session["_veille_at"] = time.time(); _quota_bump(session, "veille")
                 new = 0
                 for opp in res.get("opportunites", []):
@@ -4240,7 +4292,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         # Recherche AUTO : des offres notées tout de suite après le CV (valeur immédiate).
         preview = ""
         try:
-            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"))
+            res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"), session=session)
             opps = res.get("opportunites", []) or []
             for o in opps:
                 opp_store.add(session.get("user_id"), o)
@@ -4382,7 +4434,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if cached:
                     top = cached[:3]
                 else:
-                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"))
+                    res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"), session=session)
                     top = res.get("opportunites", [])[:3]
                     for o in res.get("opportunites", []):
                         opp_store.add(session.get("user_id"), o)
@@ -7023,9 +7075,16 @@ def _requested_type(cible: str, objectif: str) -> str:
     return ""
 
 async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_urls=None, alertes=None,
-                    tier: str = "free", n_queries: int = None, channel: str = "telegram") -> dict:
+                    tier: str = "free", n_queries: int = None, channel: str = "telegram",
+                    session: dict = None) -> dict:
     profil = profil or {}
-    exclude_urls = exclude_urls or set()
+    exclude_urls = set(exclude_urls or set())
+    # Mémoire qui compose : on écarte aussi les offres DÉJÀ montrées lors des sessions précédentes.
+    if session is not None:
+        try:
+            exclude_urls |= _mem_seen(session)
+        except Exception:
+            pass
     alertes = alertes or []
     prefs = profil.get("preferences", {}) or {}
     nationalite = prefs.get("nationalite") or "béninoise"
@@ -7235,6 +7294,15 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
                 r = str(o.get("raison", "") or "")
                 o["raison"] = f"🔔 correspond à ton alerte « {kw} ». " + r
         opps.sort(key=lambda o: o.get("score_composite", 0), reverse=True)
+    # Mémoire qui compose : on mémorise les offres montrées (anti-répétition cross-session)
+    # et on journalise la recherche, pour une continuité d'une fois à l'autre.
+    if session is not None and grounded:
+        try:
+            _mem_mark_seen(session, [o.get("url", "") for o in opps[:4] if o.get("url")])
+            if opps:
+                _mem_add_event(session, "recherche", _md_clean(domaine)[:40])
+        except Exception as e:
+            logger.warning(f"[mem] osint: {e}")
     titre_aff = _md_clean(domaine)[:40]
     conf_emoji = {"haute": "🟢", "moyenne": "🟡", "faible": "🔴"}
     msg = f"🌍 *NexMove · {titre_aff}*\n━━━━━━━━━━━━━━━━━━\n"
@@ -7307,7 +7375,7 @@ async def collect(_auth: bool = Depends(verify_api_key)):
             if COLLECT_OSINT_PER_USER:
                 try:
                     res = await run_osint(profil, "", s.get("user_id"), alertes=s.get("alertes", []),
-                                          tier=_user_tier(s), n_queries=1)
+                                          tier=_user_tier(s), n_queries=1, session=s)
                     for opp in res.get("opportunites", []):
                         if opp_store.add(s.get("user_id"), opp):
                             n += 1
