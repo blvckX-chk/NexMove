@@ -104,3 +104,20 @@ def test_scn_memoire_anti_repetition():
     # un 2e passage ne duplique pas
     main._mem_mark_seen(s, ["https://a.bj/1"])
     assert len(main._mem(s)["vus"]) == 2
+
+
+# ── Scénario 8 : multimodal — détection d'une annonce dans un texte ──
+def test_scn_multimodal_detecte_annonce():
+    assert main._looks_like_opportunity(
+        "Nous recrutons un comptable H/F en CDI à Cotonou. Profil : licence. Postuler avant le 30/11.") is True
+    assert main._looks_like_opportunity("coucou tu fais quoi") is False
+
+
+# ── Scénario 9 : boucle d'agent — 2e action hors whitelist jamais enchaînée ──
+def test_scn_agent_whitelist_sure():
+    # Les actions à état/confirmation ne sont pas dans la whitelist de chaînage.
+    for risky in ("creercv", "publier", "supprimer", "premium", "veille", "mobilite"):
+        assert risky not in main._CHAINABLE_ACTIONS
+    # Les actions de conseil le sont.
+    for safe in ("chances", "compatibilite", "commentpostuler"):
+        assert safe in main._CHAINABLE_ACTIONS

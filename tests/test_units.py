@@ -2733,3 +2733,26 @@ def test_analyse_opportunite_rejet_si_pas_offre(monkeypatch):
     monkeypatch.setattr(main, "call_groq", _fake)
     s = {"user_id": "mm2", "profil": {}, "historique": []}
     assert _run(main._analyze_opportunity_text(s, "texte", source="ta photo")) is None
+
+
+# ------------------ Boucle d'agent : enchaînement 2 pas (v3.11) ------------------
+def test_agent_enchaine_deux_actions(monkeypatch):
+    async def _router(system, user, **k):
+        # Le routeur conversationnel demande status PUIS profil.
+        return {"action": "status", "argument": "", "then": {"action": "profil", "argument": ""}, "message": ""}
+    monkeypatch.setattr(main, "call_groq", _router)
+    s = {"user_id": "ag1", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
+         "profil": {"identite": {"nom": "Test"}, "preferences": {"objectif": "travailler"}},
+         "cv_parsed": True}
+    msg, s = _run(main.process_text_message(s, "montre mon statut et mon profil stp"))
+    assert "━━━━━━" in msg   # deux étapes concaténées
+
+def test_agent_pas_de_chainage_hors_whitelist(monkeypatch):
+    async def _router(system, user, **k):
+        # 2e action NON chaînable (creercv a de l'état) -> on ne l'enchaîne pas.
+        return {"action": "status", "argument": "", "then": {"action": "creercv", "argument": ""}, "message": ""}
+    monkeypatch.setattr(main, "call_groq", _router)
+    s = {"user_id": "ag2", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
+         "profil": {"identite": {"nom": "T"}, "preferences": {}}, "cv_parsed": True}
+    msg, s = _run(main.process_text_message(s, "mon statut puis crée un cv"))
+    assert "━━━━━━" not in msg and s.get("etape") != "CVBUILD"   # pas d'enchaînement risqué
