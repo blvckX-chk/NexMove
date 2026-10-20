@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.12 — QC étendu : l'analyse à-une-offre doit être ancrée dans la source
+- Fermeture du dernier trou de QC : l'analyse d'une **annonce photo** et l'**audit d'un lien** passent désormais une 2e vérification (`_opp_grounded`) — l'offre extraite doit être SAINE (titre réel, pas de placeholder) ET **ancrée dans la source** (au moins un mot significatif du titre/organisation présent dans le texte lu). Une analyse qui ne correspond pas à la photo/la page est écartée, avec repli propre (« copie-colle le texte »). Le self-review couvre maintenant tout le spectre : listes de recherche ET analyses unitaires.
+
 ## v3.11 — Boucle d'agent : enchaîner deux actions (bornée)
 - Le bot peut maintenant traiter une demande en DEUX temps dans un seul tour : « cherche une bourse ET dis-moi mes chances » → recherche puis évaluation, enchaînées. Le routeur conversationnel renvoie une 2e action optionnelle (`then`) ; elle n'est exécutée que si elle fait partie d'une liste BLANCHE d'actions de conseil sûres (`_CHAINABLE_ACTIONS` : chances, compatibilite, commentpostuler, formations, budget…), jamais une action à état ou à confirmation (creercv, publier, supprimer, 2e recherche…). Borné à 2 pas, repli sur une seule action en cas de souci. C'est la dernière brique de l'agent : raisonner → agir → enchaîner, sans jamais partir en vrille.
 

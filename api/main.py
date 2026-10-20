@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.11.0"
+VERSION         = "3.12.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1593,6 +1593,25 @@ def _clean_opp_title(raw: str) -> str:
         utiles = [p for p in parts if not any(a in p.lower() for a in actions)] or parts
         s = max(utiles, key=len)
     return s.strip(" -–—|·:")[:70] or "Opportunité"
+
+def _opp_grounded(r: dict, source_text: str) -> bool:
+    """QC de 2e passe pour une analyse À-UNE-OFFRE (photo/lien) : vérifie que l'offre extraite est
+    SAINE (titre réel, pas de placeholder) et bien ANCRÉE dans la source (au moins un mot significatif
+    du titre/organisation apparaît dans le texte source). Évite une analyse « inventée » ou hors-sujet."""
+    if not isinstance(r, dict):
+        return False
+    titre = str(r.get("titre", "") or "").strip()
+    if len(titre) < 4 or _PLACEHOLDER_RE.search(titre):
+        return False
+    src = (source_text or "").lower()
+    if not src:
+        return True   # pas de source à confronter -> on ne bloque pas (anti-invention déjà au prompt)
+    mots = {w for w in re.sub(r"[^a-zàâäéèêëïîôöùûüç ]", " ", (titre + " " + str(r.get("organisation", "") or "")).lower()).split()
+            if len(w) > 3 and w not in _DOMAIN_STOP}
+    if not mots:
+        return True
+    # au moins un mot significatif doit se retrouver dans la source (ancrage)
+    return any(w in src for w in mots)
 
 def _score_badge(score) -> str:
     """Note de compatibilité 0-100 -> '82% · Fort' (comme les offres notées de la vitrine)."""
@@ -6518,6 +6537,9 @@ async def _analyze_opportunity_text(session: dict, text: str, source: str = "cet
         return None
     if not isinstance(r, dict) or r.get("est_opportunite") is False or not r.get("titre"):
         return None
+    if not _opp_grounded(r, text):   # QC 2e passe : l'analyse doit être ancrée dans la photo/le texte
+        logger.info("[opp-photo] analyse non ancrée dans la source -> écartée")
+        return None
     titre = _clean_opp_title(r.get("titre") or "Opportunité")
     msg = f"📸 *{titre}* _(lu sur {source})_"
     sous = " · ".join(x for x in (_type_label(r.get("type", "")), _md_clean(str(r.get("organisation") or "")),
@@ -6601,7 +6623,9 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
         return msg, session
     if not used_credit:
         _quota_bump(session, "lien")
-    if not isinstance(r, dict) or r.get("est_opportunite") is False or not (r.get("titre") or page.get("title")):
+    # QC 2e passe : analyse écartée si non-opportunité OU non ancrée dans le contenu réel de la page.
+    _grounded_ok = _opp_grounded(r, f"{page.get('title','')} {page.get('text','')}") if r.get("titre") else bool(page.get("title"))
+    if not isinstance(r, dict) or r.get("est_opportunite") is False or not (r.get("titre") or page.get("title")) or not _grounded_ok:
         msg = ("🤔 Ce lien ne ressemble pas à une offre/opportunité exploitable. "
                "Si c'en est une, copie-colle le texte de l'annonce et je l'analyse.")
         _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
