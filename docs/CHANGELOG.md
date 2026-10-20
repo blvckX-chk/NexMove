@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.4 — Proactivité ciblée revenu + harnais d'évaluation
+- **Proactivité mesurée (#4)** : nouveau `/api/nudge` qui ne relance PAS tout le monde, mais le segment à plus forte intention d'achat — un **recruteur ayant déposé une offre en attente et sans crédits** → rappel ciblé d'acheter des crédits pour la diffuser. Cap anti-spam (`NUDGE_COOLDOWN_H`, 48 h), opt-out respecté, on ne dérange pas ceux qui ont déjà des crédits. (Le digest d'offres `/api/notify` et les relances d'inactifs `/api/relances` existaient déjà.)
+- **Harnais d'évaluation (#7)** : `tests/test_scenarios.py` rejoue des dialogues-pièges de bout en bout (dépôt d'offre recruteur, question non stockée en création de CV, /annuler, lien YouTube non audité, vrai lien audité, version déterministe, anti-répétition mémoire). Filet de sécurité à chaque déploiement.
+
 ## v3.3 — Mémoire qui compose (continuité d'une session à l'autre)
 - Le bot garde désormais une **mémoire durable du parcours de chaque utilisateur avec lui** (`profil["memoire"]`) : les offres déjà montrées et un journal des événements clés (recherche, CV généré, score estimé…).
 - **Anti-répétition cross-session** : les recherches (`/veille`, `/mobilite`, digest) écartent les offres déjà vues lors des fois précédentes → chaque recherche propose du **nouveau**, au lieu de reservir les mêmes liens. Mémorisation en place sur la session (sans course de données), bornée (80 offres, 15 événements).

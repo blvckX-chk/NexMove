@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.3.0"
+VERSION         = "3.4.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -7540,6 +7540,60 @@ async def relances(_auth: bool = Depends(verify_api_key)):
             sent += 1
     logger.info(f"[relances] envoyees={sent}")
     return {"ok": True, "relances_envoyees": sent}
+
+NUDGE_COOLDOWN_H = int(os.getenv("NUDGE_COOLDOWN_H", "48"))   # 1 relance ciblée max / 48 h / utilisateur
+
+@app.post("/api/nudge")
+async def nudge(_auth: bool = Depends(verify_api_key)):
+    """Proactivité MESURÉE et orientée REVENU : on ne relance PAS tout le monde, seulement les
+    comptes à forte intention d'achat. Segment prioritaire : un RECRUTEUR qui a déposé une offre
+    EN ATTENTE (intention d'achat déjà exprimée) → on lui rappelle d'acheter des crédits pour la
+    diffuser. Cap anti-spam (NUDGE_COOLDOWN_H), opt-out respecté. À appeler ~1x/jour (cron)."""
+    now = datetime.now(timezone.utc)
+    seuil = now - timedelta(hours=NUDGE_COOLDOWN_H)
+    sent = 0
+    try:
+        pend = recruiter_offer_store.list_by_status("en_attente", limit=100)
+    except Exception as e:
+        logger.warning(f"[nudge] list: {e}")
+        pend = []
+    vus = set()
+    for o in pend:
+        rid = str(o.get("recruiter_id") or "")
+        if not rid or rid in vus:
+            continue
+        vus.add(rid)
+        s = session_manager.get(rid)
+        if not s or s.get("relances_off"):
+            continue
+        # Cap : pas plus d'une relance ciblée par fenêtre.
+        ns = s.get("nudge_sent")
+        try:
+            if ns and datetime.fromisoformat(ns) > seuil:
+                continue
+        except Exception:
+            pass
+        chan = o.get("recruiter_channel") or s.get("channel") or "telegram"
+        chat = o.get("recruiter_chat_id") or s.get("chat_id")
+        if not chat:
+            continue
+        bal = _credit_balance(s)
+        if bal > 0:
+            continue   # il a déjà des crédits : rien à vendre, on ne le dérange pas
+        titre = _md_clean(o.get("titre", "") or "ton offre")[:50]
+        msg = (f"💼 Ton offre *{titre}* (#{o.get('id')}) est prête mais *pas encore diffusée*.\n"
+               f"Pour qu'elle parte aux candidats qui correspondent, il te faut des *crédits de diffusion*.\n"
+               + _recruit_buy_line()
+               + "\n\n_Réponds ici si tu veux un coup de main._")
+        try:
+            if await deliver_text({"channel": chan, "chat_id": str(chat)}, msg):
+                s["nudge_sent"] = now.isoformat()
+                session_manager.set(rid, s)
+                sent += 1
+        except Exception as e:
+            logger.warning(f"[nudge] envoi {rid}: {e}")
+    logger.info(f"[nudge] relances_ciblees={sent}")
+    return {"ok": True, "nudges_cibles": sent}
 
 @app.get("/api/session/{user_id}")
 async def get_session(user_id: str, _auth: bool = Depends(verify_api_key)):
