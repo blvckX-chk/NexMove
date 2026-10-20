@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "2.98.0"
+VERSION         = "3.0.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -943,6 +943,42 @@ def _is_meta_question(t: str) -> bool:
     if not tl:
         return False
     return tl.endswith("?") or any(c in tl for c in _META_Q_CUES)
+
+# Carrefour 2 & 4 : dans un flux guidé (CV / dépôt d'offre), un message n'est pas
+# toujours une réponse — ça peut être une question, ou l'envie de faire autre chose.
+_SWITCH_CUES = ("en fait", "finalement", "plutôt", "annule", "laisse tomber", "laisse tombé",
+                "arrête", "arrete", "stop", "je préfère", "je prefere", "autre chose",
+                "change", "je veux plutôt", "revenir", "sortir", "quitter")
+
+def _flow_input_kind(t: str) -> str:
+    """Classe un message reçu PENDANT un flux guidé : 'command' | 'question' | 'switch' | 'empty' | 'answer'.
+    Heuristique pure (aucun coût LLM : appelée à chaque étape)."""
+    tl = (t or "").strip().lower()
+    if not tl:
+        return "empty"
+    if tl.startswith("/"):
+        return "command"
+    # Un message LONG pendant un flux = du contenu (réponse), pas une interjection.
+    # Les cues « switch/question » ne valent que pour les messages courts.
+    if len(tl) <= 60:
+        if any(c in tl for c in _SWITCH_CUES):
+            return "switch"
+        if _is_meta_question(tl):
+            return "question"
+    return "answer"
+
+# Carrefour 3 : coller un lien = analyser une OPPORTUNITÉ. Mais certains liens ne sont pas
+# des opportunités (vidéo, réseau social, messagerie, notre propre site) -> ne pas « auditer ».
+_NON_OPP_DOMAINS = ("youtube.com", "youtu.be", "tiktok.com", "instagram.com", "facebook.com",
+                    "fb.watch", "wa.me", "whatsapp.com", "t.me", "telegram.me", "x.com",
+                    "twitter.com", "snapchat.com", "blvckunlimited.space", "nexmove")
+
+def _should_audit_link(url: str) -> bool:
+    """True si l'URL mérite une analyse d'opportunité (sinon : lien perso/réseau social -> conversation)."""
+    dom = _domain(url).lower()
+    if not dom:
+        return False
+    return not any(bad in dom for bad in _NON_OPP_DOMAINS)
 
 _RECRUIT_INTENT_RE = re.compile(
     r"\b(je\s+(?:veux|voudrais|souhaite|aimerais)\s+(?:publier|diffuser|poster|d[ée]poser|proposer)\s+(?:une\s+)?(?:offre|annonce|poste)"
@@ -2115,7 +2151,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if (not low.startswith("/") and not session.get("sim_mode") and not session.get("cvbuild_step")
             and not session.get("recruit_step")):
         _murl = _URL_RE.search(t)
-        if _murl:
+        if _murl and _should_audit_link(_murl.group(0)):
             return await audit_opportunity_link(session, _murl.group(0))
 
     # Suite d'un lien analysé : « je veux candidater / mes chances » -> on réutilise la cible du lien.
@@ -4092,13 +4128,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if 0 <= step < len(CVBUILD_STEPS):
             field = CVBUILD_STEPS[step][0]
             val = t.strip()
-            if val.lower().startswith("/"):
+            kind = _flow_input_kind(val)
+            if kind in ("command", "switch"):
                 _push(session, "user", t)
-                q = ("📝 Tu es en pleine *création de CV*. Pour lancer une commande, tape d'abord */annuler*.\n"
-                     "Sinon, réponds simplement à la question 👇\n\n" + CVBUILD_STEPS[step][1])
+                q = ("📝 Tu es en pleine *création de CV*. Pour faire autre chose ou lancer une commande, "
+                     "tape */annuler*.\nSinon, réponds simplement à la question 👇\n\n" + CVBUILD_STEPS[step][1])
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
-            if len(val) < 2:
+            if kind == "question":
+                _push(session, "user", t)
+                q = ("🙂 Bonne question — on y revient juste après. D'abord, réponds à ça (ou */annuler* pour sortir) 👇\n\n"
+                     + CVBUILD_STEPS[step][1])
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            if kind == "empty" or len(val) < 2:
                 _push(session, "user", t)
                 q = "🤔 Donne un peu plus de détail 🙂\n\n" + CVBUILD_STEPS[step][1]
                 _push(session, "assistant", q); session["derniere_activite"] = now
@@ -4119,13 +4162,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if 0 <= step < len(RECRUIT_STEPS):
             field = RECRUIT_STEPS[step][0]
             val = t.strip()
-            if val.lower().startswith("/"):
+            kind = _flow_input_kind(val)
+            if kind in ("command", "switch"):
                 _push(session, "user", t)
-                q = ("📢 Tu es en plein *dépôt d'offre*. Pour lancer une commande, tape d'abord */annuler*.\n"
-                     "Sinon, réponds simplement à la question 👇\n\n" + RECRUIT_STEPS[step][1])
+                q = ("📢 Tu es en plein *dépôt d'offre*. Pour faire autre chose ou lancer une commande, "
+                     "tape */annuler*.\nSinon, réponds simplement à la question 👇\n\n" + RECRUIT_STEPS[step][1])
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
-            if len(val) < 2:
+            if kind == "question":
+                _push(session, "user", t)
+                q = ("🙂 Bonne question — on y revient juste après. D'abord, réponds à ça (ou */annuler* pour sortir) 👇\n\n"
+                     + RECRUIT_STEPS[step][1])
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            if kind == "empty" or len(val) < 2:
                 _push(session, "user", t)
                 q = "🤔 Donne un peu plus de détail 🙂\n\n" + RECRUIT_STEPS[step][1]
                 _push(session, "assistant", q); session["derniere_activite"] = now

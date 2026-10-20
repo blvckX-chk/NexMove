@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.0 — Couche de compréhension : le bot « fait les distinctions » 🎯
+Jalon. NexMove ne devine plus seulement par mots-clés : il **raisonne sur ce que veut la personne** aux carrefours clés de la conversation. Quatre carrefours fiabilisés, base extensible pour la suite.
+
+1. **Recruteur vs candidat** (v2.98) — routeur d'intention LLM `_route_intent` + `_wants_to_post_offer` : un employeur qui propose un poste n'est plus confondu avec un candidat qui en cherche, même en formulation inattendue.
+2. **Question vs réponse** dans les flux guidés — pendant la création de CV ou le dépôt d'offre, une vraie question (« pourquoi tu demandes ça ? ») n'est plus enregistrée comme réponse : le bot y répond puis repose la question, sans polluer les données.
+3. **Lien à analyser vs lien de passage** — `_should_audit_link` : coller un lien d'offre lance l'analyse, mais un lien YouTube / réseau social / WhatsApp / notre propre site n'est plus « audité » comme une opportunité.
+4. **Changer de sujet en plein flux** — `_flow_input_kind` détecte « en fait, je préfère… » et propose de sortir proprement (/annuler) au lieu de stocker ça comme une réponse.
+
+Méthode commune, économe et sûre : heuristique rapide d'abord (gratuit, instantané), routeur LLM seulement en cas d'ambiguïté, repli sur l'ancien comportement si le modèle est indisponible. Tout tourne sur les modèles gratuits — la couche « intelligence » est dans l'orchestration, pas (encore) dans un modèle premium.
+
 ## v2.98 — Routeur d'intention (le bot raisonne mieux sur ce qu'on veut)
 - Nouveau **routeur d'intention piloté par le LLM** (`_route_intent`) : au lieu de deviner par mots-clés, le bot classe ce que veut la personne (recruteur qui propose un poste · candidat qui cherche · question · gestion de profil · salutation). Économe et sûr : la regex rapide tranche d'abord (gratuit, instantané), le routeur LLM n'est appelé qu'en cas d'ambiguïté réelle, et en cas d'échec on retombe sur l'ancien comportement.
 - Premier branchement : la distinction **recruteur vs candidat** (`_wants_to_post_offer`). Un employeur qui formule son besoin autrement que prévu (« nous aurions un poste à faire connaître ») est maintenant bien dirigé vers le dépôt d'offre, sans jamais confondre avec un candidat qui cherche. Base réutilisable pour fiabiliser d'autres carrefours de la conversation.

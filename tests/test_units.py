@@ -2328,3 +2328,31 @@ def test_wants_post_offer_llm_dit_candidat(monkeypatch):
         return {"intent": "recherche_opportunite", "confiance": "haute"}
     monkeypatch.setattr(main, "_route_intent", _fake)
     assert _run(main._wants_to_post_offer({"historique": []}, "un poste en marketing m'intéresserait")) is False
+
+
+# ------------------ Carrefours 2/3/4 : flux guidés + liens (v3.0) ------------------
+def test_flow_input_kind():
+    assert main._flow_input_kind("/stats") == "command"
+    assert main._flow_input_kind("en fait je veux autre chose") == "switch"
+    assert main._flow_input_kind("c'est quoi un CV ATS ?") == "question"
+    assert main._flow_input_kind("") == "empty"
+    assert main._flow_input_kind("Licence informatique, UAC, 2024") == "answer"
+    # Message long = contenu, même s'il contient un cue (pas de faux "switch").
+    long_desc = "Gérer le changement et accompagner les équipes, en fait sur des projets variés " * 2
+    assert main._flow_input_kind(long_desc) == "answer"
+
+def test_should_audit_link():
+    assert main._should_audit_link("https://emploi.bj/offre/123") is True
+    assert main._should_audit_link("https://www.youtube.com/watch?v=x") is False
+    assert main._should_audit_link("https://wa.me/22990000000") is False
+    assert main._should_audit_link("https://nexmove.blvckunlimited.space/") is False
+    assert main._should_audit_link("") is False
+
+def test_cvbuild_question_ne_stocke_pas(monkeypatch):
+    # Une question pendant la création de CV ne doit PAS être stockée comme réponse.
+    session = {"user_id": "cvq", "etape": "CVBUILD", "cvbuild_step": 1, "cvbuild_data": {"nom": "Ali"},
+               "historique": [], "profil": {}}
+    msg, session = _run(main.process_text_message(session, "pourquoi tu demandes ça ?"))
+    assert session["cvbuild_step"] == 1                      # on n'a pas avancé
+    assert "formation" not in session.get("cvbuild_data", {})  # rien stocké
+    assert "/annuler" in msg or "revient" in msg.lower()
