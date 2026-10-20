@@ -2562,3 +2562,42 @@ def test_onboarding_scripte_objectif_propre(monkeypatch):
     prefs = s["profil"]["preferences"]
     assert prefs["objectif"] == "travailler"
     assert prefs.get("mots_cles") == "informatique"
+
+
+# ------------------ Confirmation de suppression + reconversion (v3.6) ------------------
+def test_suppression_demande_confirmation():
+    s = {"user_id": "del1", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}}, "historique": [],
+         "cv_parsed": True}
+    msg, s = _run(main.process_text_message(s, "/supprimer"))
+    assert s.get("awaiting_delete_confirm") is True
+    assert "irréversible" in msg.lower() and s["profil"].get("identite")   # PAS encore effacé
+
+def test_suppression_confirmee_efface():
+    s = {"user_id": "del2", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}}, "historique": [],
+         "cv_parsed": True, "awaiting_delete_confirm": True}
+    msg, s = _run(main.process_text_message(s, "oui"))
+    assert s["profil"] == {} and s["cv_parsed"] is False and "effac" in msg.lower()
+
+def test_suppression_annulee():
+    s = {"user_id": "del3", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}}, "historique": [],
+         "cv_parsed": True, "awaiting_delete_confirm": True}
+    msg, s = _run(main.process_text_message(s, "non"))
+    assert s["profil"].get("identite") and "annul" in msg.lower()
+
+def test_reconversion_pose_la_question_avant_recherche(monkeypatch):
+    calls = {"n": 0}
+    async def _osint(*a, **k):
+        calls["n"] += 1
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    prof = {"formation": [{"domaine": "Comptabilité et Gestion"}],
+            "competences": {"techniques": ["Sage", "Excel"]}, "preferences": {"mots_cles": "informatique"}}
+    s = {"user_id": "rec1", "etape": "ACTIF", "profil": prof, "historique": [], "cv_parsed": True,
+         "onboarding_complete": True}
+    msg, s = _run(main.process_text_message(s, "/veille"))
+    assert s.get("reconv_pending") is True and calls["n"] == 0   # on CLARIFIE avant de chercher
+    assert "reconversion" in msg.lower()
+    # la réponse déclenche la recherche + mémorise les bases
+    msg, s = _run(main.process_text_message(s, "oui j'ai fait une formation en ligne"))
+    assert calls["n"] == 1 and s.get("reconv_ack") is True
+    assert "formation en ligne" in s["profil"]["profil_plus"]["reconversion"]

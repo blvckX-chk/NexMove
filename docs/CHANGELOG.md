@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.6 — Conseiller senior : reconversion clarifiée + suppression confirmée
+- **Reconversion comprise, pas subie** : quand le domaine du CV ne recouvre pas la cible (ex. CV comptabilité → objectif informatique), le bot ne lance plus une recherche à l'aveugle. Comme un conseiller d'orientation, il demande UNE fois : « c'est une reconversion ? as-tu une formation/des bases, ou tu pars de zéro ? », mémorise la réponse (profil profond) puis lance la recherche ciblée. Posé une seule fois (mémorisé), sur /veille et /mobilite.
+- **Suppression de données confirmée** : `/supprimer` (et variantes) demande désormais une *confirmation* avant d'effacer (action irréversible). On confirme par « /supprimer confirmer » ou « OUI », on annule par « NON ». Plus d'effacement accidentel en un tap.
+
 ## v3.5 — Objectif compris, pas recopié (+ reconversion captée)
 - En onboarding scripté, répondre « je cherche un emploi dans l'informatique est-ce possible » stockait la **phrase entière** comme objectif (vilain récap, recherche polluée). Désormais `_normalize_objectif` en extrait l'**objectif canonique** (travailler / étudier / bourse / télétravail / tous) ET le **domaine** mentionné (« informatique »), qui alimente les mots-clés. Marche même si l'onboarding LLM est désactivé.
 - Bonus **reconversion** : un comptable qui dit viser l'informatique voit ses mots-clés passer à « informatique » (prioritaire sur les compétences du CV) → la recherche cible le bon domaine.

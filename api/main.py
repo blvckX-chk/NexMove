@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.5.0"
+VERSION         = "3.6.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1272,6 +1272,51 @@ def _normalize_objectif(t: str) -> tuple[str, str]:
             dom = ""
     return obj, dom[:40]
 
+_DOMAIN_STOP = {"et", "de", "des", "la", "le", "les", "en", "du", "générale", "generale",
+                "général", "general", "analytique", "gestion", "professionnel", "professionnelle",
+                "niveau", "science", "sciences", "licence", "master", "bac", "études", "etudes"}
+
+def _dom_tokens(s: str) -> set:
+    return {w for w in re.sub(r"[^a-zàâäéèêëïîôöùûüç ]", " ", str(s or "").lower()).split()
+            if len(w) > 2 and w not in _DOMAIN_STOP}
+
+def _cv_domaine_txt(profil: dict) -> str:
+    forms = profil.get("formation") or []
+    dom = (forms[0].get("domaine") or forms[0].get("diplome") if forms and isinstance(forms[0], dict) else "") or ""
+    comp = profil.get("competences", {}) or {}
+    skills = " ".join([str(x) for x in (comp.get("techniques", []) or [])][:6])
+    return f"{dom} {skills}".strip()
+
+def _is_reconversion(session: dict) -> bool:
+    """Vrai si le domaine CIBLÉ (mots-clés) n'a AUCUN recouvrement avec le domaine du CV
+    (ex. CV comptabilité → cible informatique). Sert à poser la bonne question, comme un conseiller."""
+    profil = session.get("profil", {}) or {}
+    if not session.get("cv_parsed"):
+        return False
+    cible = str((profil.get("preferences", {}) or {}).get("mots_cles") or "")
+    cv_toks, cb_toks = _dom_tokens(_cv_domaine_txt(profil)), _dom_tokens(cible)
+    if not cv_toks or not cb_toks:
+        return False
+    return cv_toks.isdisjoint(cb_toks)
+
+def _reconversion_question(session: dict) -> str:
+    profil = session.get("profil", {}) or {}
+    cv_lbl = _cv_domaine_txt(profil)[:40] or "ton domaine actuel"
+    cible = str((profil.get("preferences", {}) or {}).get("mots_cles") or "ce nouveau domaine")[:40]
+    return (f"🧭 Je remarque que ton CV est plutôt en *{_md_clean(cv_lbl)}* et que tu vises *{_md_clean(cible)}*.\n"
+            "C'est une *reconversion* ? Dis-moi : as-tu déjà une *formation, des certifications ou des bases* "
+            f"en {_md_clean(cible)}, ou tu pars de zéro ?\n"
+            "_(Ça m'aide à cibler les bonnes offres : débutant accepté, alternance, certifications…)_")
+
+def _reconv_ask_if_needed(session: dict, resume_cmd: str):
+    """Si une reconversion est détectée et pas encore clarifiée, prépare la question à poser
+    (une seule fois) et mémorise la commande à relancer après la réponse. Sinon None."""
+    if _is_reconversion(session) and not session.get("reconv_ack") and not session.get("reconv_pending"):
+        session["reconv_pending"] = True
+        session["reconv_resume"] = resume_cmd
+        return _reconversion_question(session)
+    return None
+
 def valider_pref(field: str, value: str) -> tuple[bool, str]:
     """Vérifie la cohérence d'une réponse d'onboarding.
     Retourne (valide, indice). L'indice est affiché quand la réponse est incohérente."""
@@ -2284,6 +2329,25 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # Vaut dans N'IMPORTE QUEL état (onboarding, pré-onboarding, actif).
     if not session.get("sim_mode") and _is_version_query(low):
         t = "/version"; low = "/version"
+
+    # On attendait la CONFIRMATION d'une suppression de données -> on capte OUI / NON.
+    if session.get("awaiting_delete_confirm") and not low.startswith("/"):
+        session["awaiting_delete_confirm"] = False
+        if detecter_reponse_positive(t):
+            return await process_text_message(session, "/supprimer confirmer")
+        msg = "👍 Suppression *annulée* · tes données sont conservées. Que veux-tu faire ?"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    # On attendait la réponse « reconversion ? » -> on mémorise les bases et on relance la recherche.
+    if session.get("reconv_pending") and not low.startswith("/") and len(t.strip()) >= 2:
+        session["reconv_pending"] = False
+        session["reconv_ack"] = True
+        pp = session.setdefault("profil", {}).setdefault("profil_plus", {})
+        pp["reconversion"] = t.strip()[:200]   # ce que la personne dit de ses bases (profil profond)
+        resume = session.pop("reconv_resume", "") or "/veille"
+        _push(session, "user", t)
+        return await process_text_message(session, resume)
 
     # On attendait le DOMAINE pour lancer une recherche ciblée : on le capte puis on cherche.
     if session.get("awaiting_domain") and not low.startswith("/") and len(t.strip()) >= 2 and not session.get("sim_mode"):
@@ -3814,11 +3878,22 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if (low.startswith("/supprimer") or low.startswith("/supprime") or low.startswith("/supprimé")
             or low.startswith("/effacer") or low.startswith("/reset") or low.startswith("/purger")):
+        parts = low.split()
+        confirme = len(parts) > 1 and parts[1] in ("confirmer", "confirm", "oui", "yes", "ok")
+        # Action IRRÉVERSIBLE -> on demande confirmation d'abord (sauf si déjà confirmé).
+        if not confirme and not session.get("awaiting_delete_confirm"):
+            session["awaiting_delete_confirm"] = True
+            msg = ("⚠️ *Confirmer la suppression ?*\n"
+                   "Ça efface *définitivement* ton profil, ton CV analysé et ton historique — c'est *irréversible*.\n\n"
+                   "✅ Pour confirmer : tape */supprimer confirmer* (ou réponds *OUI*).\n"
+                   "❌ Pour annuler : réponds *NON* (ou ignore ce message).")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
         cleared = {"user_id": session.get("user_id"), "chat_id": session.get("chat_id"),
                    "username": session.get("username"), "etape": "WELCOME", "profil": {},
                    "historique": [], "cv_parsed": False, "cv_file_id": None,
                    "onboarding_complete": False, "pref_current": None, "derniere_activite": now}
-        msg = "🗑️ Tes données ont été effacées. Fais /start pour recommencer."
+        msg = "🗑️ Tes données ont été *effacées*. Fais /start pour recommencer quand tu veux."
         cleared["historique"] = [{"role": "assistant", "content": msg, "ts": now}]
         return msg, cleared
 
@@ -3830,6 +3905,12 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             session["awaiting_domain"] = True
             _push(session, "user", t); _push(session, "assistant", _ASK_DOMAIN_MSG); session["derniere_activite"] = now
             return _ASK_DOMAIN_MSG, session
+        # Conseiller senior : si reconversion détectée (CV ≠ cible), on clarifie AVANT de chercher.
+        if not cible:
+            _rq = _reconv_ask_if_needed(session, t)
+            if _rq:
+                _push(session, "user", t); _push(session, "assistant", _rq); session["derniere_activite"] = now
+                return _rq, session
         _vg_ok, _vg_msg = _veille_gate(session)
         if not _vg_ok:
             _push(session, "user", t); _push(session, "assistant", _vg_msg); session["derniere_activite"] = now
@@ -4097,6 +4178,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             session["awaiting_domain"] = True
             _push(session, "user", t); _push(session, "assistant", _ASK_DOMAIN_MSG); session["derniere_activite"] = now
             return _ASK_DOMAIN_MSG, session
+        # Conseiller senior : reconversion détectée -> on clarifie une fois avant de chercher.
+        _rq = _reconv_ask_if_needed(session, "/veille")
+        if _rq:
+            _push(session, "user", t); _push(session, "assistant", _rq); session["derniere_activite"] = now
+            return _rq, session
         _vg_ok, _vg_msg = _veille_gate(session)
         if not session.get("onboarding_complete"):
             msg = "Termine d'abord ton profil avec /start (puis envoie ton CV)."
