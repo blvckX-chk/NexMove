@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.3 — Mémoire qui compose (continuité d'une session à l'autre)
+- Le bot garde désormais une **mémoire durable du parcours de chaque utilisateur avec lui** (`profil["memoire"]`) : les offres déjà montrées et un journal des événements clés (recherche, CV généré, score estimé…).
+- **Anti-répétition cross-session** : les recherches (`/veille`, `/mobilite`, digest) écartent les offres déjà vues lors des fois précédentes → chaque recherche propose du **nouveau**, au lieu de reservir les mêmes liens. Mémorisation en place sur la session (sans course de données), bornée (80 offres, 15 événements).
+- **Contexte enrichi** : le routeur conversationnel voit « déjà fait ensemble » et le nombre d'offres déjà proposées, pour rebondir dessus et donner une vraie continuité (« la dernière fois tu regardais X… »). Base du moat : plus l'utilisateur revient, meilleur c'est.
+
 ## v3.2 — Confiance calibrée (honnêteté sur les jugements à enjeu)
 - Les estimations de chances ne donnent plus un chiffre faussement précis. `/chances` affiche maintenant un **niveau de confiance** (🟢/🟡/🔴 selon la richesse des infos), une **fourchette** réaliste (ex. « 52/100 · fourchette 45–60 ») et un **cadre honnête** (« estimation indicative, pas une garantie — l'issue dépend aussi du dossier complet et du jury/employeur »).
 - Directive de confiance calibrée (`_CONFIANCE_DIRECTIVE`) réutilisable, aussi appliquée à l'analyse d'un lien (admissibilité). La fourchette est nettoyée/validée (cohérente avec le score, bornée 0-100), sinon masquée. Renforce la confiance des utilisateurs : le bot assume ce qu'il ne sait pas au lieu de bluffer.

@@ -2446,3 +2446,31 @@ def test_fourchette_clean():
 def test_confiance_directive_presente():
     assert "CONFIANCE CALIBRÉE" in main._CONFIANCE_DIRECTIVE
     assert "jamais" in main._HEDGE_SCORE.lower() or "garantie" in main._HEDGE_SCORE.lower()
+
+
+# ------------------ #2 Mémoire qui compose (v3.3) ------------------
+def test_mem_mark_seen_dedup_et_cap():
+    s = {"profil": {}}
+    main._mem_mark_seen(s, ["u1", "u2", "u1", "", None])
+    assert main._mem_seen(s) == {"u1", "u2"}
+    main._mem_mark_seen(s, [f"x{i}" for i in range(200)])
+    assert len(main._mem(s)["vus"]) == main._MEM_VUS_CAP   # borné
+
+def test_mem_events_journal_et_cap():
+    s = {"profil": {}}
+    for i in range(30):
+        main._mem_add_event(s, "recherche", f"dom{i}")
+    assert len(main._mem(s)["events"]) == main._MEM_EVT_CAP
+    bloc = main._mem_events_block(s)
+    assert "recherche d'opportunités" in bloc
+
+def test_mem_injectee_dans_contexte():
+    s = {"profil": {}, "historique": []}
+    main._mem_add_event(s, "cv", "")
+    main._mem_mark_seen(s, ["https://a/1"])
+    ctx = main._conversation_context(s)
+    assert "CV généré" in ctx and "déjà montrée" in ctx.lower()
+
+def test_mem_vide_pas_de_bruit():
+    s = {"profil": {}, "historique": []}
+    assert main._mem_events_block(s) == ""
