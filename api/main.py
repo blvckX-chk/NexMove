@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.4.2"
+VERSION         = "3.5.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1236,6 +1236,41 @@ def _ask_pref(session: dict, field: str) -> str:
 def _pref_question(session: dict, idx: int) -> str:
     """Compat : première question du plan (utilisé au (re)démarrage de l'onboarding)."""
     return _ask_pref(session, "objectif")
+
+_OBJ_ETUDE = ("bourse", "étud", "etud", "master", "licence", "doctorat", "phd", "campus",
+              "universit", "diplôme", "diplome", "école", "ecole", "fellowship", "formation")
+_OBJ_REMOTE = ("télétravail", "teletravail", "télé-travail", "remote", "à distance", "a distance",
+               "freelance", "en ligne")
+_OBJ_TRAVAIL = ("emploi", "travail", "job", "poste", "boulot", "embauche", "cdd", "cdi",
+                "recrut", "stage", "alternance", "métier", "metier")
+
+def _normalize_objectif(t: str) -> tuple[str, str]:
+    """Extrait un OBJECTIF canonique + un éventuel DOMAINE d'une réponse libre, au lieu de stocker
+    la phrase entière (ex. « je cherche un emploi dans l'informatique » -> ('travailler', 'informatique')).
+    Retourne (objectif, domaine) · domaine = '' si non détecté."""
+    low = (t or "").lower()
+    if "bourse" in low:
+        obj = "bourse"
+    elif any(k in low for k in _OBJ_ETUDE):
+        obj = "étudier"
+    elif any(k in low for k in _OBJ_REMOTE):
+        obj = "télétravail"
+    elif any(k in low for k in ("peu importe", "n'importe", "nimporte", "tous", "tout")):
+        obj = "tous"
+    elif any(k in low for k in _OBJ_TRAVAIL):
+        obj = "travailler"
+    else:
+        obj = (t or "").strip()[:40]
+    dom = ""
+    m = re.search(r"\b(?:dans|en|comme|secteur|domaine|fili[èe]re)\s+(?:l'|d'|le\s+|la\s+|les\s+|de\s+|du\s+)?"
+                  r"([a-zàâäéèêëïîôöùûüç][a-zàâäéèêëïîôöùûüç \-']{2,28})", low)
+    if m:
+        dom = re.split(r"\b(est|c['e]st|ce|que|pour|afin|si|possible|svp|stp|merci)\b", m.group(1))[0]
+        dom = re.sub(r"^(l|d|le|la|les|du|de)\s+", "", dom.strip(" -'")).strip(" -'")
+        # on ne garde pas un « domaine » qui n'est en fait qu'un mot d'objectif (emploi, télétravail…).
+        if len(dom) < 3 or dom in _OBJ_REMOTE or dom in _OBJ_TRAVAIL or dom in _OBJ_ETUDE or dom == obj:
+            dom = ""
+    return obj, dom[:40]
 
 def valider_pref(field: str, value: str) -> tuple[bool, str]:
     """Vérifie la cohérence d'une réponse d'onboarding.
@@ -4401,7 +4436,14 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 q = f"🤔 {indice}\n\n{_ask_pref(session, field)}"
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
-            prefs[field] = t
+            if field == "objectif":
+                # On ne stocke PAS la phrase entière : on extrait l'objectif canonique + le domaine.
+                obj, dom = _normalize_objectif(t)
+                prefs["objectif"] = obj
+                if dom:   # domaine explicite (ex. reconversion) -> prioritaire sur les mots-clés du CV
+                    prefs["mots_cles"] = dom
+            else:
+                prefs[field] = t
             profil["preferences"] = prefs; session["profil"] = profil
             _push(session, "user", t)
         else:

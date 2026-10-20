@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.5 — Objectif compris, pas recopié (+ reconversion captée)
+- En onboarding scripté, répondre « je cherche un emploi dans l'informatique est-ce possible » stockait la **phrase entière** comme objectif (vilain récap, recherche polluée). Désormais `_normalize_objectif` en extrait l'**objectif canonique** (travailler / étudier / bourse / télétravail / tous) ET le **domaine** mentionné (« informatique »), qui alimente les mots-clés. Marche même si l'onboarding LLM est désactivé.
+- Bonus **reconversion** : un comptable qui dit viser l'informatique voit ses mots-clés passer à « informatique » (prioritaire sur les compétences du CV) → la recherche cible le bon domaine.
+
 ## v3.4.2 — Finitions pour la démo (liens, récap, /supprimer)
 - Aperçu d'offres après le CV : les liens sont désormais **raccourcis** (fini les URL techniques à rallonge type `jobbenin.com/index.php/offres/eyJpdi6…` sur WhatsApp).
 - Récapitulatif du profil : la **langue des offres** ne s'affiche plus en liste brute `['fr', 'en']` mais « français, anglais » ; un objectif trop long est raccourci. Rendu via `_fmt_pref`.

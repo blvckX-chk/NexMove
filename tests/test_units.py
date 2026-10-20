@@ -2540,3 +2540,25 @@ def test_fmt_pref_listes_et_langues():
 def test_resume_prefs_pas_de_liste_brute():
     txt = main._resume_prefs({"langues_opportunite": ["fr", "en"], "niveau": "professionnel"})
     assert "['fr'" not in txt and "français, anglais" in txt
+
+
+# ------------------ Onboarding : objectif normalisé + domaine capté (v3.5) ------------------
+def test_normalize_objectif():
+    assert main._normalize_objectif("Je cherche un emploi dans l'informatique est ce que c'est possible") == ("travailler", "informatique")
+    assert main._normalize_objectif("je veux une bourse en médecine") == ("bourse", "médecine")
+    assert main._normalize_objectif("travailler en télétravail") == ("télétravail", "")
+    assert main._normalize_objectif("je cherche un stage en marketing digital") == ("travailler", "marketing digital")
+    assert main._normalize_objectif("je veux travailler en logistique") == ("travailler", "logistique")
+    assert main._normalize_objectif("tous") == ("tous", "")
+    assert main._normalize_objectif("je cherche un emploi") == ("travailler", "")
+
+def test_onboarding_scripte_objectif_propre(monkeypatch):
+    # En onboarding scripté, la phrase entière n'est plus stockée comme objectif, et le
+    # domaine explicite alimente les mots-clés (reconversion).
+    monkeypatch.setattr(main, "LLM_ONBOARDING", False)
+    s = {"user_id": "obj1", "etape": "PREFERENCES", "historique": [],
+         "profil": {"preferences": {}}, "pref_current": "objectif", "onboarding_complete": False}
+    _run(main.process_text_message(s, "je cherche un emploi dans l'informatique"))
+    prefs = s["profil"]["preferences"]
+    assert prefs["objectif"] == "travailler"
+    assert prefs.get("mots_cles") == "informatique"
