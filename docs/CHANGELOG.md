@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.7 — Conseiller : la reconversion débouche sur un vrai plan
+- Après avoir détecté une reconversion et demandé les bases, le bot AGIT selon la réponse, comme un conseiller : s'il part de *zéro*, il oriente d'abord vers une *formation/certification* (le pont crédible) via `/formations <domaine>` + des offres *débutant* ; s'il a *déjà des bases*, il vise directement *débutant/junior* et *alternances* pour les valoriser. Le niveau est ajusté (`niveau=débutant`) pour que la recherche et les scores soient réalistes. Détection via `_reconv_has_base` (oui/non/incertain).
+
 ## v3.6 — Conseiller senior : reconversion clarifiée + suppression confirmée
 - **Reconversion comprise, pas subie** : quand le domaine du CV ne recouvre pas la cible (ex. CV comptabilité → objectif informatique), le bot ne lance plus une recherche à l'aveugle. Comme un conseiller d'orientation, il demande UNE fois : « c'est une reconversion ? as-tu une formation/des bases, ou tu pars de zéro ? », mémorise la réponse (profil profond) puis lance la recherche ciblée. Posé une seule fois (mémorisé), sur /veille et /mobilite.
 - **Suppression de données confirmée** : `/supprimer` (et variantes) demande désormais une *confirmation* avant d'effacer (action irréversible). On confirme par « /supprimer confirmer » ou « OUI », on annule par « NON ». Plus d'effacement accidentel en un tap.
