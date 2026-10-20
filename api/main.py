@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.6.0"
+VERSION         = "3.7.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1308,6 +1308,29 @@ def _reconversion_question(session: dict) -> str:
             f"en {_md_clean(cible)}, ou tu pars de zéro ?\n"
             "_(Ça m'aide à cibler les bonnes offres : débutant accepté, alternance, certifications…)_")
 
+_BASE_NEG = ("zéro", "zero", "aucune", "aucun", "rien", "sans base", "sans aucune", "débutant complet",
+             "debutant complet", "pars de zéro", "pars de zero", "je commence", "je débute", "je debute",
+             "jamais fait", "pas de base", "pas de formation", "j'y connais rien", "aucune base",
+             "aucune notion", "aucune expérience", "aucune experience", "que dalle")
+_BASE_POS = ("formation", "certif", "diplôme", "diplome", "bases", "autodidacte", "un peu", "j'ai fait",
+             "jai fait", "étudié", "etudie", "expérience", "experience", "déjà", "deja", "notion",
+             "autoformation", "bootcamp", "licence", "master", "stage", "projet")
+
+def _reconv_has_base(ans: str):
+    """Déduit de la réponse si la personne a DÉJÀ une base dans le nouveau domaine.
+    Renvoie True (a des bases), False (part de zéro) ou None (incertain)."""
+    low = (ans or "").lower()
+    if any(k in low for k in _BASE_NEG):
+        return False
+    if any(k in low for k in _BASE_POS):
+        return True
+    # « non »/« oui » secs
+    if re.search(r"\bnon\b", low) and not re.search(r"\boui\b", low):
+        return False
+    if re.search(r"\boui\b", low):
+        return True
+    return None
+
 def _reconv_ask_if_needed(session: dict, resume_cmd: str):
     """Si une reconversion est détectée et pas encore clarifiée, prépare la question à poser
     (une seule fois) et mémorise la commande à relancer après la réponse. Sinon None."""
@@ -2339,15 +2362,34 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    # On attendait la réponse « reconversion ? » -> on mémorise les bases et on relance la recherche.
+    # On attendait la réponse « reconversion ? » -> conseil adapté + relance de la recherche.
     if session.get("reconv_pending") and not low.startswith("/") and len(t.strip()) >= 2:
         session["reconv_pending"] = False
         session["reconv_ack"] = True
-        pp = session.setdefault("profil", {}).setdefault("profil_plus", {})
+        profil = session.setdefault("profil", {})
+        pp = profil.setdefault("profil_plus", {})
         pp["reconversion"] = t.strip()[:200]   # ce que la personne dit de ses bases (profil profond)
+        a_base = _reconv_has_base(t)
+        prefs = profil.setdefault("preferences", {})
+        cible = str(prefs.get("mots_cles") or "ce domaine")[:40]
+        # Conseiller : part de zéro -> on oriente d'abord FORMATION ; a des bases -> on vise débutant/junior.
+        if a_base is False:
+            prefs["niveau"] = "débutant"
+            lead = (f"💡 Partir de zéro, c'est tout à fait faisable — et c'est plus malin de poser une *base crédible* "
+                    f"avant de postuler. Pour *{_md_clean(cible)}*, commence par une *formation/certification* "
+                    f"(souvent en ligne et abordable) : tape `/formations {_md_clean(cible)}`.\n"
+                    "En parallèle, voici des pistes accessibles *débutant* 👇")
+        elif a_base is True:
+            prefs["niveau"] = prefs.get("niveau") or "débutant"
+            lead = (f"👍 Super, tu as déjà des bases en *{_md_clean(cible)}* — on valorise ça en visant des postes "
+                    "*débutant/junior* et des *alternances* 👇")
+        else:
+            lead = f"🧭 Ok, on explore *{_md_clean(cible)}* ensemble 👇"
+        profil["preferences"] = prefs; session["profil"] = profil
         resume = session.pop("reconv_resume", "") or "/veille"
         _push(session, "user", t)
-        return await process_text_message(session, resume)
+        res_msg, session = await process_text_message(session, resume)
+        return (lead + "\n\n" + (res_msg or "")).strip(), session
 
     # On attendait le DOMAINE pour lancer une recherche ciblée : on le capte puis on cherche.
     if session.get("awaiting_domain") and not low.startswith("/") and len(t.strip()) >= 2 and not session.get("sim_mode"):

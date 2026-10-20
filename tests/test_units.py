@@ -2601,3 +2601,34 @@ def test_reconversion_pose_la_question_avant_recherche(monkeypatch):
     msg, s = _run(main.process_text_message(s, "oui j'ai fait une formation en ligne"))
     assert calls["n"] == 1 and s.get("reconv_ack") is True
     assert "formation en ligne" in s["profil"]["profil_plus"]["reconversion"]
+
+
+# ------------------ Conseiller : reconversion -> formation si pas de base (v3.7) ------------------
+def test_reconv_has_base():
+    assert main._reconv_has_base("oui j'ai fait une formation") is True
+    assert main._reconv_has_base("non je pars de zéro") is False
+    assert main._reconv_has_base("aucune base") is False
+    assert main._reconv_has_base("peut-être") is None
+
+def test_reconversion_sans_base_oriente_formation(monkeypatch):
+    async def _osint(*a, **k):
+        return {"message": "offres débutant", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    prof = {"formation": [{"domaine": "Comptabilité"}], "competences": {"techniques": ["Sage"]},
+            "preferences": {"mots_cles": "informatique"}}
+    s = {"user_id": "rec2", "etape": "ACTIF", "profil": prof, "historique": [], "cv_parsed": True,
+         "onboarding_complete": True, "reconv_pending": True, "reconv_resume": "/veille"}
+    msg, s = _run(main.process_text_message(s, "je pars de zéro, aucune base"))
+    assert "/formations" in msg and "débutant" in msg.lower()
+    assert s["profil"]["preferences"]["niveau"] == "débutant"
+
+def test_reconversion_avec_base_vise_junior(monkeypatch):
+    async def _osint(*a, **k):
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    prof = {"formation": [{"domaine": "Comptabilité"}], "competences": {"techniques": ["Sage"]},
+            "preferences": {"mots_cles": "informatique"}}
+    s = {"user_id": "rec3", "etape": "ACTIF", "profil": prof, "historique": [], "cv_parsed": True,
+         "onboarding_complete": True, "reconv_pending": True, "reconv_resume": "/veille"}
+    msg, s = _run(main.process_text_message(s, "oui j'ai suivi un bootcamp"))
+    assert "junior" in msg.lower() or "valoris" in msg.lower()
