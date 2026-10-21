@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.13 — Candidature adaptée à l'OFFRE précise (inspiré de CVMove)
+- La lettre de motivation ne vise plus une cible générique : quand on candidate à une offre qu'on vient d'analyser (lien, photo, ou offre choisie), la lettre est **adaptée à CETTE annonce** — elle reprend l'intitulé, la structure et les *exigences clés* de l'offre et montre en quoi le profil y répond. Le contexte de l'offre (`offer_ctx`) est mémorisé à l'analyse et injecté dans `generate_pack`. `/postuler` sans argument candidate directement à la dernière offre analysée. C'est le « done-for-you par offre » qui fait la force des meilleurs outils — mais branché sur notre grounding (jamais d'invention) et notre public.
+
 ## v3.12 — QC étendu : l'analyse à-une-offre doit être ancrée dans la source
 - Fermeture du dernier trou de QC : l'analyse d'une **annonce photo** et l'**audit d'un lien** passent désormais une 2e vérification (`_opp_grounded`) — l'offre extraite doit être SAINE (titre réel, pas de placeholder) ET **ancrée dans la source** (au moins un mot significatif du titre/organisation présent dans le texte lu). Une analyse qui ne correspond pas à la photo/la page est écartée, avec repli propre (« copie-colle le texte »). Le self-review couvre maintenant tout le spectre : listes de recherche ET analyses unitaires.
 

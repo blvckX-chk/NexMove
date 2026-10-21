@@ -2775,3 +2775,25 @@ def test_analyse_photo_ecarte_si_non_ancree(monkeypatch):
     # La source parle de comptabilité, l'analyse « pilote » n'est pas ancrée -> écartée.
     out = _run(main._analyze_opportunity_text(s, "Offre de comptable à Cotonou, licence requise, CDI.", source="ta photo"))
     assert out is None
+
+
+# ------------------ Candidature adaptée à l'offre précise (v3.13) ------------------
+def test_offer_ctx_txt():
+    txt = main._offer_ctx_txt({"titre": "Comptable", "organisation": "ACME", "criteres": ["Licence", "Sage"]})
+    assert "Comptable" in txt and "ACME" in txt and "Sage" in txt
+    assert main._offer_ctx_txt({}) == ""
+
+def test_generate_pack_injecte_l_offre(monkeypatch):
+    seen = {"prompt": ""}
+    async def _fake(system, prompt, **k):
+        seen["prompt"] = prompt
+        return {"titre_poste": "Comptable", "resume_professionnel": "r",
+                "competences_mises_en_avant": ["Sage"], "lettre_objet": "o",
+                "lettre_corps": ("Fort de mon stage en comptabilité bancaire chez X, je maîtrise Sage. " * 10)[:900]}
+    monkeypatch.setattr(main, "call_groq", _fake)
+    profil = {"identite": {"nom": "T"}, "competences": {"techniques": ["Sage"]},
+              "experience": [{"poste": "Stagiaire", "organisation": "Banque", "missions": ["saisie"]}],
+              "formation": [{"diplome": "Licence", "domaine": "Compta"}]}
+    oc = {"titre": "Comptable junior", "organisation": "ACME", "criteres": ["Licence compta", "Sage avancé"]}
+    _run(main.generate_pack(profil, "comptable", "emploi", offer_ctx=oc))
+    assert "OFFRE PRÉCISE" in seen["prompt"] and "ACME" in seen["prompt"] and "Sage avancé" in seen["prompt"]

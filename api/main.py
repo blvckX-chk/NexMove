@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.12.0"
+VERSION         = "3.13.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4078,6 +4078,10 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         parts = t.split(maxsplit=1)
         cible_desc = parts[1].strip() if len(parts) > 1 else ""
         profil = session.get("profil", {}) or {}
+        offer_ctx = session.get("offer_ctx") or {}
+        # Pas de cible explicite mais une offre vient d'être analysée -> on candidate à CETTE offre.
+        if not cible_desc and offer_ctx.get("titre"):
+            cible_desc = offer_ctx["titre"]
         if not profil.get("identite"):
             msg = "📄 Je dois d'abord connaître ton profil. Fais /start puis envoie ton CV (PDF, Word ou image)."
         elif not cible_desc:
@@ -4087,7 +4091,9 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         else:
             try:
                 type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
-                pack = await generate_pack(profil, cible_desc, type_cible)
+                # Candidature ADAPTÉE À L'OFFRE : on passe le contexte de l'offre si elle correspond à la cible.
+                _oc = offer_ctx if offer_ctx.get("titre") and not _dom_tokens(offer_ctx["titre"]).isdisjoint(_dom_tokens(cible_desc)) else None
+                pack = await generate_pack(profil, cible_desc, type_cible, offer_ctx=_oc)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
                 cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
                 lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
@@ -6194,7 +6200,19 @@ def _pack_quality_issues(pack: dict, cible_desc: str = "") -> list:
         issues.append("aucune compétence mise en avant")
     return issues
 
-async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi") -> dict:
+def _offer_ctx_txt(offer_ctx: dict) -> str:
+    """Résumé compact d'une OFFRE précise (pour adapter la candidature à CETTE annonce)."""
+    if not isinstance(offer_ctx, dict) or not offer_ctx.get("titre"):
+        return ""
+    bits = [f"intitulé: {offer_ctx.get('titre','')}"]
+    if offer_ctx.get("organisation"):
+        bits.append(f"structure: {offer_ctx['organisation']}")
+    crit = [c for c in (offer_ctx.get("criteres") or []) if isinstance(c, str) and c.strip()][:5]
+    if crit:
+        bits.append("exigences clés: " + " ; ".join(crit))
+    return " | ".join(bits)
+
+async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi", offer_ctx: dict = None) -> dict:
     ident = profil.get("identite", {})
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:12]
     resume = profil.get("resume_profil", "")
@@ -6232,6 +6250,7 @@ EXPÉRIENCES:
 {experiences_txt}
 COMPÉTENCES: {competences}
 CIBLE: {cible_desc}
+{(chr(10) + "OFFRE PRÉCISE (adapte explicitement la lettre à CES exigences, montre en quoi le profil y répond, et adresse les points demandés) : " + _offer_ctx_txt(offer_ctx)) if _offer_ctx_txt(offer_ctx) else ""}
 
 Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par une ligne vide, sans en-tête ni
 signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
@@ -6344,7 +6363,10 @@ async def generate_documents(request: GenerateDocumentsRequest, _auth: bool = De
     entreprise = offre.get("company", offre.get("entreprise", "Organisation"))
     type_cible = "bourse" if str(offre.get("type", "")).lower() in ("bourse", "fellowship", "scholarship") else "emploi"
     cible_desc = f"{titre} · {entreprise}"
-    pack = await generate_pack(profil, cible_desc, type_cible)
+    _oc = {"titre": titre, "organisation": entreprise,
+           "criteres": [str(c) for c in (offre.get("criteres") or offre.get("requirements") or []) if str(c).strip()][:5],
+           "type": type_cible}
+    pack = await generate_pack(profil, cible_desc, type_cible, offer_ctx=_oc)
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
     cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or titre, pack.get("resume_professionnel", ""), competences)
     lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""))
@@ -6566,6 +6588,9 @@ async def _analyze_opportunity_text(session: dict, text: str, source: str = "cet
     if cp:
         msg += f"\n\n🧭 *Comment postuler :* {cp[:200]}"
     session["last_link_cible"] = titre
+    session["offer_ctx"] = {"titre": titre, "organisation": _md_clean(str(r.get("organisation") or "")),
+                            "criteres": [str(c) for c in (r.get("criteres") or []) if str(c).strip()][:5],
+                            "type": r.get("type", "")}
     _focus_touch(session, titre, "analyse")
     msg += (f"\n\n▶️ *La suite :* `/commentpostuler {titre[:34]}` · `/chances {titre[:34]}` · `/postuler {titre[:30]}`")
     return msg
@@ -6661,6 +6686,9 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
         msg += f"\n\n🧭 *Comment postuler :* {cp[:200]}"
     # Mémorise la cible pour les actions de suivi (boutons) + objectif en cours (brique 2).
     session["last_link_cible"] = titre
+    session["offer_ctx"] = {"titre": titre, "organisation": _md_clean(str(r.get("organisation") or "")),
+                            "criteres": [str(c) for c in (r.get("criteres") or []) if str(c).strip()][:5],
+                            "type": r.get("type", "")}
     _focus_touch(session, titre, "analyse")
     msg += (f"\n\n▶️ *La suite :* `/commentpostuler {titre[:34]}` (e-mail/formulaire) · "
             f"`/chances {titre[:34]}` (tes chances détaillées) · `/postuler {titre[:30]}` (CV + lettre)")
