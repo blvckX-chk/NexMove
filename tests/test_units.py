@@ -2797,3 +2797,13 @@ def test_generate_pack_injecte_l_offre(monkeypatch):
     oc = {"titre": "Comptable junior", "organisation": "ACME", "criteres": ["Licence compta", "Sage avancé"]}
     _run(main.generate_pack(profil, "comptable", "emploi", offer_ctx=oc))
     assert "OFFRE PRÉCISE" in seen["prompt"] and "ACME" in seen["prompt"] and "Sage avancé" in seen["prompt"]
+
+
+# ------------------ Anti-troncature des fragments du bilan CV (v3.14) ------------------
+def test_tidy_frag():
+    assert main._tidy_frag("développement en Europe ou").endswith("Europe…")
+    assert main._tidy_frag("Expertise solide en agroécologie") == "Expertise solide en agroécologie"
+    assert main._tidy_frag("Phrase complète.") == "Phrase complète."
+    assert main._tidy_frag("Capacité à concevoir et animer des formations") == "Capacité à concevoir et animer des formations"
+    assert main._tidy_frag("un stage ou une mission à l'étranger de") .endswith("…")
+    assert main._tidy_frag("") == ""

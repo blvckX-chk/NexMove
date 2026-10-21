@@ -258,7 +258,7 @@ async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg") ->
             {"text": system + "\nSchéma attendu : " + schema},
             {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
         ]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2500, "responseMimeType": "application/json"},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3500, "responseMimeType": "application/json"},
     }
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
