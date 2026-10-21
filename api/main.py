@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.14.0"
+VERSION         = "3.15.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1753,6 +1753,29 @@ def _tidy_frag(s: str) -> str:
     # « … » SEULEMENT si on a détecté une coupure (mot de liaison pendant) : sinon c'est un
     # fragment normal (titre, compétence) qui se termine proprement sans point.
     return (s + "…") if (coupe and s) else s
+
+def _profil_looks_truncated(profil: dict) -> bool:
+    """Détecte une analyse de CV coupée par la limite de tokens (résumé ou dernier item de bilan
+    qui finit en l'air). Sert à relancer l'analyse avec plus de marge (ceinture + bretelles)."""
+    if not isinstance(profil, dict):
+        return False
+    def _frag_cut(s: str) -> bool:
+        s = (s or "").strip()
+        if not s:
+            return False
+        if _looks_truncated(s):
+            return True
+        # mot de liaison pendant en fin (« …en Europe ou ») = coupure, non vue par _looks_truncated
+        mots = s.rstrip(" .!?)»").split()
+        return bool(mots) and s[-1] not in ".!?)»" and mots[-1].lower().strip(",;:") in _TRAIL_STOP
+    if _frag_cut(str(profil.get("resume_profil", "") or "")):
+        return True
+    bilan = profil.get("bilan", {}) or {}
+    for k in ("forces", "axes", "pistes"):
+        items = bilan.get(k) or []
+        if items and _frag_cut(str(items[-1])):
+            return True
+    return False
 
 def _looks_truncated(s: str) -> bool:
     """Heuristique : la réponse semble coupée (ponctuation suspendue, parenthèse ouverte)."""
@@ -5927,6 +5950,19 @@ Document: {cv_text[:6000]}"""
     if not isinstance(profil, dict) or not profil:
         await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
         return
+    # Ceinture + bretelles : si l'analyse a été COUPÉE par la limite de tokens, on relance UNE fois
+    # avec beaucoup plus de marge (et on garde le meilleur résultat).
+    if _profil_looks_truncated(profil):
+        logger.info("[cv] analyse tronquée détectée -> relance avec plus de marge")
+        try:
+            if profil_from_vision:
+                retry = await analyze_cv_image_vision(pdf_bytes, mime, max_tokens=6000)
+            else:
+                retry = await call_groq(system, prompt, temperature=0.1, max_tokens=6000)
+            if isinstance(retry, dict) and retry and not _profil_looks_truncated(retry):
+                profil = retry
+        except Exception as e:
+            logger.warning(f"[cv] relance analyse: {e}")
     # Rejet des documents qui ne sont pas des CV (retour testeurs)
     ident = profil.get("identite", {}) or {}
     a_du_contenu = bool(profil.get("formation") or profil.get("experience") or

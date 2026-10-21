@@ -2807,3 +2807,13 @@ def test_tidy_frag():
     assert main._tidy_frag("Capacité à concevoir et animer des formations") == "Capacité à concevoir et animer des formations"
     assert main._tidy_frag("un stage ou une mission à l'étranger de") .endswith("…")
     assert main._tidy_frag("") == ""
+
+
+# ------------------ Ceinture+bretelles : détection d'une analyse CV tronquée (v3.15) ------------------
+def test_profil_looks_truncated():
+    assert main._profil_looks_truncated({"bilan": {"pistes": ["Postes en ONG en Europe ou"]}}) is True
+    assert main._profil_looks_truncated({"resume_profil": "Agronome spécialisé en agroécologie ("}) is True
+    assert main._profil_looks_truncated({"bilan": {"forces": ["Terrain", "Formation,"]}}) is True
+    assert main._profil_looks_truncated({"bilan": {"pistes": ["Chargé de projet ONG."]},
+                                         "resume_profil": "Agronome confirmé."}) is False
+    assert main._profil_looks_truncated({}) is False

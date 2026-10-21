@@ -235,7 +235,7 @@ async def semantic_scores(profil_txt: str, items: list, text_of) -> Optional[lis
 
 
 # ── Analyse vision (CV en image, Gemini multimodal) ──
-async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg") -> dict:
+async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg", max_tokens: int = 3500) -> dict:
     """Analyse d'un CV en IMAGE via Gemini vision : renvoie le JSON du profil directement.
     Repli sur OCR géré par l'appelant (dans process_cv)."""
     if not (GEMINI_API_KEY and _PILImage):
@@ -258,7 +258,7 @@ async def analyze_cv_image_vision(img_bytes: bytes, mime: str = "image/jpeg") ->
             {"text": system + "\nSchéma attendu : " + schema},
             {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
         ]}],
-        "generationConfig": {"temperature": 0.1, "maxOutputTokens": 3500, "responseMimeType": "application/json"},
+        "generationConfig": {"temperature": 0.1, "maxOutputTokens": int(max_tokens), "responseMimeType": "application/json"},
     }
     try:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"

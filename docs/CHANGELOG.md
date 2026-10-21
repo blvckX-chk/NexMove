@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.15 — Ceinture + bretelles : analyse CV relancée si coupée
+- Garantie anti-troncature complète : si l'analyse d'un CV revient malgré tout coupée par la limite de tokens (résumé ou dernier item de bilan qui finit en l'air, ex. « …en Europe ou »), le bot **relance automatiquement l'analyse une fois** avec une grosse marge (6000 tokens, texte comme vision) et garde le meilleur résultat. Combiné à la marge relevée (v3.14) et au nettoyage `_tidy_frag`, la troncature visible ne peut plus arriver. `_profil_looks_truncated` détecte aussi les mots de liaison pendants que l'ancien détecteur ratait.
+
 ## v3.14 — Fin de la troncature de l'analyse CV
 - Le récap d'analyse de CV se coupait parfois en plein milieu (ex. « …en Europe ou »). Deux causes traitées : (1) la limite de tokens de l'analyse (texte ET vision) est relevée (2500 → 3500) pour que le JSON ne soit plus tronqué à la source ; (2) filet de sécurité `_tidy_frag` sur les atouts/axes/pistes du bilan — un fragment qui finit sur un mot de liaison pendant (« …en Europe ou ») est nettoyé proprement avec « … », sans ajouter d'ellipse aux phrases complètes.
 
