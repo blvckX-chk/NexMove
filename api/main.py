@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.15.0"
+VERSION         = "3.16.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -5978,6 +5978,8 @@ Document: {cv_text[:6000]}"""
         if opp_text and _looks_like_opportunity(opp_text):
             analyse = await _analyze_opportunity_text(session, opp_text, source="ta photo")
             if analyse:
+                if not used_credit:
+                    _quota_bump(session, "cv")   # analyse photo = vision/LLM coûteuse -> décomptée comme un CV
                 _push(session, "assistant", analyse)
                 session_manager.set(session.get("user_id"), session)
                 await deliver_text(session, analyse)

@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.16 — Quota : l'analyse photo d'annonce est décomptée
+- Correctif de maîtrise des coûts : l'analyse d'une annonce prise en photo (multimodal v3.10) passait le contrôle de quota mais n'était jamais **décomptée** — un compte gratuit pouvait en enchaîner sans limite (seul le anti-spam 20/min la bornait). Elle décompte désormais le quota `cv` (comme une analyse de CV, puisque c'est le même coût vision/LLM). Les abonnés et l'admin restent illimités.
+
 ## v3.15 — Ceinture + bretelles : analyse CV relancée si coupée
 - Garantie anti-troncature complète : si l'analyse d'un CV revient malgré tout coupée par la limite de tokens (résumé ou dernier item de bilan qui finit en l'air, ex. « …en Europe ou »), le bot **relance automatiquement l'analyse une fois** avec une grosse marge (6000 tokens, texte comme vision) et garde le meilleur résultat. Combiné à la marge relevée (v3.14) et au nettoyage `_tidy_frag`, la troncature visible ne peut plus arriver. `_profil_looks_truncated` détecte aussi les mots de liaison pendants que l'ancien détecteur ratait.
 
