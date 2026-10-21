@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.14 — Fin de la troncature de l'analyse CV
+- Le récap d'analyse de CV se coupait parfois en plein milieu (ex. « …en Europe ou »). Deux causes traitées : (1) la limite de tokens de l'analyse (texte ET vision) est relevée (2500 → 3500) pour que le JSON ne soit plus tronqué à la source ; (2) filet de sécurité `_tidy_frag` sur les atouts/axes/pistes du bilan — un fragment qui finit sur un mot de liaison pendant (« …en Europe ou ») est nettoyé proprement avec « … », sans ajouter d'ellipse aux phrases complètes.
+
 ## v3.13 — Candidature adaptée à l'OFFRE précise (inspiré de CVMove)
 - La lettre de motivation ne vise plus une cible générique : quand on candidate à une offre qu'on vient d'analyser (lien, photo, ou offre choisie), la lettre est **adaptée à CETTE annonce** — elle reprend l'intitulé, la structure et les *exigences clés* de l'offre et montre en quoi le profil y répond. Le contexte de l'offre (`offer_ctx`) est mémorisé à l'analyse et injecté dans `generate_pack`. `/postuler` sans argument candidate directement à la dernière offre analysée. C'est le « done-for-you par offre » qui fait la force des meilleurs outils — mais branché sur notre grounding (jamais d'invention) et notre public.
 

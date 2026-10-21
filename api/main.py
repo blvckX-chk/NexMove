@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.13.0"
+VERSION         = "3.14.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1729,6 +1729,31 @@ _WELCOME_PITCH = (
 )
 
 # ── Fiabilité des réponses IA : détection de texte tronqué + relance + coupe propre ──
+_TRAIL_STOP = {"ou", "et", "de", "des", "du", "en", "à", "a", "au", "aux", "la", "le", "les",
+               "un", "une", "pour", "avec", "sur", "dans", "par", "que", "qui", "d'", "l'",
+               "ex", "ex.", "notamment", "comme", "vers", "chez", "entre"}
+
+def _tidy_frag(s: str) -> str:
+    """Nettoie un fragment possiblement COUPÉ (ex. « …en Europe ou ») : enlève le mot de liaison
+    pendant en fin et pose « … ». Évite d'afficher une phrase tronquée en plein milieu."""
+    s = _md_clean(s).rstrip(" ,;:-")
+    if not s:
+        return s
+    if s[-1] in ".!?)»":
+        return s
+    mots = s.split()
+    coupe = False
+    # on retire jusqu'à 2 mots de liaison pendants en fin de fragment (signe d'une coupure)
+    for _ in range(2):
+        if mots and mots[-1].lower().strip(",;:.") in _TRAIL_STOP:
+            mots.pop(); coupe = True
+        else:
+            break
+    s = " ".join(mots).rstrip(" ,;:-")
+    # « … » SEULEMENT si on a détecté une coupure (mot de liaison pendant) : sinon c'est un
+    # fragment normal (titre, compétence) qui se termine proprement sans point.
+    return (s + "…") if (coupe and s) else s
+
 def _looks_truncated(s: str) -> bool:
     """Heuristique : la réponse semble coupée (ponctuation suspendue, parenthèse ouverte)."""
     s = (s or "").rstrip()
@@ -5894,7 +5919,7 @@ Document: {cv_text[:6000]}"""
         profil = profil_from_vision   # analyse vision directe (image) : pas de deuxième appel LLM
     else:
         try:
-            profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+            profil = await call_groq(system, prompt, temperature=0.1, max_tokens=3500)
         except Exception as e:
             logger.error(f"[cv] analyse LLM échouée: {e}")
             await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute · je m'en occupe dès que possible.")
@@ -5962,11 +5987,11 @@ Document: {cv_text[:6000]}"""
     message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom_aff}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
     bilan = profil.get("bilan", {}) or {}
     if bilan.get("forces"):
-        message += "\n💪 *Tes atouts :* " + _md_clean(", ".join(bilan["forces"][:3])) + "\n"
+        message += "\n💪 *Tes atouts :* " + _tidy_frag(", ".join(bilan["forces"][:3])) + "\n"
     if bilan.get("axes"):
-        message += "📈 *À renforcer :* " + _md_clean(", ".join(bilan["axes"][:3])) + "\n"
+        message += "📈 *À renforcer :* " + _tidy_frag(", ".join(bilan["axes"][:3])) + "\n"
     if bilan.get("pistes"):
-        message += "🎯 *Pistes réalistes pour toi :*\n" + "\n".join(f"• {_md_clean(p)}" for p in bilan["pistes"][:3]) + "\n"
+        message += "🎯 *Pistes réalistes pour toi :*\n" + "\n".join(f"• {_tidy_frag(p)}" for p in bilan["pistes"][:3]) + "\n"
     message += "\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*)."
     session["etape"] = "CV_RECU"
     session["profil"] = profil
@@ -6352,7 +6377,7 @@ async def parse_cv(file: UploadFile = File(...), user_id: str = Form("unknown"),
     prompt = f"""Analyse ce CV:
 {{"identite":{{"nom":"","email":"","telephone":"","localisation":"","linkedin":"","langues":[]}},"formation":[{{"diplome":"","domaine":"","etablissement":"","annee":""}}],"competences":{{"techniques":[],"securite":[],"outils":[],"soft_skills":[]}},"experience":[{{"poste":"","organisation":"","duree":"","missions":[]}}],"certifications":[],"preferences":{{"types_opportunite":["emploi","bourse"],"niveau":"professionnel","langues_opportunite":["fr","en"],"delai_min_jours":14,"mots_cles":[],"geographie":[]}},"niveau_global":"junior|mid|senior","resume_profil":""}}
 CV: {cv_text[:6000]}"""
-    profil = await call_groq(system, prompt, temperature=0.1, max_tokens=2500)
+    profil = await call_groq(system, prompt, temperature=0.1, max_tokens=3500)
     return {"success": True, "user_id": user_id, "profil": profil, "parsed_at": datetime.now(timezone.utc).isoformat()}
 
 @app.post("/api/generate-documents")
