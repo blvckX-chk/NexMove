@@ -2856,3 +2856,22 @@ def test_admin_nl_route():
     # ne détourne pas un parcours candidat
     assert main._admin_nl_route("je cherche un emploi", "je cherche un emploi") is None
     assert main._admin_nl_route("/stats", "/stats") is None   # déjà une commande
+
+
+# ------------------ Audit d'un lien PORTAIL (liste d'opportunités) v3.19 ------------------
+def test_audit_portail_guide_au_lieu_de_rejeter(monkeypatch):
+    async def _fetch(url):
+        return {"ok": True, "url": url, "title": "Bourses d'étude et opportunités au Bénin",
+                "text": "Bourses d'étude et opportunités au Bénin. Divers financements pour aider les candidats éligibles à faire des études. bourse master licence formation postuler candidature"}
+    async def _llm(system, prompt, **k):
+        return {"est_opportunite": True, "type": "portail", "titre": "Bourses d'étude au Bénin",
+                "resume_portail": "Un portail qui recense des bourses et financements d'études.",
+                "exemples": ["Bourse master", "Financement licence", "Appel à candidature"]}
+    monkeypatch.setattr(main, "fetch_url_text", _fetch)
+    monkeypatch.setattr(main, "call_groq", _llm)
+    s = {"user_id": "pt1", "etape": "ACTIF", "profil": {"preferences": {}}, "historique": [],
+         "onboarding_complete": True}
+    msg, s = _run(main.audit_opportunity_link(s, "https://greatyop.com/destination/benin-fr/"))
+    assert "regroupe plusieurs opportunités" in msg.lower() or "plusieurs opportunités" in msg.lower()
+    assert "UNE" in msg or "une" in msg.lower()
+    assert "ne ressemble pas" not in msg.lower()   # plus de rejet sec
