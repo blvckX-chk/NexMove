@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.20 — OSINT : portails d'opportunités panafricains ciblés
+- Comble l'angle mort des bourses LOCALES. Avant, la recherche de bourses ne ciblait que des programmes internationaux (Campus France, DAAD, Erasmus, Chevening). Désormais une requête supplémentaire cible activement les portails d'opportunités panafricains/francophones réels (GreatYop, Opportunities For Africans, Opportunity Desk, After School Africa, Youth Opportunities…) via `site:`. Les ressources comme greatyop.com remontent donc dans les résultats, pas seulement par hasard. (Les emplois étaient déjà bien couverts : sources locales par pays + régionales + boards + feeds ingérés.)
+
 ## v3.19 — Analyse d'un lien PORTAIL (liste d'opportunités)
 - Retour testeur : coller une page qui LISTE plusieurs bourses/offres (portail, page « destination », agrégateur comme greatyop.com) était rejeté sèchement (« ce lien ne ressemble pas à une offre exploitable »). Désormais le bot reconnaît une page-portail : il en fait un résumé utile + quelques exemples visibles, et guide vers le lien d'UNE opportunité précise (ou /veille). Un filet de sécurité guide aussi quand la page est clairement pleine d'opportunités mais mal structurée. Plus de rejet frustrant d'une ressource légitime.
 

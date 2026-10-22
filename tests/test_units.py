@@ -2875,3 +2875,16 @@ def test_audit_portail_guide_au_lieu_de_rejeter(monkeypatch):
     assert "regroupe plusieurs opportunités" in msg.lower() or "plusieurs opportunités" in msg.lower()
     assert "UNE" in msg or "une" in msg.lower()
     assert "ne ressemble pas" not in msg.lower()   # plus de rejet sec
+# ------------------ OSINT : portails d'opportunités panafricains ciblés (v3.20) ------------------
+def test_osint_cible_portails_bourses_africains():
+    terms = {"domaine": "agronomie", "keywords": ["agronomie", "agroécologie"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "étudier", "bourse", "Bénin", "Bénin", "", True, remote=False)
+    blob = " ".join(qs)
+    assert "greatyop.com" in blob
+    assert any("opportunitiesforafricans.com" in q or "opportunitydesk.org" in q for q in qs)
+
+def test_osint_emploi_garde_sources_locales():
+    terms = {"domaine": "comptabilité", "keywords": ["comptabilité"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "travailler", "emploi", "Bénin", "Bénin", "", True, remote=False)
+    blob = " ".join(qs)
+    assert "emploibenin.com" in blob and ("linkedin.com" in blob or "indeed.com" in blob)
