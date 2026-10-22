@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.21 — Couverture emploi élargie (trou LinkedIn) + sources locales enrichies
+- **Trou LinkedIn comblé (autant que possible).** LinkedIn est volontairement mal indexé par les moteurs de recherche (anti-robots) : beaucoup d'offres LinkedIn ne sont donc PAS récupérables par une recherche, et le scraper direct de LinkedIn est interdit par ses CGU. La recherche d'emploi combine désormais LinkedIn avec des **agrégateurs bien indexés qui re-listent les mêmes annonces** (Jooble, Indeed, Glassdoor, goafricaonline) dans une requête placée tôt — avant la requête locale — pour que même les comptes gratuits (2 requêtes) en bénéficient. Résultat : couverture nettement plus large pour les mêmes recherches.
+- **Sources locales enrichies (recherche web réelle, aucune invention).** Bénin : ajout de goafricaonline.com/bj, bj.coinafrique.com, emploibougebenin.com. Côte d'Ivoire & Sénégal : go Africa Online local. Portails ONG/humanitaire panafricains : emploihumanitaire.org, humanitairehub.com, pageshumanitaires.com. Bourses francophones : CampusBourses (Campus France), Le Boursier, Scholarships For Africans, bourses-etudes-africains.info.
+- **Adzuna confirmé câblé** (aucun changement de code nécessaire) : visible via `/version` (module « Adzuna ») et `/api/admin/health` (`adzuna_configured`). Alimente le pool d'offres via `/api/collect` quand `ADZUNA_APP_ID`/`ADZUNA_APP_KEY` sont présents.
+- **Isolation des tests** : les tests pointent désormais la base SQLite sur un fichier temporaire jetable (`conftest.py`) ; fin des échecs intermittents dus aux compteurs de quota qui persistaient sur `data/sessions.db` d'un run à l'autre.
+
 ## v3.20 — OSINT : portails d'opportunités panafricains ciblés
 - Comble l'angle mort des bourses LOCALES. Avant, la recherche de bourses ne ciblait que des programmes internationaux (Campus France, DAAD, Erasmus, Chevening). Désormais une requête supplémentaire cible activement les portails d'opportunités panafricains/francophones réels (GreatYop, Opportunities For Africans, Opportunity Desk, After School Africa, Youth Opportunities…) via `site:`. Les ressources comme greatyop.com remontent donc dans les résultats, pas seulement par hasard. (Les emplois étaient déjà bien couverts : sources locales par pays + régionales + boards + feeds ingérés.)
 

@@ -2694,6 +2694,9 @@ def test_chances_plan_b_si_score_faible(monkeypatch):
                 "plan_b": {"cible": "bourse au Maroc", "pourquoi": "Admission plus ouverte et francophone."},
                 "conseil": "Commence par la langue."}
     monkeypatch.setattr(main, "call_groq", _fake)
+    # Quota découplé de la vraie base (le singleton usage_store persiste sur data/sessions.db).
+    monkeypatch.setattr(main, "_quota_or_credit", lambda s, f, l: (True, False, 5))
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
     s = {"user_id": "pb1", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
          "profil": {"identite": {"nom": "X"}, "preferences": {}}}
     msg, s = _run(main.process_text_message(s, "/chances master en France"))
@@ -2704,6 +2707,8 @@ def test_chances_pas_de_plan_b_si_score_bon(monkeypatch):
         return {"score": 78, "verdict": "Solide", "forces": ["profil complet"], "manques": [],
                 "actions": ["postuler tôt"], "plan_b": {"cible": "autre chose", "pourquoi": "x"}, "conseil": "Fonce."}
     monkeypatch.setattr(main, "call_groq", _fake)
+    monkeypatch.setattr(main, "_quota_or_credit", lambda s, f, l: (True, False, 5))
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
     s = {"user_id": "pb2", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
          "profil": {"identite": {"nom": "X"}, "preferences": {}}}
     msg, s = _run(main.process_text_message(s, "/chances master en France"))
@@ -2888,3 +2893,23 @@ def test_osint_emploi_garde_sources_locales():
     qs = main._build_osint_queries(terms, "travailler", "emploi", "Bénin", "Bénin", "", True, remote=False)
     blob = " ".join(qs)
     assert "emploibenin.com" in blob and ("linkedin.com" in blob or "indeed.com" in blob)
+
+# ---- OSINT : combler le trou LinkedIn via des agrégateurs bien indexés (v3.21) ----
+def test_osint_emploi_combine_linkedin_et_agregateurs():
+    terms = {"domaine": "data", "keywords": ["data"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "travailler", "emploi", "France", "Bénin", "", True, remote=False)
+    blob = " ".join(qs)
+    # LinkedIn + agrégateurs (jooble/indeed/goafricaonline) dans la même stratégie
+    assert "linkedin.com" in blob
+    assert ("jooble" in blob or "goafricaonline" in blob)
+    # La requête agrégateurs doit arriver AVANT la requête locale (utile pour les comptes gratuits = 2 req.)
+    idx_board = next(i for i, q in enumerate(qs) if "jooble" in q or "goafricaonline.com" in q)
+    idx_local = next(i for i, q in enumerate(qs) if "emploibenin.com" in q)
+    assert idx_board < idx_local
+
+def test_sources_locales_benin_enrichies_v321():
+    benin = " ".join(main.LOCAL_JOB_SOURCES.get("Bénin", []))
+    assert "goafricaonline.com" in benin and "coinafrique" in benin
+    # Portails bourses francophones ajoutés
+    assert "leboursier.net" in main._AFRICA_OPP_SITES
+    assert "scholarshipsforafricans.com" in main._AFRICA_OPP_SITES
