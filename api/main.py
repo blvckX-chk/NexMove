@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.20.0"
+VERSION         = "3.21.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -7442,9 +7442,10 @@ def _pays_from_nat(nat: str) -> str:
 # Complétable via env LOCAL_SOURCES_EXTRA_<PAYS> (ex. LOCAL_SOURCES_EXTRA_BENIN=site1.com,site2.com).
 LOCAL_JOB_SOURCES = {
     "Bénin": ["emploibenin.com", "jobbenin.com", "offresdemplois.bj", "talentsplusafrique.com",
-              "afriqueemplois.com/bj", "gouv.bj (offres publiques)"],
-    "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "novojob.com"],
-    "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com"],
+              "afriqueemplois.com/bj", "goafricaonline.com/bj/emploi", "bj.coinafrique.com",
+              "emploibougebenin.com", "gouv.bj (offres publiques)"],
+    "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "novojob.com", "goafricaonline.com/ci/emploi"],
+    "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com", "goafricaonline.com/sn/emploi"],
     "Togo": ["emploitogo.info", "togocarriere.com"],
     "Burkina Faso": ["emploiburkina.com", "burkinajob.com"],
     "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com"],
@@ -7456,16 +7457,19 @@ LOCAL_JOB_SOURCES = {
 }
 # Sources régionales / panafricaines + grandes plateformes (servent tous les pays d'Afrique de l'Ouest).
 _REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "AfricaWork",
-                         "ReliefWeb (ONG/humanitaire)", "Emploi.org",
+                         "ReliefWeb (ONG/humanitaire)", "emploihumanitaire.org", "humanitairehub.com",
+                         "pageshumanitaires.com", "Emploi.org", "goafricaonline.com",
                          "Indeed (fr.indeed.com)", "LinkedIn (linkedin.com/jobs)", "Jobberman", "Glassdoor"]
 
 # Portails d'OPPORTUNITÉS / BOURSES panafricains & francophones (agrégateurs réels, ciblés via site:).
 # Comblent l'angle mort des bourses LOCALES (au-delà de Campus France / DAAD / Erasmus).
 _AFRICA_OPP_SITES = ["greatyop.com", "opportunitiesforafricans.com", "opportunitydesk.org",
-                     "afterschoolafrica.com", "youthop.com", "mladiinfo.eu", "bourses-etudiants.ma",
-                     "campusfrance.org"]
+                     "afterschoolafrica.com", "youthop.com", "campusbourses.campusfrance.org",
+                     "leboursier.net", "scholarshipsforafricans.com", "bourses-etudes-africains.info",
+                     "mladiinfo.eu", "campusfrance.org"]
 _AFRICA_OPP_LABELS = ["GreatYop", "Opportunities For Africans", "Opportunity Desk",
-                      "After School Africa", "Youth Opportunities", "Campus France"]
+                      "After School Africa", "Youth Opportunities", "CampusBourses (Campus France)",
+                      "Le Boursier", "Scholarships For Africans"]
 
 _ACCENTS = str.maketrans("àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ", "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
 
@@ -7575,11 +7579,18 @@ def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
                 seen.add(q.lower()); out.append(q)
         return out
     Q.append(f"{type_mot} {domaine} {type_emploi} {z} {year} candidature")
+    _is_job = (type_mot == "emploi" or objectif in ("travailler", "tous", "tout", ""))
+    if _is_job:
+        # LinkedIn est mal indexé par les moteurs (anti-robots) : beaucoup d'offres n'y sont pas
+        # récupérables. On combine LinkedIn avec des AGRÉGATEURS bien indexés qui re-listent les mêmes
+        # annonces (Jooble, Indeed, Glassdoor, goafricaonline) → couverture nettement plus large.
+        # Placée AVANT la requête locale pour que les comptes gratuits (2 requêtes) en bénéficient.
+        Q.append(f"{domaine} {z} {type_emploi} emploi recrutement "
+                 f"site:linkedin.com/jobs OR site:fr.indeed.com OR site:fr.jooble.org "
+                 f"OR site:glassdoor.com OR site:goafricaonline.com")
     if veut_local and local_pays:
         locs = " OR ".join(p.split()[0] for p in LOCAL_JOB_SOURCES.get(local_pays, [])[:3])
         Q.append(f"{type_mot} {domaine} {local_pays} {locs}")
-    if type_mot == "emploi" or objectif in ("travailler", "tous", "tout", ""):
-        Q.append(f"{domaine} {z} emploi site:linkedin.com OR site:indeed.com OR site:glassdoor.com")
     if type_mot != "emploi" or objectif in ("tous", "tout", ""):
         Q.append(f"bourse {domaine} {z} site:campusfrance.org OR DAAD OR Erasmus Mundus OR Chevening")
         # Portails d'opportunités panafricains (comble les bourses/opportunités LOCALES).
