@@ -2913,3 +2913,16 @@ def test_sources_locales_benin_enrichies_v321():
     # Portails bourses francophones ajoutés
     assert "leboursier.net" in main._AFRICA_OPP_SITES
     assert "scholarshipsforafricans.com" in main._AFRICA_OPP_SITES
+
+# ---- Sources soumises par l'admin, vérifiées & ajoutées (v3.22) ----
+def test_sources_benin_verifiees_v322():
+    benin = " ".join(main.LOCAL_JOB_SOURCES.get("Bénin", []))
+    for s in ("emploi.bsmgroupe.com", "setondji.org", "cadreannonces.com", "emploi-pipeline.gouv.bj"):
+        assert s in benin
+    assert "opportunitiesforyouths.com" in main._AFRICA_OPP_SITES[:6]
+
+def test_osint_emploi_angle_ong_developpement_v322():
+    terms = {"domaine": "logistique", "keywords": ["logistique"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "travailler", "emploi", "Bénin", "Bénin", "", True, remote=False)
+    blob = " ".join(qs)
+    assert "reliefweb.int" in blob and ("unjobs.org" in blob or "devex.com" in blob)

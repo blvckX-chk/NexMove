@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.21.0"
+VERSION         = "3.22.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -7443,7 +7443,8 @@ def _pays_from_nat(nat: str) -> str:
 LOCAL_JOB_SOURCES = {
     "Bénin": ["emploibenin.com", "jobbenin.com", "offresdemplois.bj", "talentsplusafrique.com",
               "afriqueemplois.com/bj", "goafricaonline.com/bj/emploi", "bj.coinafrique.com",
-              "emploibougebenin.com", "gouv.bj (offres publiques)"],
+              "emploibougebenin.com", "emploi.bsmgroupe.com", "setondji.org", "cadreannonces.com",
+              "emploi-pipeline.gouv.bj", "gouv.bj (offres publiques)"],
     "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "novojob.com", "goafricaonline.com/ci/emploi"],
     "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com", "goafricaonline.com/sn/emploi"],
     "Togo": ["emploitogo.info", "togocarriere.com"],
@@ -7463,10 +7464,10 @@ _REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "
 
 # Portails d'OPPORTUNITÉS / BOURSES panafricains & francophones (agrégateurs réels, ciblés via site:).
 # Comblent l'angle mort des bourses LOCALES (au-delà de Campus France / DAAD / Erasmus).
-_AFRICA_OPP_SITES = ["greatyop.com", "opportunitiesforafricans.com", "opportunitydesk.org",
-                     "afterschoolafrica.com", "youthop.com", "campusbourses.campusfrance.org",
-                     "leboursier.net", "scholarshipsforafricans.com", "bourses-etudes-africains.info",
-                     "mladiinfo.eu", "campusfrance.org"]
+_AFRICA_OPP_SITES = ["greatyop.com", "opportunitiesforafricans.com", "opportunitiesforyouths.com",
+                     "opportunitydesk.org", "afterschoolafrica.com", "youthop.com",
+                     "campusbourses.campusfrance.org", "leboursier.net", "scholarshipsforafricans.com",
+                     "bourses-etudes-africains.info", "mladiinfo.eu", "campusfrance.org"]
 _AFRICA_OPP_LABELS = ["GreatYop", "Opportunities For Africans", "Opportunity Desk",
                       "After School Africa", "Youth Opportunities", "CampusBourses (Campus France)",
                       "Le Boursier", "Scholarships For Africans"]
@@ -7596,6 +7597,11 @@ def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
         # Portails d'opportunités panafricains (comble les bourses/opportunités LOCALES).
         _sites = " OR ".join(f"site:{s}" for s in _AFRICA_OPP_SITES[:6])
         Q.append(f"bourse OR opportunité OR fellowship {domaine} Afrique {year} {_sites}")
+    if _is_job:
+        # Angle ONG / développement / ONU — très présent au Bénin et en Afrique de l'Ouest,
+        # sur des agrégateurs BIEN indexés (contrairement à LinkedIn).
+        Q.append(f"{domaine} {z} emploi OR stage site:reliefweb.int OR site:unjobs.org "
+                 f"OR site:devex.com OR site:impactpool.org")
     if len(kws) > 1:
         Q.append(f"{type_mot} {kws[1]} {z} {year}")
     Q.append(f"{domaine} {type_mot} télétravail OR remote OR international {year}")

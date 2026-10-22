@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.22 — Sources soumises par l'admin, vérifiées & ajoutées
+- Liste de sources transmise par l'admin, **vérifiée une par une** (recherche web réelle, aucune invention). Ajoutées car confirmées actives et indexées : **Bénin** — emploi.bsmgroupe.com, setondji.org, cadreannonces.com, emploi-pipeline.gouv.bj (portail officiel). **Bourses/opportunités** — opportunitiesforyouths.com. **Nouvel angle ONG / développement / ONU** pour les recherches d'emploi (très présent au Bénin, et sur des agrégateurs bien indexés contrairement à LinkedIn) : reliefweb.int, unjobs.org, devex.com, impactpool.org.
+- Non ajoutées faute de confirmation d'indexation (le `site:` ne remonterait rien) : matchworks.app, beninformations.bj, optioncarriere.bj, gdiz-benin.com. À ré-soumettre si elles sont confirmées actives, ou à brancher sans redéploiement via `LOCAL_SOURCES_EXTRA_BENIN`.
+
 ## v3.21 — Couverture emploi élargie (trou LinkedIn) + sources locales enrichies
 - **Trou LinkedIn comblé (autant que possible).** LinkedIn est volontairement mal indexé par les moteurs de recherche (anti-robots) : beaucoup d'offres LinkedIn ne sont donc PAS récupérables par une recherche, et le scraper direct de LinkedIn est interdit par ses CGU. La recherche d'emploi combine désormais LinkedIn avec des **agrégateurs bien indexés qui re-listent les mêmes annonces** (Jooble, Indeed, Glassdoor, goafricaonline) dans une requête placée tôt — avant la requête locale — pour que même les comptes gratuits (2 requêtes) en bénéficient. Résultat : couverture nettement plus large pour les mêmes recherches.
 - **Sources locales enrichies (recherche web réelle, aucune invention).** Bénin : ajout de goafricaonline.com/bj, bj.coinafrique.com, emploibougebenin.com. Côte d'Ivoire & Sénégal : go Africa Online local. Portails ONG/humanitaire panafricains : emploihumanitaire.org, humanitairehub.com, pageshumanitaires.com. Bourses francophones : CampusBourses (Campus France), Le Boursier, Scholarships For Africans, bourses-etudes-africains.info.
