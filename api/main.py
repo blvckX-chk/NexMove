@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.16.0"
+VERSION         = "3.17.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2462,6 +2462,14 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # Vaut dans N'IMPORTE QUEL état (onboarding, pré-onboarding, actif).
     if not session.get("sim_mode") and _is_version_query(low):
         t = "/version"; low = "/version"
+
+    # Garde-fou anti-flag coincé : si l'utilisateur lance une COMMANDE au lieu de répondre à une
+    # question en attente (confirmation de suppression, reconversion, clarification, domaine), il a
+    # changé d'avis -> on annule proprement l'attente (sauf la poursuite directe /supprimer confirmer).
+    if low.startswith("/") and not low.startswith("/supprimer confirmer"):
+        for _flag in ("awaiting_delete_confirm", "reconv_pending", "clarify_pending", "awaiting_domain"):
+            if session.get(_flag):
+                session[_flag] = False
 
     # On attendait la CONFIRMATION d'une suppression de données -> on capte OUI / NON.
     if session.get("awaiting_delete_confirm") and not low.startswith("/"):

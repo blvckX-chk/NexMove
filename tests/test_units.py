@@ -2817,3 +2817,24 @@ def test_profil_looks_truncated():
     assert main._profil_looks_truncated({"bilan": {"pistes": ["Chargé de projet ONG."]},
                                          "resume_profil": "Agronome confirmé."}) is False
     assert main._profil_looks_truncated({}) is False
+
+
+# ------------------ Garde-fou : pas de flag d'attente coincé (v3.17) ------------------
+def test_commande_annule_confirmation_suppression():
+    # /supprimer -> attente ; une commande ensuite ANNULE l'attente (pas de suppression accidentelle).
+    s = {"user_id": "sf1", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}}, "historique": [],
+         "cv_parsed": True, "onboarding_complete": True}
+    _run(main.process_text_message(s, "/supprimer"))
+    assert s.get("awaiting_delete_confirm") is True
+    # l'utilisateur fait autre chose (commande) -> l'attente est levée
+    _run(main.process_text_message(s, "/version"))
+    assert not s.get("awaiting_delete_confirm")
+    # un "oui" plus tard ne supprime donc PAS les données
+    _run(main.process_text_message(s, "oui"))
+    assert s["profil"].get("identite")
+
+def test_commande_annule_attente_domaine():
+    s = {"user_id": "sf2", "etape": "ACTIF", "profil": {"preferences": {}}, "historique": [],
+         "awaiting_domain": True, "onboarding_complete": True}
+    _run(main.process_text_message(s, "/aide"))
+    assert not s.get("awaiting_domain")
