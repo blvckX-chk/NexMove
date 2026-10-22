@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.17.0"
+VERSION         = "3.18.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1029,6 +1029,54 @@ def _is_recruiter_intent(t: str) -> bool:
                              "je postule", "chercher du travail")):
         return False
     return bool(_RECRUIT_INTENT_RE.search(tl))
+
+# ── Routeur de commandes ADMIN en langage naturel (compte admin uniquement) ──
+# Permet à l'admin de piloter sans slash : « stats », « les annonces », « valide 3 »,
+# « diffuser bonjour à tous », « codes valides »…  Déterministe, zéro coût LLM.
+def _admin_nl_route(low: str, t: str):
+    tl = (low or "").strip()
+    if not tl or tl.startswith("/"):
+        return None
+    # Stats / tableau de bord
+    if tl in ("stats", "statistiques", "statistique", "dashboard", "tableau de bord", "traction",
+              "chiffres", "metrics", "kpi") or tl.startswith(("stats", "statistiques", "dashboard", "traction")):
+        return "/stats"
+    # Codes premium
+    if "code" in tl and any(k in tl for k in ("valide", "libre", "restant", "dispo")):
+        return "/codes valides"
+    if "code" in tl and ("utilis" in tl or "consomm" in tl):
+        return "/codes utilises"
+    if tl in ("codes", "mes codes", "les codes", "voir les codes", "liste des codes"):
+        return "/codes"
+    # File des offres recruteurs
+    if tl in ("annonces", "les annonces", "offres recruteurs", "offres recruteur", "validations",
+              "à valider", "a valider", "file", "file d'attente", "demandes de diffusion"):
+        return "/annonces"
+    # Voir une offre précise
+    m = re.search(r"\bvoir\b.*?(?:offre|annonce)\s*#?\s*(\d+)", tl)
+    if m:
+        return f"/annonce_voir {m.group(1)}"
+    # Valider / refuser une offre N (ex. « valide 3 », « valide l'offre 3 tous »)
+    m = re.search(r"\b(valide[rz]?|accepte[rz]?|publie[rz]?)\b[^0-9]*(\d+)(.*)$", tl)
+    if m:
+        extra = " tous" if "tous" in m.group(3) else (" envoyer" if any(k in m.group(3) for k in ("envoy", "confirm", "go")) else "")
+        return f"/valider {m.group(2)}{extra}".rstrip()
+    m = re.search(r"\b(refuse[rz]?|rejett?e[rz]?|decline)\b[^0-9]*(\d+)", tl)
+    if m:
+        return f"/refuser {m.group(2)}"
+    # Diffuser un message (le reste après le mot-clé est le message)
+    if re.match(r"^(diffuse[rz]?|diffusion|broadcast|annonce[rz]? à tous)\b", tl):
+        rest = re.sub(r"^(diffuse[rz]?|diffusion|broadcast|annonce[rz]?\s+à\s+tous)\s*:?\s*", "", t.strip(), flags=re.I).strip()
+        return ("/diffuser " + rest) if rest else "/diffuser"
+    # Historique des diffusions
+    if tl in ("diffusions", "historique diffusions", "log diffusions", "journal diffusions", "diffuser_log"):
+        return "/diffuser_log"
+    # Génération de codes (ex. « génère 50 codes premium 30 jours »)
+    if any(k in tl for k in ("génè", "géné", "gene", "genè", "créer", "crée", "cree", "fabriqu", "nouveau code", "nouveaux code")) and "code" in tl:
+        if "credit" in tl or "crédit" in tl:
+            return "/gencredits"   # affiche l'aide (paramètres), l'admin complète
+        return "/gencodes"
+    return None
 
 # ── Routeur d'INTENTION piloté par le LLM : raisonne sur ce que veut la personne
 #    au lieu de faire du pattern-matching rigide. Économe (appelé seulement aux
@@ -2457,6 +2505,15 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if session.get("sim_mode") and not low.startswith("/"):
         _push(session, "user", t)
         return await _simulation_turn(session, t)
+
+    # ADMIN en langage naturel : « stats », « les annonces », « valide 3 », « diffuser … » -> commande.
+    # Réservé au compte admin, hors flux guidés (pour qu'il puisse aussi tester les parcours candidats).
+    if (_is_admin(session) and not low.startswith("/") and not session.get("sim_mode")
+            and not session.get("cvbuild_step") and not session.get("recruit_step")):
+        _acmd = _admin_nl_route(low, t)
+        if _acmd:
+            _push(session, "user", t)
+            return await process_text_message(session, _acmd)
 
     # Question « version » (fait produit) -> réponse DÉTERMINISTE (jamais le LLM, qui l'inventerait).
     # Vaut dans N'IMPORTE QUEL état (onboarding, pré-onboarding, actif).
