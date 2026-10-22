@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.17 — Sécurité : plus de flag d'attente coincé
+- Audit de bout en bout : correction d'un risque réel. Les états « en attente de réponse » (confirmation de suppression, question de reconversion, clarification, demande de domaine) n'étaient levés que par une réponse en texte. Si l'utilisateur lançait une COMMANDE à la place, le flag restait coincé — au pire, un « oui » bien plus tard pouvait déclencher une suppression de données non voulue. Désormais, toute commande annule proprement une attente en cours (sauf la poursuite directe « /supprimer confirmer »).
+
 ## v3.16 — Quota : l'analyse photo d'annonce est décomptée
 - Correctif de maîtrise des coûts : l'analyse d'une annonce prise en photo (multimodal v3.10) passait le contrôle de quota mais n'était jamais **décomptée** — un compte gratuit pouvait en enchaîner sans limite (seul le anti-spam 20/min la bornait). Elle décompte désormais le quota `cv` (comme une analyse de CV, puisque c'est le même coût vision/LLM). Les abonnés et l'admin restent illimités.
 
