@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.19 — Analyse d'un lien PORTAIL (liste d'opportunités)
+- Retour testeur : coller une page qui LISTE plusieurs bourses/offres (portail, page « destination », agrégateur comme greatyop.com) était rejeté sèchement (« ce lien ne ressemble pas à une offre exploitable »). Désormais le bot reconnaît une page-portail : il en fait un résumé utile + quelques exemples visibles, et guide vers le lien d'UNE opportunité précise (ou /veille). Un filet de sécurité guide aussi quand la page est clairement pleine d'opportunités mais mal structurée. Plus de rejet frustrant d'une ressource légitime.
+
 ## v3.18 — Admin en langage naturel (Telegram)
 - Le compte admin peut piloter sans taper de slash : « stats » → tableau de bord, « les annonces » → file des offres recruteurs, « valide 3 » / « valide l'offre 7 tous » → diffusion, « refuse 5 », « codes valides » / « codes utilisés », « diffuser <message> », « voir annonce 9 », « génère des codes premium »… `_admin_nl_route` est déterministe (zéro coût LLM), réservé au compte admin et désactivé pendant les flux guidés (pour que l'admin puisse aussi tester les parcours candidats).
 
