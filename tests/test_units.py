@@ -2926,3 +2926,30 @@ def test_osint_emploi_angle_ong_developpement_v322():
     qs = main._build_osint_queries(terms, "travailler", "emploi", "Bénin", "Bénin", "", True, remote=False)
     blob = " ".join(qs)
     assert "reliefweb.int" in blob and ("unjobs.org" in blob or "devex.com" in blob)
+
+# ---- 2e lot de sources admin vérifiées (v3.23) ----
+def test_sources_benin_lot2_v323():
+    benin = " ".join(main.LOCAL_JOB_SOURCES.get("Bénin", []))
+    for s in ("matchworks.app", "beninformations.bj", "optioncarriere.bj", "jobartis.com"):
+        assert s in benin
+    # GDIZ écarté (pas d'offre ouverte datée) : ne doit PAS être présent
+    assert "gdiz" not in benin
+
+def test_sources_sous_region_lot2_v323():
+    ci = " ".join(main.LOCAL_JOB_SOURCES.get("Côte d'Ivoire", []))
+    sn = " ".join(main.LOCAL_JOB_SOURCES.get("Sénégal", []))
+    cm = " ".join(main.LOCAL_JOB_SOURCES.get("Cameroun", []))
+    assert "novajobs.ci" in ci and "emploi.gouv.sn" in sn and "emploi.cm" in cm
+
+def test_opp_sites_lot2_dans_requete_v323():
+    terms = {"domaine": "santé", "keywords": ["santé"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "étudier", "bourse", "Afrique", "Bénin", "", True, remote=False)
+    blob = " ".join(qs)
+    assert "heysuccess.com" in blob   # entré dans le top-7 ciblé
+    assert "2ie-edu.org" in main._AFRICA_OPP_SITES
+
+def test_remote_sources_elargies_v323():
+    terms = {"domaine": "data", "keywords": ["data"], "mots_list": []}
+    qs = main._build_osint_queries(terms, "télétravail", "emploi", "", "Bénin", "télétravail", False, remote=True)
+    blob = " ".join(qs)
+    assert "remote.co" in blob and "wellfound.com" in blob

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.22.0"
+VERSION         = "3.23.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -7444,12 +7444,16 @@ LOCAL_JOB_SOURCES = {
     "Bénin": ["emploibenin.com", "jobbenin.com", "offresdemplois.bj", "talentsplusafrique.com",
               "afriqueemplois.com/bj", "goafricaonline.com/bj/emploi", "bj.coinafrique.com",
               "emploibougebenin.com", "emploi.bsmgroupe.com", "setondji.org", "cadreannonces.com",
+              "matchworks.app", "beninformations.bj", "optioncarriere.bj", "jobartis.com",
               "emploi-pipeline.gouv.bj", "gouv.bj (offres publiques)"],
-    "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "novojob.com", "goafricaonline.com/ci/emploi"],
-    "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com", "goafricaonline.com/sn/emploi"],
+    "Côte d'Ivoire": ["emploi.ci", "educarriere.ci", "emploi.educarriere.ci", "novojob.com",
+                      "novajobs.ci", "toumodi-jobs.com", "goafricaonline.com/ci/emploi"],
+    "Sénégal": ["emploisenegal.com", "novojob.com", "senjob.com", "emploi.educarriere.sn",
+                "emploi.gouv.sn", "goafricaonline.com/sn/emploi"],
     "Togo": ["emploitogo.info", "togocarriere.com"],
     "Burkina Faso": ["emploiburkina.com", "burkinajob.com"],
-    "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com"],
+    "Cameroun": ["minajobs.net", "emploicamer.net", "jobinfocamer.com", "emploi.cm",
+                 "jobinfocameroun.com", "recrutement.cameroun247.com"],
     "Mali": ["malipages.com", "novojob.com"],
     "Niger": ["nigeremploi.com"],
     # Voisins (diaspora / mobilité régionale)
@@ -7465,9 +7469,10 @@ _REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "
 # Portails d'OPPORTUNITÉS / BOURSES panafricains & francophones (agrégateurs réels, ciblés via site:).
 # Comblent l'angle mort des bourses LOCALES (au-delà de Campus France / DAAD / Erasmus).
 _AFRICA_OPP_SITES = ["greatyop.com", "opportunitiesforafricans.com", "opportunitiesforyouths.com",
-                     "opportunitydesk.org", "afterschoolafrica.com", "youthop.com",
+                     "opportunitydesk.org", "afterschoolafrica.com", "youthop.com", "heysuccess.com",
                      "campusbourses.campusfrance.org", "leboursier.net", "scholarshipsforafricans.com",
-                     "bourses-etudes-africains.info", "mladiinfo.eu", "campusfrance.org"]
+                     "bourses-etudes-africains.info", "opportunitiescircle.com", "fundsforngos.org",
+                     "2ie-edu.org", "mladiinfo.eu", "campusfrance.org"]
 _AFRICA_OPP_LABELS = ["GreatYop", "Opportunities For Africans", "Opportunity Desk",
                       "After School Africa", "Youth Opportunities", "CampusBourses (Campus France)",
                       "Le Boursier", "Scholarships For Africans"]
@@ -7566,7 +7571,8 @@ def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
     if remote:
         # Télétravail : SANS pays, sur les job boards remote + freelance (portée mondiale).
         Q.append(f"{domaine} emploi télétravail OR remote OR freelance à distance {year}")
-        Q.append(f"remote {domaine} jobs site:remoteok.com OR site:remotive.com OR site:weworkremotely.com OR site:jobicy.com")
+        Q.append(f"remote {domaine} jobs site:remoteok.com OR site:remotive.com OR site:weworkremotely.com "
+                 f"OR site:jobicy.com OR site:remote.co OR site:wellfound.com")
         Q.append(f"{domaine} freelance mission à distance site:upwork.com OR site:malt.fr OR site:freelancer.com")
         if len(kws) > 1:
             Q.append(f"{kws[1]} remote OR télétravail {year}")
@@ -7595,13 +7601,13 @@ def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
     if type_mot != "emploi" or objectif in ("tous", "tout", ""):
         Q.append(f"bourse {domaine} {z} site:campusfrance.org OR DAAD OR Erasmus Mundus OR Chevening")
         # Portails d'opportunités panafricains (comble les bourses/opportunités LOCALES).
-        _sites = " OR ".join(f"site:{s}" for s in _AFRICA_OPP_SITES[:6])
+        _sites = " OR ".join(f"site:{s}" for s in _AFRICA_OPP_SITES[:7])
         Q.append(f"bourse OR opportunité OR fellowship {domaine} Afrique {year} {_sites}")
     if _is_job:
         # Angle ONG / développement / ONU — très présent au Bénin et en Afrique de l'Ouest,
         # sur des agrégateurs BIEN indexés (contrairement à LinkedIn).
         Q.append(f"{domaine} {z} emploi OR stage site:reliefweb.int OR site:unjobs.org "
-                 f"OR site:devex.com OR site:impactpool.org")
+                 f"OR site:devex.com OR site:impactpool.org OR site:ngojobsonline.com")
     if len(kws) > 1:
         Q.append(f"{type_mot} {kws[1]} {z} {year}")
     Q.append(f"{domaine} {type_mot} télétravail OR remote OR international {year}")

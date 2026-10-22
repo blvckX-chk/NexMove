@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.23 — 2e lot de sources admin vérifiées + couverture sous-région / remote / ONG
+- Admin a confirmé 3 des 4 domaines restants (pages d'offres datées à l'appui) → ajoutés au Bénin : **matchworks.app, beninformations.bj, optioncarriere.bj** (+ **jobartis.com**). **gdiz-benin.com écarté** : site indexé mais postes affichés « Closed », aucune offre ouverte datée (critère non rempli).
+- **Sous-région** enrichie (offres datées, indexation confirmée) : Côte d'Ivoire (emploi.educarriere.ci, novajobs.ci, toumodi-jobs.com), Sénégal (emploi.educarriere.sn, emploi.gouv.sn), Cameroun (emploi.cm, jobinfocameroun.com, recrutement.cameroun247.com).
+- **Bourses/opportunités** : ajout de heysuccess.com (entré dans le top-7 ciblé par `site:`), opportunitiescircle.com, fundsforngos.org, 2ie-edu.org (institution francophone africaine). Le slice de requête passe de 6 à 7 portails.
+- **Remote/tech** : la requête télétravail cible aussi remote.co et wellfound.com. **ONG/dév** : ajout de ngojobsonline.com (agrégateur bien indexé).
+- Non câblés volontairement : les portails carrières JS d'agences (careers.unicef.org, who.int, fao.org, msf…) sont mal indexés comme LinkedIn — ils remontent déjà via les agrégateurs (ReliefWeb, UNjobs, Impactpool). Les plateformes très niche (volontariat Europe, échanges) restent branchables sans redéploiement via `LOCAL_SOURCES_EXTRA_<PAYS>`.
+
 ## v3.22 — Sources soumises par l'admin, vérifiées & ajoutées
 - Liste de sources transmise par l'admin, **vérifiée une par une** (recherche web réelle, aucune invention). Ajoutées car confirmées actives et indexées : **Bénin** — emploi.bsmgroupe.com, setondji.org, cadreannonces.com, emploi-pipeline.gouv.bj (portail officiel). **Bourses/opportunités** — opportunitiesforyouths.com. **Nouvel angle ONG / développement / ONU** pour les recherches d'emploi (très présent au Bénin, et sur des agrégateurs bien indexés contrairement à LinkedIn) : reliefweb.int, unjobs.org, devex.com, impactpool.org.
 - Non ajoutées faute de confirmation d'indexation (le `site:` ne remonterait rien) : matchworks.app, beninformations.bj, optioncarriere.bj, gdiz-benin.com. À ré-soumettre si elles sont confirmées actives, ou à brancher sans redéploiement via `LOCAL_SOURCES_EXTRA_BENIN`.
