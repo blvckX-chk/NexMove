@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.18 — Admin en langage naturel (Telegram)
+- Le compte admin peut piloter sans taper de slash : « stats » → tableau de bord, « les annonces » → file des offres recruteurs, « valide 3 » / « valide l'offre 7 tous » → diffusion, « refuse 5 », « codes valides » / « codes utilisés », « diffuser <message> », « voir annonce 9 », « génère des codes premium »… `_admin_nl_route` est déterministe (zéro coût LLM), réservé au compte admin et désactivé pendant les flux guidés (pour que l'admin puisse aussi tester les parcours candidats).
+
 ## v3.17 — Sécurité : plus de flag d'attente coincé
 - Audit de bout en bout : correction d'un risque réel. Les états « en attente de réponse » (confirmation de suppression, question de reconversion, clarification, demande de domaine) n'étaient levés que par une réponse en texte. Si l'utilisateur lançait une COMMANDE à la place, le flag restait coincé — au pire, un « oui » bien plus tard pouvait déclencher une suppression de données non voulue. Désormais, toute commande annule proprement une attente en cours (sauf la poursuite directe « /supprimer confirmer »).
 

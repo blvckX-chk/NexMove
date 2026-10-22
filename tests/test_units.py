@@ -2838,3 +2838,21 @@ def test_commande_annule_attente_domaine():
          "awaiting_domain": True, "onboarding_complete": True}
     _run(main.process_text_message(s, "/aide"))
     assert not s.get("awaiting_domain")
+
+
+# ------------------ Admin en langage naturel (v3.18) ------------------
+def test_admin_nl_route():
+    assert main._admin_nl_route("stats", "stats") == "/stats"
+    assert main._admin_nl_route("tableau de bord", "tableau de bord") == "/stats"
+    assert main._admin_nl_route("les annonces", "les annonces") == "/annonces"
+    assert main._admin_nl_route("valide 3", "valide 3") == "/valider 3"
+    assert main._admin_nl_route("valide l offre 7 tous", "valide l offre 7 tous") == "/valider 7 tous"
+    assert main._admin_nl_route("refuse 5", "refuse 5") == "/refuser 5"
+    assert main._admin_nl_route("codes valides", "codes valides") == "/codes valides"
+    assert main._admin_nl_route("codes utilisés", "codes utilisés") == "/codes utilises"
+    assert main._admin_nl_route("diffuser bonjour", "diffuser bonjour") == "/diffuser bonjour"
+    assert main._admin_nl_route("voir annonce 9", "voir annonce 9") == "/annonce_voir 9"
+    assert main._admin_nl_route("génère des codes premium", "génère des codes premium") == "/gencodes"
+    # ne détourne pas un parcours candidat
+    assert main._admin_nl_route("je cherche un emploi", "je cherche un emploi") is None
+    assert main._admin_nl_route("/stats", "/stats") is None   # déjà une commande
