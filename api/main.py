@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.19.0"
+VERSION         = "3.20.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -7459,6 +7459,14 @@ _REGIONAL_JOB_SOURCES = ["Jooble (fr.jooble.org)", "Novojob", "Talent2Africa", "
                          "ReliefWeb (ONG/humanitaire)", "Emploi.org",
                          "Indeed (fr.indeed.com)", "LinkedIn (linkedin.com/jobs)", "Jobberman", "Glassdoor"]
 
+# Portails d'OPPORTUNITÉS / BOURSES panafricains & francophones (agrégateurs réels, ciblés via site:).
+# Comblent l'angle mort des bourses LOCALES (au-delà de Campus France / DAAD / Erasmus).
+_AFRICA_OPP_SITES = ["greatyop.com", "opportunitiesforafricans.com", "opportunitydesk.org",
+                     "afterschoolafrica.com", "youthop.com", "mladiinfo.eu", "bourses-etudiants.ma",
+                     "campusfrance.org"]
+_AFRICA_OPP_LABELS = ["GreatYop", "Opportunities For Africans", "Opportunity Desk",
+                      "After School Africa", "Youth Opportunities", "Campus France"]
+
 _ACCENTS = str.maketrans("àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇ", "aaaeeeeiioouuucAAAEEEEIIOOUUUC")
 
 def _env_key(pays: str) -> str:
@@ -7572,8 +7580,11 @@ def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,
         Q.append(f"{type_mot} {domaine} {local_pays} {locs}")
     if type_mot == "emploi" or objectif in ("travailler", "tous", "tout", ""):
         Q.append(f"{domaine} {z} emploi site:linkedin.com OR site:indeed.com OR site:glassdoor.com")
-    else:
+    if type_mot != "emploi" or objectif in ("tous", "tout", ""):
         Q.append(f"bourse {domaine} {z} site:campusfrance.org OR DAAD OR Erasmus Mundus OR Chevening")
+        # Portails d'opportunités panafricains (comble les bourses/opportunités LOCALES).
+        _sites = " OR ".join(f"site:{s}" for s in _AFRICA_OPP_SITES[:6])
+        Q.append(f"bourse OR opportunité OR fellowship {domaine} Afrique {year} {_sites}")
     if len(kws) > 1:
         Q.append(f"{type_mot} {kws[1]} {z} {year}")
     Q.append(f"{domaine} {type_mot} télétravail OR remote OR international {year}")
