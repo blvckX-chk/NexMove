@@ -2868,6 +2868,38 @@ def test_analyse_photo_ecarte_si_non_ancree(monkeypatch):
     assert out is None
 
 
+# ------------------ Récap d'onboarding : masquer les champs vides (v3.27) ------------------
+def test_resume_prefs_masque_champs_vides():
+    r = main._resume_prefs({"objectif": "emploi", "mots_cles": "finance"})
+    assert "—" not in r                      # aucune ligne vide
+    assert "Nationalité" not in r and "Pays cibles" not in r   # champs vides non affichés
+    assert "Objectif" in r and "finance" in r                  # essentiels présents
+    # Un champ renseigné réapparaît.
+    r2 = main._resume_prefs({"objectif": "étudier", "mots_cles": "data", "pays_cibles": "France"})
+    assert "Pays cibles : France" in r2
+
+# ------------------ Multimodal : repli VISION quand l'OCR rate une annonce stylisée (v3.27) ------------------
+def test_photo_annonce_repli_vision(monkeypatch):
+    sent = {}
+    async def fake_deliver(session, text, **kw): sent["reply"] = text; return True
+    async def fake_cv_vision(img, mime="image/jpeg", **k):
+        return {"est_cv": False, "raison_rejet": "ce n'est pas un CV"}
+    def fake_ocr(img): return ""                         # OCR tesseract échoue sur la bannière
+    async def fake_ocr_vision(img, mime="image/jpeg"):
+        return "AltEmploi Bénin. Réceptionniste H/F. Nous recrutons à Cotonou. Postulez sur www.altemploi5.com"
+    async def fake_analyze(session, text, source="cette annonce"):
+        return "✅ *Réceptionniste* · Compatibilité : 60%\nComment postuler : via altemploi5.com"
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "analyze_cv_image_vision", fake_cv_vision)
+    monkeypatch.setattr(main, "extract_text_image", fake_ocr)
+    monkeypatch.setattr(main, "extract_text_vision", fake_ocr_vision)
+    monkeypatch.setattr(main, "_analyze_opportunity_text", fake_analyze)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    session = {"user_id": "mmv1", "channel": "telegram", "profil": {"preferences": {}}, "historique": []}
+    _run(main.process_cv(session, b"\xff\xd8\xff img-bytes", "annonce.jpg"))
+    assert "Réceptionniste" in sent.get("reply", "")
+    assert "ne ressemble pas" not in sent.get("reply", "").lower()   # plus de rejet « pas un CV »
+
 # ------------------ Candidature adaptée à l'offre précise (v3.13) ------------------
 def test_offer_ctx_txt():
     txt = main._offer_ctx_txt({"titre": "Comptable", "organisation": "ACME", "criteres": ["Licence", "Sage"]})

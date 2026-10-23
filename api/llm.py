@@ -316,6 +316,37 @@ async def analyze_screenshot_vision(img_bytes: bytes, mime: str = "image/jpeg", 
         return ""
 
 
+async def extract_text_vision(img_bytes: bytes, mime: str = "image/jpeg") -> str:
+    """Transcrit TOUT le texte visible d'une image (affiche/annonce stylisée, flyer, bannière…)
+    via la vision — là où l'OCR classique (tesseract) échoue sur les visuels graphiques.
+    Renvoie le texte brut, ou '' si indisponible. Sert au multimodal : lire une annonce prise en photo."""
+    if not (GEMINI_API_KEY and _PILImage and img_bytes):
+        return ""
+    system = ("Transcris FIDÈLEMENT tout le texte visible sur cette image (affiche, annonce, flyer, "
+              "capture). Rends UNIQUEMENT le texte, dans l'ordre de lecture, sans commentaire ni mise en "
+              "forme. N'invente rien ; si une zone est illisible, ignore-la. Inclus les URL et contacts visibles.")
+    payload = {
+        "contents": [{"parts": [
+            {"text": system},
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 700},
+    }
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+        r = await http().post(url, json=payload, timeout=45.0)
+        if r.status_code != 200:
+            logger.warning(f"[ocr-vision] {r.status_code}: {r.text[:150]}")
+            return ""
+        cands = r.json().get("candidates") or []
+        if not cands:
+            return ""
+        return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", [])).strip()
+    except Exception as e:
+        logger.warning(f"[ocr-vision] {e}")
+        return ""
+
+
 async def transcribe_audio(audio_bytes: bytes, mime: str = "audio/ogg") -> str:
     """Transcrit un message vocal (Telegram/WhatsApp) en texte via Gemini. Renvoie '' si échec.
     Permet aux utilisateurs qui préfèrent parler d'utiliser le bot naturellement."""

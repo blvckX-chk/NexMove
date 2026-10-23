@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.26.0"
+VERSION         = "3.27.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -301,7 +301,7 @@ class MobilityRequest(BaseModel):
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
 from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
-                 analyze_screenshot_vision, transcribe_audio,
+                 analyze_screenshot_vision, extract_text_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY)  # noqa: F401
 
@@ -1757,17 +1757,20 @@ def _resume_prefs(prefs):
     objectif = _fmt_pref(prefs.get("objectif"))
     if len(objectif) > 70:                     # une phrase entière collée -> on raccourcit proprement
         objectif = _trim_to_sentence(objectif)[:70].rstrip(" .,") + "…"
+    # Onboarding efficace : on n'affiche QUE les champs renseignés (pas de lignes « — » inutiles).
+    # Objectif et Mots-clés sont les deux essentiels -> toujours montrés.
+    lignes = [f"• Objectif : {objectif}", f"• Mots-clés : {_fmt_pref(prefs.get('mots_cles'))}"]
+    _OPT = [("nationalite", "Nationalité"), ("pays_cibles", "Pays cibles"),
+            ("financement", "Financement"), ("certifs_langue", "Certifs langue"),
+            ("langues_opportunite", "Langue des offres"), ("niveau", "Niveau"),
+            ("type_emploi", "Type de poste")]
+    extra = [f"• {lbl} : {_fmt_pref(prefs.get(k))}" for k, lbl in _OPT
+             if str(prefs.get(k) or "").strip()]
+    corps = "\n".join([lignes[0]] + extra + [lignes[1]])   # Objectif en tête, Mots-clés en fin
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
-            f"• Objectif : {objectif}\n"
-            f"• Nationalité : {_fmt_pref(prefs.get('nationalite'))}\n"
-            f"• Pays cibles : {_fmt_pref(prefs.get('pays_cibles'))}\n"
-            f"• Financement : {_fmt_pref(prefs.get('financement'))}\n"
-            f"• Certifs langue : {_fmt_pref(prefs.get('certifs_langue'))}\n"
-            f"• Langue des offres : {_fmt_pref(prefs.get('langues_opportunite'))}\n"
-            f"• Niveau : {_fmt_pref(prefs.get('niveau'))}\n"
-            + (f"• Type de poste : {_fmt_pref(prefs.get('type_emploi'))}\n" if prefs.get('type_emploi') else "")
-            + f"• Mots-clés : {_fmt_pref(prefs.get('mots_cles'))}\n\n"
-            "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.")
+            + corps + "\n\n"
+            "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.\n"
+            "_(Tu peux aussi corriger un champ, ex. « pays : France ».)_")
 
 # ── Récap de profil ÉDITABLE : l'utilisateur corrige un champ en écrivant "champ: valeur" ──
 _PROFIL_EDIT_FIELDS = {
@@ -6111,6 +6114,15 @@ Document: {cv_text[:6000]}"""
                 opp_text = await asyncio.to_thread(extract_text_image, pdf_bytes)
             except Exception:
                 opp_text = ""
+        # Repli VISION : les annonces sont souvent des visuels stylisés (texte sur photo) que l'OCR
+        # rate. Si on n'a rien d'exploitable, on fait lire l'image par la vision (Gemini).
+        if is_image and (not opp_text or not _looks_like_opportunity(opp_text)):
+            try:
+                vtext = await extract_text_vision(pdf_bytes, mime)
+            except Exception:
+                vtext = ""
+            if vtext:
+                opp_text = (opp_text + "\n" + vtext).strip() if opp_text else vtext
         if opp_text and _looks_like_opportunity(opp_text):
             analyse = await _analyze_opportunity_text(session, opp_text, source="ta photo")
             if analyse:
