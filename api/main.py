@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.25.0"
+VERSION         = "3.26.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1356,6 +1356,25 @@ def _cv_domaine_txt(profil: dict) -> str:
     skills = " ".join([str(x) for x in (comp.get("techniques", []) or [])][:6])
     return f"{dom} {skills}".strip()
 
+_DIPLOME_MOTS = ("licence", "master", "bac", "baccalauréat", "baccalaureat", "bts", "dut", "doctorat",
+                 "ingénieur", "ingenieur", "diplôme", "diplome", "certificat", "formation")
+
+def _cv_domaine_label(profil: dict) -> str:
+    """Libellé PROPRE et court du domaine actuel, pour l'afficher à l'utilisateur (≠ texte brut
+    servant à la détection). Priorité : domaine de formation réel > 2 compétences clés > générique.
+    On évite d'afficher « Licence JavaScript PHP Python SQL » (empilement diplôme + compétences)."""
+    forms = profil.get("formation") or []
+    dom = (forms[0].get("domaine") if forms and isinstance(forms[0], dict) else "") or ""
+    dom = dom.strip()
+    # Un « domaine » qui n'est qu'un mot de diplôme (Licence, Master…) n'est pas informatif.
+    if dom and dom.lower() not in _DIPLOME_MOTS and not all(w in _DIPLOME_MOTS for w in dom.lower().split()):
+        return dom[:40]
+    comp = profil.get("competences", {}) or {}
+    skills = [str(x).strip() for x in (comp.get("techniques", []) or []) if str(x).strip()][:2]
+    if skills:
+        return ", ".join(skills)[:40]
+    return "ton domaine actuel"
+
 _RECONV_CUES = ("reconversion", "reconverti", "reconvertir", "me reconvert", "je me reconvert",
                 "changer de domaine", "changer de métier", "changer de metier", "changer de voie",
                 "me réorienter", "me reorienter", "réorientation", "reorientation", "transition pro",
@@ -1382,7 +1401,7 @@ def _is_reconversion(session: dict) -> bool:
 
 def _reconversion_question(session: dict) -> str:
     profil = session.get("profil", {}) or {}
-    cv_lbl = _cv_domaine_txt(profil)[:40] or "ton domaine actuel"
+    cv_lbl = _cv_domaine_label(profil)
     cible = str((profil.get("preferences", {}) or {}).get("mots_cles") or "ce nouveau domaine")[:40]
     return (f"🧭 Je remarque que ton CV est plutôt en *{_md_clean(cv_lbl)}* et que tu vises *{_md_clean(cible)}*.\n"
             "C'est une *reconversion* ? Dis-moi : as-tu déjà une *formation, des certifications ou des bases* "
