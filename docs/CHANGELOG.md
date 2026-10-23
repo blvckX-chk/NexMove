@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.25 — Conseiller d'orientation poussé au max (OODA senior)
+- **Le conseiller intervient au moment décisif.** Avant, la question de reconversion / clarification n'était posée que sur un `/veille` explicite ultérieur. Au **premier résultat juste après la validation du profil**, le bot montrait des offres génériques et ratait le moment conseiller. Désormais, dès que le profil est validé, si une **reconversion** est détectée (ou une info vraiment cruciale manque), le bot pose **une** question d'orientation (bases/zéro, pays, niveau…) *avant* les offres — la recherche se relance toute seule après la réponse. C'est l'impression la plus importante pour ne pas perdre l'utilisateur.
+- **Reconversion mieux détectée (quelles que soient les questions).** (1) Elle fonctionne maintenant aussi pour un profil **construit via /creercv** (sans CV uploadé), pas seulement sur un CV analysé. (2) Une mention **explicite** (« je me reconvertis », « changer de domaine/métier/voie », « me réorienter », « transition pro »…) déclenche la question même si les mots-clés se recoupent par hasard. (3) Pas de faux positif quand aucun passé n'est connu.
+- Rappel du flux conseiller (inchangé mais désormais branché partout) : part de zéro → on oriente d'abord **formation/certification** (`/formations <domaine>`) puis des pistes débutant ; a des bases → on vise **débutant/junior + alternance**.
+
 ## v3.24 — Reconversion respectée + fin du « télétravail » fantôme (bug vidéo)
 - **Bug vu en démo.** Un profil informatique qui répond « Je cherche un emploi dans la finance » voyait le récap garder les mots-clés du CV (JavaScript, PHP, SQL…) au lieu de « finance », et afficher un « Type de poste : télétravail » que l'utilisateur n'avait jamais demandé.
 - **Cause 1 (mots-clés).** L'onboarding LLM n'écrivait un champ que s'il était vide (`not prefs.get(k)`). Or `mots_cles` était PRÉ-REMPLI depuis le CV → la mention explicite « finance » était ignorée. Désormais une devinette issue du CV est **écrasable** par ce que l'utilisateur dit explicitement, + filet déterministe (`_normalize_objectif`) qui force les mots-clés sur le domaine nommé (« dans la finance » → `finance`), même si le LLM le rate. C'est la base pour détecter correctement une reconversion.
