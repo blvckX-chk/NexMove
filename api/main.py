@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.24.0"
+VERSION         = "3.25.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1356,14 +1356,26 @@ def _cv_domaine_txt(profil: dict) -> str:
     skills = " ".join([str(x) for x in (comp.get("techniques", []) or [])][:6])
     return f"{dom} {skills}".strip()
 
+_RECONV_CUES = ("reconversion", "reconverti", "reconvertir", "me reconvert", "je me reconvert",
+                "changer de domaine", "changer de métier", "changer de metier", "changer de voie",
+                "me réorienter", "me reorienter", "réorientation", "reorientation", "transition pro",
+                "changer de carrière", "changer de carriere", "nouveau départ", "nouveau depart",
+                "reprendre à zéro", "reprendre a zero", "me reconvertis")
+
 def _is_reconversion(session: dict) -> bool:
-    """Vrai si le domaine CIBLÉ (mots-clés) n'a AUCUN recouvrement avec le domaine du CV
-    (ex. CV comptabilité → cible informatique). Sert à poser la bonne question, comme un conseiller."""
+    """Vrai si la personne CHANGE de domaine : soit elle le DIT explicitement (« je me reconvertis »),
+    soit le domaine ciblé (mots-clés) n'a AUCUN recouvrement avec son domaine actuel (CV ou profil
+    construit). Sert à poser la bonne question, comme un conseiller d'orientation."""
     profil = session.get("profil", {}) or {}
-    if not session.get("cv_parsed"):
+    # Signal EXPLICITE dans ce que la personne a dit -> reconversion, quels que soient les tokens.
+    if any(k in _recent_user_text(session, 8).lower() for k in _RECONV_CUES):
+        return True
+    # Sinon : écart de domaine entre le passé (CV / profil construit) et la cible.
+    cv_txt = _cv_domaine_txt(profil)
+    if not cv_txt.strip():   # pas de passé connu -> on ne peut pas juger d'une reconversion
         return False
     cible = str((profil.get("preferences", {}) or {}).get("mots_cles") or "")
-    cv_toks, cb_toks = _dom_tokens(_cv_domaine_txt(profil)), _dom_tokens(cible)
+    cv_toks, cb_toks = _dom_tokens(cv_txt), _dom_tokens(cible)
     if not cv_toks or not cb_toks:
         return False
     return cv_toks.isdisjoint(cb_toks)
@@ -4884,6 +4896,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                                     f"🎉 *Parrainage réussi !* Tu as {cnt} filleuls → *{REFERRAL_REWARD_DAYS} jours Premium* offerts. Tape /monabo.")
             except Exception as e:
                 logger.error(f"referral reward: {e}")
+            # Conseiller d'orientation SENIOR : AVANT de montrer les 1res offres, on clarifie le
+            # moment décisif. Reconversion détectée (CV ≠ cible) -> on demande bases/zéro ; sinon
+            # une info vraiment cruciale manquante -> une seule question. La recherche se relance
+            # toute seule après la réponse (reconv_resume / clarify_resume = "/veille").
+            _cq = _reconv_ask_if_needed(session, "/veille") or await _clarify_before_search(session, "/veille")
+            if _cq:
+                code = session.get("recovery_code")
+                msg = "🎉 *Profil validé !*\n\n" + _cq
+                if code:
+                    msg += (f"\n\n🔐 *Ton code de récupération :* `{code}`\n"
+                            "_Garde-le : tape /moi <code> depuis un autre appareil pour retrouver ton profil._")
+                session["_show_menu"] = True
+                _push(session, "assistant", msg); session["derniere_activite"] = now
+                return msg, session
             msg = "🎉 *Profil validé !* Voici tes offres notées :\n"
             # Première veille : on RÉUTILISE l'aperçu déjà calculé après le CV (pas de 2e recherche),
             # sinon on lance une recherche maintenant. Offres affichées AVEC leur note.

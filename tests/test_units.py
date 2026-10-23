@@ -2637,6 +2637,45 @@ def test_reconversion_pose_la_question_avant_recherche(monkeypatch):
     assert "formation en ligne" in s["profil"]["profil_plus"]["reconversion"]
 
 
+# ------------------ Conseiller SENIOR branché à la VALIDATION du profil (v3.25) ------------------
+def test_confirmation_declenche_conseiller_reconversion(monkeypatch):
+    # Au moment où le profil est validé, une reconversion (CV info -> cible finance) doit
+    # déclencher la question d'orientation AVANT de montrer des offres génériques.
+    calls = {"osint": 0}
+    async def _osint(*a, **k):
+        calls["osint"] += 1
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    prof = {"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python", "SQL"]},
+            "preferences": {"objectif": "travailler", "mots_cles": "finance"}}
+    s = {"user_id": "cf1", "etape": "CONFIRMATION", "profil": prof, "historique": [], "cv_parsed": True}
+    msg, s = _run(main.process_text_message(s, "oui c'est bon"))
+    assert s.get("onboarding_complete") is True      # profil bien validé
+    assert s.get("reconv_pending") is True            # on pose la question d'orientation
+    assert "reconversion" in msg.lower() and calls["osint"] == 0   # pas d'offres avant la réponse
+    # La réponse relance la recherche automatiquement (resume = /veille).
+    msg, s = _run(main.process_text_message(s, "je pars de zéro"))
+    assert calls["osint"] == 1 and "/formations" in msg
+
+def test_reconversion_detectee_par_mot_explicite():
+    # Même si les domaines se recoupent, un « je me reconvertis » explicite suffit.
+    s = {"user_id": "rc9", "cv_parsed": True,
+         "profil": {"formation": [{"domaine": "finance"}], "preferences": {"mots_cles": "finance quantitative"}},
+         "historique": [{"role": "user", "content": "en fait je veux me reconvertir complètement"}]}
+    assert main._is_reconversion(s) is True
+
+def test_reconversion_sans_cv_via_profil_construit():
+    # Profil construit sans upload de CV (cv_parsed absent) : la reconversion reste détectable.
+    s = {"user_id": "rc10",
+         "profil": {"formation": [{"domaine": "Comptabilité"}], "competences": {"techniques": ["Sage"]},
+                    "preferences": {"mots_cles": "développement web"}},
+         "historique": []}
+    assert main._is_reconversion(s) is True
+
+def test_pas_de_reconversion_sans_passe_connu():
+    s = {"user_id": "rc11", "profil": {"preferences": {"mots_cles": "finance"}}, "historique": []}
+    assert main._is_reconversion(s) is False
+
 # ------------------ Conseiller : reconversion -> formation si pas de base (v3.7) ------------------
 def test_reconv_has_base():
     assert main._reconv_has_base("oui j'ai fait une formation") is True
