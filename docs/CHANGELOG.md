@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.28 — Reconversion : formations dans le bon domaine, plus d'offres de l'ancien métier
+- **Bug testeur (non listé avant, corrigé).** Après avoir parlé de finance (reconversion « de zéro »), le bot promettait « *commence par une formation… /formations finance* » mais affichait ensuite **3 offres de Développeur Web** (l'ancien domaine). Deux causes :
+  1. **Zéro base → on montrait des offres d'emploi** au lieu de formations. Désormais, pour une reconversion *sans base*, le bot enchaîne sur des **formations dans le domaine CIBLE** (`/formations <cible>`), pas des offres.
+  2. **La recherche ressortait l'ancien métier** : les mots-clés de recherche incluaient les compétences/poste du CV (Python, PHP, « développeur »…). Quand une reconversion est **confirmée** (flag `reconversion_active` posé après la réponse à la question d'orientation), la recherche se concentre sur le **domaine visé uniquement** — fini les offres de dev pour quelqu'un qui vise la finance. (Hors reconversion, rien ne change : les compétences restent utilisées.)
+
 ## v3.27 — Annonce en photo lue par la vision + récap épuré
 - **Bug testeur.** Une *photo d'annonce* (bannière AltEmploi « Réceptionniste… Nous recrutons… Postulez ») + « je peux postuler ? » renvoyait « *Il ne ressemble pas à un CV* ». Cause : ces visuels stylisés (texte sur photo) font échouer l'OCR tesseract, donc aucun texte à analyser. Correctif : repli **VISION** (`extract_text_vision`, Gemini) qui lit le texte de l'image quand l'OCR ne donne rien d'exploitable → l'annonce est alors analysée normalement (compatibilité + comment postuler). Le multimodal ne dépend plus d'un OCR qui bute sur les affiches.
 - **Récap d'onboarding épuré.** On n'affiche plus les lignes vides (« Nationalité : — », « Financement : — »…). Seuls l'**Objectif**, les **Mots-clés** et les champs réellement renseignés apparaissent → onboarding plus court et lisible. Rappel ajouté qu'on peut corriger un champ (« pays : France »).
