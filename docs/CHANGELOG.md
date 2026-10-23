@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.24 — Reconversion respectée + fin du « télétravail » fantôme (bug vidéo)
+- **Bug vu en démo.** Un profil informatique qui répond « Je cherche un emploi dans la finance » voyait le récap garder les mots-clés du CV (JavaScript, PHP, SQL…) au lieu de « finance », et afficher un « Type de poste : télétravail » que l'utilisateur n'avait jamais demandé.
+- **Cause 1 (mots-clés).** L'onboarding LLM n'écrivait un champ que s'il était vide (`not prefs.get(k)`). Or `mots_cles` était PRÉ-REMPLI depuis le CV → la mention explicite « finance » était ignorée. Désormais une devinette issue du CV est **écrasable** par ce que l'utilisateur dit explicitement, + filet déterministe (`_normalize_objectif`) qui force les mots-clés sur le domaine nommé (« dans la finance » → `finance`), même si le LLM le rate. C'est la base pour détecter correctement une reconversion.
+- **Cause 2 (télétravail fantôme).** `_is_remote` scannait TOUT le dialogue récent, y compris les **aperçus d'offres postés par le bot** (qui contiennent souvent « Télétravail ») → faux positif. Il ne regarde plus que les messages de l'**utilisateur** (`_recent_user_text`).
+
 ## v3.23 — 2e lot de sources admin vérifiées + couverture sous-région / remote / ONG
 - Admin a confirmé 3 des 4 domaines restants (pages d'offres datées à l'appui) → ajoutés au Bénin : **matchworks.app, beninformations.bj, optioncarriere.bj** (+ **jobartis.com**). **gdiz-benin.com écarté** : site indexé mais postes affichés « Closed », aucune offre ouverte datée (critère non rempli).
 - **Sous-région** enrichie (offres datées, indexation confirmée) : Côte d'Ivoire (emploi.educarriere.ci, novajobs.ci, toumodi-jobs.com), Sénégal (emploi.educarriere.sn, emploi.gouv.sn), Cameroun (emploi.cm, jobinfocameroun.com, recrutement.cameroun247.com).
