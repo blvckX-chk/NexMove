@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.29.0"
+VERSION         = "3.30.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -327,6 +327,18 @@ REPONSES_POSITIVES = {"oui", "yes", "ok", "correct", "exacte", "c'est bon", "par
 
 def detecter_reponse_positive(text: str) -> bool:
     return any(r in text.lower().strip() for r in REPONSES_POSITIVES)
+
+_NEG_CUES = ("non", "nan", "recommenc", "refai", "refaire", "reprend", "pas bon", "pas correct",
+             "pas juste", "incorrect", "c'est faux", "cest faux", "annule", "tout refaire", "mauvais",
+             "ce n'est pas", "cest pas", "c'est pas ça", "pas ça")
+
+def _is_explicit_negative(text: str) -> bool:
+    """Refus EXPLICITE (à CONFIRMATION) : seul un vrai « non » doit réinitialiser le profil —
+    pas une réponse ambiguë (ex. « Au Bénin ») qui ferait perdre tout l'onboarding."""
+    low = (text or "").lower().strip()
+    if low in ("non", "nan", "no"):
+        return True
+    return any(c in low for c in _NEG_CUES)
 
 JOURS = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4, "samedi": 5, "dimanche": 6}
 
@@ -1202,7 +1214,10 @@ async def _onboard_llm_turn(session: dict, t: str):
               "Réponds TOUJOURS à ses questions/objections (brièvement, honnêtement). "
               "Pose AU PLUS UNE question à la fois, et SEULEMENT si un champ VRAIMENT utile manque encore. "
               "nationalité et pays ne servent QUE pour des études ou une mobilité internationale : "
-              "ne les demande JAMAIS pour du télétravail ou un emploi local. "
+              "ne les demande JAMAIS pour un EMPLOI (local par défaut), du télétravail ou un freelance. "
+              "RÈGLE CLÉ : dès que tu connais l'OBJECTIF et le DOMAINE, NE pose PLUS de question "
+              "(surtout pas le pays pour un emploi) : renvoie done=true avec un reply COURT SANS point "
+              "d'interrogation. Ne pose jamais une question ET ne conclus pas en même temps. "
               "EXTRACTION : ne capte QUE ce que la personne dit EXPLICITEMENT (n'invente rien ; laisse vide sinon). "
               "On a ASSEZ (done=true) dès qu'on connaît son OBJECTIF et son DOMAINE/compétences (le reste est bonus). "
               "Champs possibles : objectif (emploi/études/bourse/télétravail/mobilité/tous), mots_cles (domaine), "
@@ -1244,6 +1259,11 @@ async def _onboard_llm_turn(session: dict, t: str):
     reply = _trim_to_sentence(str(r.get("reply", "") or "").strip())
     session["_onb_turns"] = session.get("_onb_turns", 0) + 1
     done = bool(r.get("done")) or bool(prefs.get("objectif") and prefs.get("mots_cles")) or session["_onb_turns"] >= 7
+    # ANTI-AMBIGUÏTÉ : on ne déclare JAMAIS le profil « prêt » si on pose encore une question.
+    # Sinon on empilait « Dans quel pays ? » + le récap « Oui/Non » : la réponse de l'utilisateur
+    # (ex. « Au Bénin ») était alors prise pour un « ni oui ni non » et tout l'onboarding était réinitialisé.
+    if reply and reply.rstrip().endswith("?"):
+        done = False
     return reply, done
 
 # B1 · pré-remplissage des préférences à partir du CV (réduit le nombre de questions).
@@ -4975,12 +4995,28 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             if up:
                 msg += "\n\n" + up
             session["_show_menu"] = True   # menu affiché UNE fois, à la fin de l'onboarding
-        else:
+        elif _is_explicit_negative(t):
             session["etape"] = "PREFERENCES"
-            # On repart de zéro : vider les réponses pour re-parcourir le plan adaptatif.
+            # Refus EXPLICITE -> on repart de zéro (re-parcours du plan adaptatif).
             profil = session.get("profil", {}) or {}
             profil["preferences"] = {}; session["profil"] = profil
             msg = "Pas de souci, on reprend.\n\n" + _ask_pref(session, "objectif")
+        else:
+            # Réponse AMBIGUË (ni oui ni non, ex. « Au Bénin ») -> on NE réinitialise JAMAIS (sinon on
+            # perd tout le profil). On tente une correction de champ, sinon on garde tout et on re-propose.
+            edited = _try_profil_edit(session, t)
+            if edited:
+                prefs = session.get("profil", {}).get("preferences", {}) or {}
+                msg = edited + "\n\n" + _resume_prefs(prefs)
+            else:
+                prefs = session.get("profil", {}).get("preferences", {}) or {}
+                # Si ça ressemble à un lieu/pays, on le propose comme pays cible (sans l'imposer).
+                hint = ""
+                if not prefs.get("pays_cibles") and re.search(r"[A-Za-zÀ-ÿ]{3,}", t) and len(t.strip()) <= 40:
+                    hint = (f"\n\n_Si tu voulais préciser un pays, écris par ex. « pays : {_md_clean(t.strip()[:30])} »._")
+                msg = ("👍 Je garde ton profil. Réponds *Oui* pour lancer, *Non* pour tout refaire, "
+                       "ou corrige un champ (ex. « pays : Bénin »)." + hint + "\n\n" + _resume_prefs(prefs))
+            session["_kb_options"] = _CONFIRM_KB
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
