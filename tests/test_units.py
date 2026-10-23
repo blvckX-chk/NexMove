@@ -2034,6 +2034,37 @@ def test_onboard_llm_extraction_et_done(monkeypatch):
     assert p["langues_opportunite"] == "français" and "nationalite" not in p   # vide non stocké
     assert done is True
 
+def test_onboard_question_ne_conclut_pas(monkeypatch):
+    # Le LLM pose une question ET l'objectif+domaine sont connus -> on ne doit PAS conclure
+    # (sinon on empile « Dans quel pays ? » + le récap Oui/Non = ambigu).
+    async def fake_groq(system, user, **kw):
+        return {"extracted": {"objectif": "emploi", "mots_cles": "finance"},
+                "reply": "Dans quel pays veux-tu travailler dans la finance ?", "done": True}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "oq1", "profil": {}, "historique": []}
+    reply, done = _run(main._onboard_llm_turn(session, "je veux travailler dans la finance"))
+    assert reply.endswith("?") and done is False   # on pose la question, on ne conclut pas
+
+def test_is_explicit_negative():
+    assert main._is_explicit_negative("non") and main._is_explicit_negative("recommence")
+    assert main._is_explicit_negative("c'est faux")
+    assert not main._is_explicit_negative("Au Bénin")   # ambigu -> PAS un refus
+    assert not main._is_explicit_negative("oui c'est bon")
+
+def test_confirmation_reponse_ambigue_ne_reset_pas():
+    prof = {"preferences": {"objectif": "emploi", "mots_cles": "finance",
+                            "langues_opportunite": "les deux", "niveau": "professionnel"}}
+    s = {"user_id": "cf9", "etape": "CONFIRMATION", "profil": prof, "historique": []}
+    msg, s = _run(main.process_text_message(s, "Au Bénin"))
+    # On NE réinitialise PAS : le profil et ses mots-clés sont conservés.
+    assert s["profil"]["preferences"].get("mots_cles") == "finance"
+    assert "on reprend" not in msg.lower()           # pas de reset
+    assert s.get("etape") == "CONFIRMATION"           # toujours à l'étape de confirmation
+    # Un « non » explicite, lui, réinitialise bien.
+    s2 = {"user_id": "cf10", "etape": "CONFIRMATION", "profil": {"preferences": {"objectif": "emploi", "mots_cles": "x"}}, "historique": []}
+    msg2, s2 = _run(main.process_text_message(s2, "non"))
+    assert "on reprend" in msg2.lower() and s2["profil"]["preferences"] == {}
+
 def test_onboard_llm_ninvente_pas(monkeypatch):
     async def fake_groq(system, user, **kw):
         return {"extracted": {"objectif": "", "mots_cles": "", "nationalite": "non concerné"}, "reply": "ok", "done": False}

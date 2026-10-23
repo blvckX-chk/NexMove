@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.30 — Fin de l'onboarding ambigu (question + récap empilés) + pas de reset accidentel
+- **Bug testeur grave.** Le bot posait « Dans quel pays… finance ? » **ET** affichait le récap « Oui/Non » en même temps. L'utilisateur répondait « Au Bénin » → pris pour « ni oui ni non » → **tout l'onboarding était réinitialisé** (« Pas de souci, on reprend »). Frustration + perte de profil.
+- **Correctifs :**
+  1. L'onboarding ne déclare JAMAIS le profil « prêt » tant qu'il pose une question (plus d'empilement question + confirmation).
+  2. Prompt durci : dès que l'objectif et le domaine sont connus, le bot NE demande plus le pays pour un emploi (local par défaut) et conclut par un message court sans question.
+  3. À la confirmation, une réponse **ambiguë** (ni oui ni non) ne réinitialise plus rien : le profil est conservé, on tente une correction de champ, sinon on re-propose proprement. Seul un **« non » explicite** réinitialise.
+
 ## v3.29 — Invariant de robustesse : jamais de silence sur un crash
 - Audit de bout en bout. Faille trouvée : si une fonction plantait de façon **inattendue**, l'erreur était loguée mais **l'utilisateur ne recevait rien** (silence = bot « cassé » à ses yeux). Désormais `route_incoming` garantit l'invariant : quoi qu'il arrive, l'utilisateur reçoit une **réponse propre** (« petit souci technique, réessaie… /contact »), jamais un silence ni un stacktrace. L'admin est informé via les logs (`exc_info`).
 
