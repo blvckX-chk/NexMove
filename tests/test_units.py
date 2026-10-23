@@ -2676,6 +2676,19 @@ def test_pas_de_reconversion_sans_passe_connu():
     s = {"user_id": "rc11", "profil": {"preferences": {"mots_cles": "finance"}}, "historique": []}
     assert main._is_reconversion(s) is False
 
+def test_cv_domaine_label_propre(monkeypatch):
+    # Domaine de formation vide + diplôme « Licence » : on n'affiche PAS « Licence JavaScript PHP… »
+    prof = {"formation": [{"diplome": "Licence", "domaine": "", "etablissement": "IFRI"}],
+            "competences": {"techniques": ["JavaScript", "PHP", "Python", "SQL"]}}
+    lbl = main._cv_domaine_label(prof)
+    assert "Licence" not in lbl and lbl == "JavaScript, PHP"
+    # Domaine réel présent : on l'affiche tel quel.
+    prof2 = {"formation": [{"domaine": "Comptabilité et Gestion"}], "competences": {"techniques": ["Sage"]}}
+    assert main._cv_domaine_label(prof2) == "Comptabilité et Gestion"
+    # La question de reconversion utilise ce libellé propre.
+    s = {"profil": {**prof, "preferences": {"mots_cles": "finance"}}}
+    assert "Licence JavaScript" not in main._reconversion_question(s)
+
 # ------------------ Conseiller : reconversion -> formation si pas de base (v3.7) ------------------
 def test_reconv_has_base():
     assert main._reconv_has_base("oui j'ai fait une formation") is True

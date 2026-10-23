@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.26 — Libellé de reconversion propre
+- La question de reconversion affichait « ton CV est plutôt en *Licence JavaScript PHP Python SQL* » (empilement diplôme + compétences, moche). Nouveau `_cv_domaine_label` : affiche le **domaine de formation réel** s'il existe, sinon 2 compétences clés (« JavaScript, PHP »), jamais les mots de diplôme. La DÉTECTION de reconversion reste inchangée (elle, utilise le texte brut). Note : la détection et le déclenchement à la validation (v3.25) sont confirmés OK sur le profil réel testé.
+
 ## v3.25 — Conseiller d'orientation poussé au max (OODA senior)
 - **Le conseiller intervient au moment décisif.** Avant, la question de reconversion / clarification n'était posée que sur un `/veille` explicite ultérieur. Au **premier résultat juste après la validation du profil**, le bot montrait des offres génériques et ratait le moment conseiller. Désormais, dès que le profil est validé, si une **reconversion** est détectée (ou une info vraiment cruciale manque), le bot pose **une** question d'orientation (bases/zéro, pays, niveau…) *avant* les offres — la recherche se relance toute seule après la réponse. C'est l'impression la plus importante pour ne pas perdre l'utilisateur.
 - **Reconversion mieux détectée (quelles que soient les questions).** (1) Elle fonctionne maintenant aussi pour un profil **construit via /creercv** (sans CV uploadé), pas seulement sur un CV analysé. (2) Une mention **explicite** (« je me reconvertis », « changer de domaine/métier/voie », « me réorienter », « transition pro »…) déclenche la question même si les mots-clés se recoupent par hasard. (3) Pas de faux positif quand aucun passé n'est connu.
