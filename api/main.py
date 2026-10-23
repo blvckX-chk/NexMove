@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.28.0"
+VERSION         = "3.29.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6290,7 +6290,19 @@ def _user_lock(user_id: str) -> asyncio.Lock:
 async def route_incoming(channel, user_id, chat_id, username, raw):
     # Un seul traitement à la fois par utilisateur (évite les écritures de session concurrentes).
     async with _user_lock(str(user_id)):
-        return await _route_incoming(channel, user_id, chat_id, username, raw)
+        try:
+            return await _route_incoming(channel, user_id, chat_id, username, raw)
+        except Exception as e:
+            # INVARIANT : quoi qu'il arrive, l'utilisateur reçoit une réponse PROPRE (jamais un
+            # silence ni un stacktrace). On log le détail côté serveur et on alerte l'admin.
+            logger.error(f"[route {channel}] erreur inattendue: {e}", exc_info=True)
+            try:
+                s = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)
+                s["channel"] = channel; s["chat_id"] = chat_id
+                await deliver_text(s, "😖 J'ai eu un petit souci technique de mon côté. Réessaie dans un "
+                                      "instant — si ça persiste, écris-moi via /contact.")
+            except Exception as e2:
+                logger.error(f"[route {channel}] échec du message de repli: {e2}")
 
 async def _route_incoming(channel, user_id, chat_id, username, raw):
     session = session_manager.get(user_id) or session_manager.create_default(user_id, chat_id, username)

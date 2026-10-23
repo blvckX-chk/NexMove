@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.29 — Invariant de robustesse : jamais de silence sur un crash
+- Audit de bout en bout. Faille trouvée : si une fonction plantait de façon **inattendue**, l'erreur était loguée mais **l'utilisateur ne recevait rien** (silence = bot « cassé » à ses yeux). Désormais `route_incoming` garantit l'invariant : quoi qu'il arrive, l'utilisateur reçoit une **réponse propre** (« petit souci technique, réessaie… /contact »), jamais un silence ni un stacktrace. L'admin est informé via les logs (`exc_info`).
+
 ## v3.28 — Reconversion : formations dans le bon domaine, plus d'offres de l'ancien métier
 - **Bug testeur (non listé avant, corrigé).** Après avoir parlé de finance (reconversion « de zéro »), le bot promettait « *commence par une formation… /formations finance* » mais affichait ensuite **3 offres de Développeur Web** (l'ancien domaine). Deux causes :
   1. **Zéro base → on montrait des offres d'emploi** au lieu de formations. Désormais, pour une reconversion *sans base*, le bot enchaîne sur des **formations dans le domaine CIBLE** (`/formations <cible>`), pas des offres.

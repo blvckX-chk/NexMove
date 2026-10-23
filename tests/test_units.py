@@ -1425,6 +1425,17 @@ def test_rate_limiter(monkeypatch):
     main._RATE_BUCKET.clear()
     assert all(c.get("/health").status_code == 200 for _ in range(6))
 
+# ── INVARIANT : jamais de silence ni de stacktrace sur un crash inattendu (v3.29) ──
+def test_route_incoming_repli_sur_crash(monkeypatch):
+    sent = {}
+    async def fake_deliver(session, text, **kw): sent["reply"] = text; return True
+    async def boom(*a, **k): raise RuntimeError("panne simulée au cœur du routage")
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "_route_incoming", boom)
+    _run(main.route_incoming("telegram", "crashuser", "42", "ana", {"message": {"text": "salut"}}))
+    assert "souci technique" in sent.get("reply", "").lower()
+    assert "traceback" not in sent.get("reply", "").lower() and "error" not in sent.get("reply", "").lower()
+
 # ── Mémoire de contexte conversationnel (v2.67) ──
 def test_conversation_context(monkeypatch):
     monkeypatch.setattr(main.opp_store, "list_candidatures", lambda uid: [])
