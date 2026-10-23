@@ -2040,6 +2040,40 @@ def test_onboard_llm_turn_vers_confirmation(monkeypatch):
     msg, session = _run(main.process_text_message(session, "je cherche un emploi en data"))
     assert session["etape"] == "CONFIRMATION" and "Parfait" in msg
 
+# ── Reconversion : une mention explicite écrase les mots-clés DEVINÉS du CV (v3.24) ──
+def test_onboard_reconversion_ecrase_mots_cles_cv(monkeypatch):
+    # Pire cas : le LLM RATE le domaine (extraction vide) -> le filet déterministe doit forcer « finance ».
+    async def fake_groq(system, user, **kw):
+        return {"extracted": {"objectif": "emploi", "mots_cles": ""}, "reply": "Noté.", "done": True}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "rc1",
+               "profil": {"preferences": {"mots_cles": "JavaScript, PHP, Python"}},
+               "_cv_prefilled": ["mots_cles"], "historique": []}
+    _run(main._onboard_llm_turn(session, "Je cherche un emploi dans la finance"))
+    assert session["profil"]["preferences"]["mots_cles"] == "finance"   # CV écrasé par la mention explicite
+    # Et le champ n'est plus une « devinette » : il est confirmé.
+    assert "mots_cles" not in (session.get("_cv_prefilled") or [])
+
+# ── Pas de télétravail fantôme déduit du TEXTE DES OFFRES postées par le bot (v3.24) ──
+def test_onboard_pas_de_teletravail_depuis_offres_du_bot(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"extracted": {"objectif": "emploi", "mots_cles": "finance"}, "reply": "Ok.", "done": True}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    session = {"user_id": "rc2", "profil": {"preferences": {}},
+               "historique": [
+                   {"role": "assistant", "content": "🔎 Déjà des offres : Développeur Web, Bénin, Télétravail"},
+                   {"role": "user", "content": "Je cherche un emploi dans la finance"}]}
+    _run(main._onboard_llm_turn(session, "Je cherche un emploi dans la finance"))
+    # L'utilisateur n'a JAMAIS demandé de télétravail -> le type de poste ne doit pas être forcé.
+    assert session["profil"]["preferences"].get("type_emploi") != "télétravail"
+
+def test_is_remote_ignore_texte_du_bot():
+    # Le bot a écrit « Télétravail » dans un aperçu d'offre, l'utilisateur n'a rien demandé de tel.
+    session = {"historique": [
+        {"role": "assistant", "content": "Offre : Développeur, Télétravail"},
+        {"role": "user", "content": "je cherche un emploi dans la finance"}]}
+    assert not main._is_remote(session, {})
+
 def test_onboard_llm_fallback_si_echec(monkeypatch):
     async def boom(system, user, **kw):
         raise RuntimeError("llm down")

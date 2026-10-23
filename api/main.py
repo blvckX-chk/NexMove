@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.23.0"
+VERSION         = "3.24.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -937,9 +937,11 @@ def _is_remote(session: dict, prefs: dict) -> bool:
     """Détecte une intention de TÉLÉTRAVAIL/freelance (depuis les préférences OU les derniers messages).
     Dans ce cas, les questions de mobilité (nationalité, visa, certifs de langue, financement) n'ont pas
     de sens : on les saute."""
+    # N.B. on ne regarde QUE les messages de l'utilisateur — pas le dialogue complet : les aperçus
+    # d'offres postés par le bot peuvent contenir « Télétravail » et déclenchaient un faux positif.
     blob = " ".join([str(prefs.get("objectif", "")), str(prefs.get("mots_cles", "")),
                      str(prefs.get("pays_cibles", "")), str(prefs.get("type_emploi", "")),
-                     _recent_dialogue(session, 6)]).lower()
+                     _recent_user_text(session, 6)]).lower()
     return any(k in blob for k in _REMOTE_KW)
 
 def _is_remote_profil(prefs: dict, cible: str = "") -> bool:
@@ -1218,11 +1220,24 @@ async def _onboard_llm_turn(session: dict, t: str):
     if not isinstance(r, dict):
         return None
     ext = r.get("extracted", {}) or {}
+    cv_guessed = set(session.get("_cv_prefilled") or [])   # champs seulement DEVINÉS depuis le CV
     for k in _ONBOARD_FIELDS:
         v = str(ext.get(k, "") or "").strip()
-        if v and v.lower() not in _ONBOARD_VIDES and not prefs.get(k):
+        # On écrit si le champ est vide OU s'il n'était qu'une devinette du CV (mention explicite
+        # de l'utilisateur -> prioritaire, ex. reconversion informatique -> finance).
+        if v and v.lower() not in _ONBOARD_VIDES and (not prefs.get(k) or k in cv_guessed):
             prefs[k] = v[:120]
-    # Télétravail : on complète le type de poste si l'intention est claire.
+            cv_guessed.discard(k)   # désormais confirmé par l'utilisateur, plus une devinette
+    # Ceinture + bretelles : si la personne NOMME explicitement un domaine (« dans la finance »),
+    # on force les mots-clés dessus, même si le LLM l'a raté et que le CV avait pré-rempli autre chose.
+    _obj, _dom = _normalize_objectif(t)
+    if _dom:
+        prefs["mots_cles"] = _dom
+        cv_guessed.discard("mots_cles")
+        if _obj in ("travailler", "étudier", "bourse", "télétravail", "tous") and not prefs.get("objectif"):
+            prefs["objectif"] = _obj
+    session["_cv_prefilled"] = list(cv_guessed)
+    # Télétravail : on complète le type de poste SEULEMENT si l'utilisateur l'a vraiment exprimé.
     if _is_remote(session, prefs) and not prefs.get("type_emploi"):
         prefs["type_emploi"] = "télétravail"
     profil["preferences"] = prefs; session["profil"] = profil
@@ -2436,6 +2451,13 @@ def _recent_dialogue(session: dict, n: int = 4) -> str:
         if txt:
             out.append(f"{who}: {txt[:160]}")
     return "\n".join(out) if out else "(début de conversation)"
+
+def _recent_user_text(session: dict, n: int = 6) -> str:
+    """Uniquement les derniers messages de l'UTILISATEUR (pas ceux du bot) — pour détecter une
+    INTENTION réelle sans être pollué par le texte des offres/relances postées par le bot."""
+    hist = session.get("historique", []) or []
+    msgs = [str(h.get("content", "")).strip() for h in hist if h.get("role") == "user"]
+    return " ".join(m for m in msgs[-n:] if m)
 
 # Indices qu'un message contient de l'info de PROFIL PROFOND (motivation, contraintes, aspirations…).
 _PROF_CUES = ("je veux", "j'aimerais", "j'aimerai", "mon rêve", "mon but", "mon objectif", "parce que",
@@ -4714,6 +4736,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if etape == "CV_RECU" and detecter_reponse_positive(t):
         session["etape"] = "PREFERENCES"
         filled = _prefill_prefs_from_cv(session)   # B1 : moins de questions grâce au CV
+        # Ces champs sont des DEVINETTES issues du CV : une mention EXPLICITE de l'utilisateur
+        # (ex. « je cherche un emploi dans la finance » alors que le CV est en informatique) doit
+        # pouvoir les écraser (reconversion). On mémorise lesquels pour autoriser l'écrasement.
+        session["_cv_prefilled"] = list(filled)
         # Recherche AUTO : des offres notées tout de suite après le CV (valeur immédiate).
         preview = ""
         try:
