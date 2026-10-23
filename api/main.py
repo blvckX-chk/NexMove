@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.27.0"
+VERSION         = "3.28.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2600,16 +2600,21 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         profil = session.setdefault("profil", {})
         pp = profil.setdefault("profil_plus", {})
         pp["reconversion"] = t.strip()[:200]   # ce que la personne dit de ses bases (profil profond)
+        pp["reconversion_active"] = True        # cible = nouveau domaine -> ne pas resservir l'ancien
         a_base = _reconv_has_base(t)
         prefs = profil.setdefault("preferences", {})
         cible = str(prefs.get("mots_cles") or "ce domaine")[:40]
         # Conseiller : part de zéro -> on oriente d'abord FORMATION ; a des bases -> on vise débutant/junior.
         if a_base is False:
             prefs["niveau"] = "débutant"
+            # Zéro base -> on montre d'ABORD des FORMATIONS dans le domaine CIBLE (pas des offres
+            # d'emploi de l'ancien métier). C'est le conseil juste : poser une base avant de postuler.
+            cible_dom = str(prefs.get("mots_cles") or "").strip()
+            if cible_dom:
+                session["reconv_resume"] = f"/formations {cible_dom}"
             lead = (f"💡 Partir de zéro, c'est tout à fait faisable — et c'est plus malin de poser une *base crédible* "
-                    f"avant de postuler. Pour *{_md_clean(cible)}*, commence par une *formation/certification* "
-                    f"(souvent en ligne et abordable) : tape `/formations {_md_clean(cible)}`.\n"
-                    "En parallèle, voici des pistes accessibles *débutant* 👇")
+                    f"avant de postuler. Pour *{_md_clean(cible)}*, le mieux est de commencer par une "
+                    f"*formation/certification* (souvent en ligne et abordable). Voici des pistes de formation 👇")
         elif a_base is True:
             prefs["niveau"] = prefs.get("niveau") or "débutant"
             lead = (f"👍 Super, tu as déjà des bases en *{_md_clean(cible)}* — on valorise ça en visant des postes "
@@ -7637,11 +7642,19 @@ def _profil_search_terms(profil: dict) -> dict:
     # Priorité : mots-clés visés > dernier poste > domaine de formation > résumé.
     domaine = (mots_list[0] if mots_list else "") or last_poste or form_dom \
         or (str(profil.get("resume_profil", ""))[:50]) or "opportunités"
-    kw = []
-    for x in (mots_list + [last_poste, form_dom] + list(comp)):
-        x = (x or "").strip()
-        if x and x.lower() not in [k.lower() for k in kw]:
-            kw.append(x)
+    # RECONVERSION CONFIRMÉE (la personne a répondu à la question d'orientation) : on NE rajoute PAS
+    # les compétences/poste de l'ancien domaine — sinon on ressort des offres du passé (ex. profil dev
+    # qui vise la finance → pas d'offres de développeur). On se fie au flag EXPLICITE, pas à une
+    # heuristique de tokens (qui confondrait un simple écart de vocabulaire avec une reconversion).
+    reconv = bool(mots_list) and bool((profil.get("profil_plus") or {}).get("reconversion_active"))
+    if reconv:
+        kw = list(dict.fromkeys([m for m in mots_list if m.strip()]))[:6]
+    else:
+        kw = []
+        for x in (mots_list + [last_poste, form_dom] + list(comp)):
+            x = (x or "").strip()
+            if x and x.lower() not in [k.lower() for k in kw]:
+                kw.append(x)
     return {"domaine": domaine, "keywords": kw[:6], "mots_list": mots_list}
 
 def _build_osint_queries(terms: dict, objectif: str, type_mot: str, zone: str,

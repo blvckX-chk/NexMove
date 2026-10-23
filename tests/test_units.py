@@ -2645,7 +2645,13 @@ def test_confirmation_declenche_conseiller_reconversion(monkeypatch):
     async def _osint(*a, **k):
         calls["osint"] += 1
         return {"message": "offres", "opportunites": [], "visa_info": {}}
+    async def _tav(q, n=6): return [{"title": "Coursera Finance", "url": "http://c/f", "content": "bases"}]
+    async def _llm(system, prompt, **k):
+        return {"formations": [{"titre": "Initiation Finance", "organisme": "Coursera", "cout": "gratuit"}],
+                "conseil": "démarre ici"}
     monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "tavily_search", _tav)
+    monkeypatch.setattr(main, "call_groq", _llm)
     prof = {"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python", "SQL"]},
             "preferences": {"objectif": "travailler", "mots_cles": "finance"}}
     s = {"user_id": "cf1", "etape": "CONFIRMATION", "profil": prof, "historique": [], "cv_parsed": True}
@@ -2653,9 +2659,10 @@ def test_confirmation_declenche_conseiller_reconversion(monkeypatch):
     assert s.get("onboarding_complete") is True      # profil bien validé
     assert s.get("reconv_pending") is True            # on pose la question d'orientation
     assert "reconversion" in msg.lower() and calls["osint"] == 0   # pas d'offres avant la réponse
-    # La réponse relance la recherche automatiquement (resume = /veille).
+    # Zéro base -> on montre des FORMATIONS dans le domaine cible, PAS des offres d'emploi.
     msg, s = _run(main.process_text_message(s, "je pars de zéro"))
-    assert calls["osint"] == 1 and "/formations" in msg
+    assert calls["osint"] == 0 and "formation" in msg.lower()
+    assert s["profil"]["profil_plus"].get("reconversion_active") is True
 
 def test_reconversion_detectee_par_mot_explicite():
     # Même si les domaines se recoupent, un « je me reconvertis » explicite suffit.
@@ -2697,16 +2704,43 @@ def test_reconv_has_base():
     assert main._reconv_has_base("peut-être") is None
 
 def test_reconversion_sans_base_oriente_formation(monkeypatch):
+    # Zéro base -> on ne montre PAS des offres d'emploi mais des FORMATIONS dans le domaine cible.
+    seen = {"osint": 0}
     async def _osint(*a, **k):
-        return {"message": "offres débutant", "opportunites": [], "visa_info": {}}
+        seen["osint"] += 1
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    async def _tav(q, n=6): return [{"title": "Coursera Finance", "url": "http://c/f", "content": "bases finance"}]
+    async def _llm(system, prompt, **k):
+        return {"formations": [{"titre": "Initiation Finance", "organisme": "Coursera", "type": "MOOC",
+                                "url": "http://c/f", "cout": "gratuit", "raison": "bases"}], "conseil": "commence ici"}
     monkeypatch.setattr(main, "run_osint", _osint)
-    prof = {"formation": [{"domaine": "Comptabilité"}], "competences": {"techniques": ["Sage"]},
-            "preferences": {"mots_cles": "informatique"}}
+    monkeypatch.setattr(main, "tavily_search", _tav)
+    monkeypatch.setattr(main, "call_groq", _llm)
+    prof = {"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python"]},
+            "preferences": {"mots_cles": "finance"}}
     s = {"user_id": "rec2", "etape": "ACTIF", "profil": prof, "historique": [], "cv_parsed": True,
          "onboarding_complete": True, "reconv_pending": True, "reconv_resume": "/veille"}
     msg, s = _run(main.process_text_message(s, "je pars de zéro, aucune base"))
-    assert "/formations" in msg and "débutant" in msg.lower()
+    assert "formation" in msg.lower() and "Finance" in msg   # des formations, pas des offres dev
+    assert seen["osint"] == 0                                 # aucune recherche d'offres d'emploi
     assert s["profil"]["preferences"]["niveau"] == "débutant"
+
+def test_search_terms_reconversion_ignore_competences_cv():
+    # Reconversion CONFIRMÉE (flag reconversion_active) : les mots-clés NE doivent PAS contenir les
+    # compétences dev (sinon on ressort des offres de développeur).
+    prof = {"experience": [{"poste": "Développeur web"}],
+            "competences": {"techniques": ["Python", "PHP", "JavaScript"]},
+            "formation": [{"domaine": "Informatique"}],
+            "profil_plus": {"reconversion_active": True},
+            "preferences": {"mots_cles": "finance"}}
+    terms = main._profil_search_terms(prof)
+    assert terms["domaine"] == "finance"
+    blob = " ".join(terms["keywords"]).lower()
+    assert "python" not in blob and "php" not in blob and "développeur" not in blob
+    # SANS le flag (simple écart de vocabulaire, pas une reconversion) : on garde les compétences.
+    prof2 = {"competences": {"techniques": ["Python"]}, "formation": [{"domaine": "Informatique"}],
+             "preferences": {"mots_cles": "développement web"}}
+    assert "python" in " ".join(main._profil_search_terms(prof2)["keywords"]).lower()
 
 def test_reconversion_avec_base_vise_junior(monkeypatch):
     async def _osint(*a, **k):
