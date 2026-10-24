@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.32 — Harnais de scénarios pièges élargi (QA proactive)
+- +6 scénarios de bout en bout dans `tests/test_scenarios.py` (15 au total), pour attraper les régressions AVANT les testeurs/le jury : commande admin refusée hors admin, suppression qui exige confirmation, reconversion détectée à la validation (→ formations), réponse ambiguë à la confirmation qui ne réinitialise pas, re-ciblage en conversation, et messages vides/emoji sans crash. 443 tests au total, verts.
+
 ## v3.31 — Re-ciblage EN CONVERSATION (la logique suit partout)
 - Dernier maillon de cohérence du conseiller. Avant, quand un utilisateur **déjà onboardé** disait « je veux aller en finance » / « finalement je préfère le marketing », le bot **conseillait** mais ne mettait **pas à jour son profil** ni ne relançait la recherche — la cible stockée (et le digest quotidien) restaient sur l'ancien domaine.
 - Désormais un **détecteur de bascule** (`_detect_target_switch`) repère un changement explicite de domaine, **met à jour le profil** (`mots_cles`/objectif), **ré-évalue la reconversion** (CV ≠ nouvelle cible → question bases/zéro) et **relance la recherche** (`/mobilite <domaine>`) ou les **formations** si zéro base. Message clair : « 👍 Ok, je recentre sur *finance*. » La logique conseiller s'applique maintenant aussi EN conversation, pas seulement pendant l'onboarding.

@@ -121,3 +121,68 @@ def test_scn_agent_whitelist_sure():
     # Les actions de conseil le sont.
     for safe in ("chances", "compatibilite", "commentpostuler"):
         assert safe in main._CHAINABLE_ACTIONS
+
+
+# ── Scénario 10 : commande admin depuis un compte NON-admin → refusée ──
+def test_scn_admin_cmd_refusee_non_admin(monkeypatch):
+    monkeypatch.setattr(main, "_is_admin", lambda s: False)
+    s = _sess(user_id="pas-admin")
+    msg, s = _run(main.process_text_message(s, "/stats"))
+    assert "administrateur" in msg.lower() or "réservé" in msg.lower() or "reserve" in msg.lower()
+
+
+# ── Scénario 11 : suppression de données → demande TOUJOURS confirmation ──
+def test_scn_suppression_demande_confirmation():
+    s = _sess(profil={"identite": {"nom": "Awa"}, "preferences": {"mots_cles": "data"}})
+    msg, s = _run(main.process_text_message(s, "/supprimer"))
+    assert s.get("awaiting_delete_confirm") is True          # on attend un OUI/NON
+    assert s["profil"]["identite"]["nom"] == "Awa"            # rien n'est supprimé sans confirmation
+
+
+# ── Scénario 12 : reconversion détectée À LA VALIDATION du profil ──
+def test_scn_reconversion_a_la_validation(monkeypatch):
+    async def _osint(*a, **k):
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    async def _tav(q, n=6): return [{"title": "Coursera Finance", "url": "http://c/f", "content": "x"}]
+    async def _llm(system, prompt, **k):
+        return {"formations": [{"titre": "Initiation Finance", "organisme": "Coursera", "cout": "gratuit"}]}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "tavily_search", _tav)
+    monkeypatch.setattr(main, "call_groq", _llm)
+    s = _sess(etape="CONFIRMATION", cv_parsed=True, onboarding_complete=False,
+              profil={"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python"]},
+                      "preferences": {"objectif": "travailler", "mots_cles": "finance"}})
+    msg, s = _run(main.process_text_message(s, "oui c'est bon"))
+    assert s.get("reconv_pending") is True and "reconversion" in msg.lower()
+    # « de zéro » -> on oriente FORMATIONS, pas des offres de l'ancien métier.
+    msg, s = _run(main.process_text_message(s, "je pars de zéro"))
+    assert "formation" in msg.lower()
+
+
+# ── Scénario 13 : réponse ambiguë à la confirmation → NE réinitialise PAS ──
+def test_scn_confirmation_ambigue_ne_reset_pas():
+    s = _sess(etape="CONFIRMATION",
+              profil={"preferences": {"objectif": "emploi", "mots_cles": "finance"}})
+    msg, s = _run(main.process_text_message(s, "Au Bénin"))
+    assert s["profil"]["preferences"].get("mots_cles") == "finance"   # profil conservé
+    assert "on reprend" not in msg.lower()
+
+
+# ── Scénario 14 : re-ciblage en conversation → met à jour le profil + relance ──
+def test_scn_reciblage_en_conversation(monkeypatch):
+    async def _osint(*a, **k):
+        return {"message": "offres marketing", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "_veille_gate", lambda s: (True, ""))
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    s = _sess(profil={"preferences": {"objectif": "travailler", "mots_cles": "comptabilité"}})
+    msg, s = _run(main.process_text_message(s, "finalement je préfère le marketing"))
+    assert s["profil"]["preferences"]["mots_cles"] == "marketing" and "recentre" in msg.lower()
+
+
+# ── Scénario 15 : message vide / emoji seul → réponse propre, pas de crash ──
+def test_scn_message_vide_ou_emoji_pas_de_crash():
+    for weird in ("", "   ", "🙂", "?", "a"):
+        s = _sess()
+        msg, s = _run(main.process_text_message(s, weird))
+        assert isinstance(msg, str)   # toujours une réponse, jamais une exception
