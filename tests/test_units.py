@@ -1425,6 +1425,41 @@ def test_rate_limiter(monkeypatch):
     main._RATE_BUCKET.clear()
     assert all(c.get("/health").status_code == 200 for _ in range(6))
 
+# ── Digest quotidien : jamais d'offre à deadline dépassée (v3.33) ──
+def test_digest_filtre_offres_perimees(monkeypatch):
+    sent = {}
+    async def fake_deliver(session, text, **kw): sent["msg"] = text; return True
+    purged = {"ids": None}
+    sess = {"user_id": "dg1", "chat_id": "229", "notif": {"enabled": True, "freq": "quotidien"}}
+    # (id,titre,orga,type,url,financement,deadline,score,raison)
+    rows = [
+        (1, "Bourse PÉRIMÉE", "Org A", "bourse", "http://a", "", "Programme 2023-2024", 90, "x"),
+        (2, "Offre VALIDE", "Org B", "emploi", "http://b", "", "2027-12-31", 80, "y"),
+    ]
+    monkeypatch.setattr(main.session_manager, "list_active", lambda: [sess])
+    monkeypatch.setattr(main.opp_store, "pending", lambda uid, ms=60: rows)
+    monkeypatch.setattr(main.opp_store, "user_stats", lambda uid, days=7: {"recent": 0, "total": 2})
+    monkeypatch.setattr(main.opp_store, "mark_notified", lambda ids: purged.update(ids=list(ids)))
+    monkeypatch.setattr(main.opp_store, "all_candidatures", lambda: [])
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    _run(main.notify(_auth=True))
+    assert "Offre VALIDE" in sent.get("msg", "")
+    assert "PÉRIMÉE" not in sent.get("msg", "")          # la bourse clôturée n'est jamais envoyée
+    assert purged["ids"] is not None and 1 in purged["ids"]   # mais elle est purgée du pool
+
+def test_digest_tout_perime_pas_d_envoi(monkeypatch):
+    sent = {"n": 0}
+    async def fake_deliver(session, text, **kw): sent["n"] += 1; return True
+    sess = {"user_id": "dg2", "chat_id": "229", "notif": {"enabled": True, "freq": "quotidien"}}
+    rows = [(1, "Vieux", "A", "bourse", "http://a", "", "2022-2023", 90, "x")]
+    monkeypatch.setattr(main.session_manager, "list_active", lambda: [sess])
+    monkeypatch.setattr(main.opp_store, "pending", lambda uid, ms=60: rows)
+    monkeypatch.setattr(main.opp_store, "mark_notified", lambda ids: None)
+    monkeypatch.setattr(main.opp_store, "all_candidatures", lambda: [])
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    _run(main.notify(_auth=True))
+    assert sent["n"] == 0   # tout périmé -> pas de digest vide/trompeur
+
 # ── INVARIANT : jamais de silence ni de stacktrace sur un crash inattendu (v3.29) ──
 def test_route_incoming_repli_sur_crash(monkeypatch):
     sent = {}

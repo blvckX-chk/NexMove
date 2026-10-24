@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.33 — Qualité du digest quotidien : plus jamais d'offre clôturée
+- Le digest (`/api/notify`) filtrait déjà par score (≥60, meilleures d'abord) mais pouvait **envoyer une offre dont la deadline est passée** (plainte testeur n°1 : « bourse déjà clôturée »). Désormais toute offre à **deadline dépassée** est **exclue du digest** (et purgée du pool pour ne pas revenir). Si tout le lot du jour est périmé, on **n'envoie pas** de digest vide/trompeur. Le compteur « N sélectionnées » reflète les offres réellement envoyées.
+
 ## v3.32 — Harnais de scénarios pièges élargi (QA proactive)
 - +6 scénarios de bout en bout dans `tests/test_scenarios.py` (15 au total), pour attraper les régressions AVANT les testeurs/le jury : commande admin refusée hors admin, suppression qui exige confirmation, reconversion détectée à la validation (→ formations), réponse ambiguë à la confirmation qui ne réinitialise pas, re-ciblage en conversation, et messages vides/emoji sans crash. 443 tests au total, verts.
 
