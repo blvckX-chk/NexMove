@@ -1425,6 +1425,29 @@ def test_rate_limiter(monkeypatch):
     main._RATE_BUCKET.clear()
     assert all(c.get("/health").status_code == 200 for _ in range(6))
 
+# ── Latence perçue : indicateur « typing » best-effort (v3.35) ──
+def test_send_typing_telegram(monkeypatch):
+    calls = {"url": None, "json": None}
+    class _R:
+        status_code = 200
+    class _HTTP:
+        async def post(self, url, **kw):
+            calls["url"] = url; calls["json"] = kw.get("json"); return _R()
+    monkeypatch.setattr(main, "http", lambda: _HTTP())
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "tok")
+    _run(main._send_typing({"channel": "telegram", "chat_id": "42"}))
+    assert "sendChatAction" in calls["url"] and calls["json"]["action"] == "typing"
+
+def test_send_typing_jamais_bloquant(monkeypatch):
+    class _HTTP:
+        async def post(self, *a, **k): raise RuntimeError("réseau coupé")
+    monkeypatch.setattr(main, "http", lambda: _HTTP())
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "tok")
+    # Ne doit JAMAIS lever, même si le réseau échoue, ni sans chat_id.
+    _run(main._send_typing({"channel": "telegram", "chat_id": "42"}))
+    _run(main._send_typing({"channel": "whatsapp", "chat_id": "229"}))   # no-op
+    _run(main._send_typing({}))                                          # pas de chat_id -> no-op
+
 # ── Dashboard admin : demandes (domaines cherchés) + reconversions (v3.34) ──
 def test_admin_stats_top_domaines_et_reconversions(monkeypatch):
     sessions = [
