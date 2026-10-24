@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.32.0"
+VERSION         = "3.33.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -8312,8 +8312,15 @@ async def notify(_auth: bool = Depends(verify_api_key)):
         rows = opp_store.pending(s.get("user_id"), 60)
         if not rows or not chat_id:
             continue
+        _today = datetime.now(timezone.utc).date()
         lignes, ids = [], []
-        for (oid, titre, orga, typ, url, fin, deadline, sc, raison) in rows[:5]:
+        for (oid, titre, orga, typ, url, fin, deadline, sc, raison) in rows:
+            # QUALITÉ DIGEST : on ne envoie JAMAIS une offre dont la DEADLINE est passée
+            # (plainte testeur n°1 : « bourse déjà clôturée »). On la marque quand même notifiée
+            # pour ne pas la re-proposer, mais on ne l'affiche pas.
+            if deadline and _deadline_is_past(deadline, _today):
+                ids.append(oid)   # purge silencieuse du pool
+                continue
             ids.append(oid)
             em = "🔥" if sc >= 75 else "✅"
             ligne = f"{_type_label(typ)}  {em}\n   *{_md_clean(titre)[:60]}*\n   🏢 {_md_clean(orga)} · 📊 {sc}/100"
@@ -8322,8 +8329,14 @@ async def notify(_auth: bool = Depends(verify_api_key)):
             if deadline:
                 ligne += "\n   📅 " + _md_clean(deadline)
             lignes.append(ligne)
+            if len(lignes) >= 5:
+                break
+        if not lignes:
+            # Tout le pool du jour était périmé -> on purge et on n'envoie PAS de digest vide.
+            opp_store.mark_notified(ids)
+            continue
         st = opp_store.user_stats(s.get("user_id"))
-        entete = f"🔔 *Tes meilleures offres du jour* ({len(rows)} sélectionnées pour ton profil)\n"
+        entete = f"🔔 *Tes meilleures offres du jour* ({len(lignes)} sélectionnées pour ton profil)\n"
         if st["recent"]:
             entete += f"📈 {st['recent']} nouvelles cette semaine · {st['total']} au total dans ta veille\n"
         msg = (entete + "━━━━━━━━━━━━━━━━━━\n\n"
