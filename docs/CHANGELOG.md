@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.34 — Dashboard admin : la DEMANDE réelle (domaines cherchés) + reconversions
+- Le `/stats` admin (déjà riche : funnel CV→onboardés→payants, activation/conversion/rétention, canaux, objectifs, codes, top sources marketing) gagne deux signaux décisifs : **🔎 Demandes** = les domaines les plus cherchés par les utilisateurs (sais quelles sources prioriser, et montre la demande au jury), et **🧭 Reconversions en cours**. Zéro donnée personnelle, juste des agrégats.
+
 ## v3.33 — Qualité du digest quotidien : plus jamais d'offre clôturée
 - Le digest (`/api/notify`) filtrait déjà par score (≥60, meilleures d'abord) mais pouvait **envoyer une offre dont la deadline est passée** (plainte testeur n°1 : « bourse déjà clôturée »). Désormais toute offre à **deadline dépassée** est **exclue du digest** (et purgée du pool pour ne pas revenir). Si tout le lot du jour est périmé, on **n'envoie pas** de digest vide/trompeur. Le compteur « N sélectionnées » reflète les offres réellement envoyées.
 
