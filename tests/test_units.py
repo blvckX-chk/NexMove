@@ -1425,6 +1425,21 @@ def test_rate_limiter(monkeypatch):
     main._RATE_BUCKET.clear()
     assert all(c.get("/health").status_code == 200 for _ in range(6))
 
+# ── Dashboard admin : demandes (domaines cherchés) + reconversions (v3.34) ──
+def test_admin_stats_top_domaines_et_reconversions(monkeypatch):
+    sessions = [
+        {"profil": {"preferences": {"objectif": "travailler", "mots_cles": "finance"}}},
+        {"profil": {"preferences": {"objectif": "travailler", "mots_cles": "finance, banque"}}},
+        {"profil": {"preferences": {"objectif": "étudier", "mots_cles": "data science"},
+                    "profil_plus": {"reconversion_active": True}}},
+    ]
+    monkeypatch.setattr(main.session_manager, "list_all", lambda: sessions)
+    monkeypatch.setattr(main.session_manager, "sources_stats", lambda: [])
+    d = main._admin_stats()
+    assert d["top_domaines"].get("finance") == 2       # demande réelle agrégée
+    assert "data science" in d["top_domaines"]
+    assert d["reconversions"] == 1
+
 # ── Digest quotidien : jamais d'offre à deadline dépassée (v3.33) ──
 def test_digest_filtre_offres_perimees(monkeypatch):
     sent = {}

@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.33.0"
+VERSION         = "3.34.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -628,9 +628,10 @@ def _admin_stats() -> dict:
     except Exception:
         alls = []
     users = len(alls)
-    onboarded = cv_sent = paid = credits_actifs = active_7d = 0
+    onboarded = cv_sent = paid = credits_actifs = active_7d = reconversions = 0
     by_channel: dict = {}
     by_objectif: dict = {}
+    by_domaine: dict = {}   # ce que les gens CHERCHENT (demande réelle)
     signups: dict = {}   # date -> nb
     for s in alls:
         if s.get("cv_parsed"):
@@ -651,9 +652,16 @@ def _admin_stats() -> dict:
                 pass
         ch = s.get("channel") or "?"
         by_channel[ch] = by_channel.get(ch, 0) + 1
-        obj = ((s.get("profil", {}) or {}).get("preferences", {}) or {}).get("objectif")
+        _prefs = ((s.get("profil", {}) or {}).get("preferences", {}) or {})
+        obj = _prefs.get("objectif")
         if obj:
             by_objectif[obj] = by_objectif.get(obj, 0) + 1
+        # Domaines CHERCHÉS (demande réelle) : 1er mot-clé normalisé.
+        _dom = str(_prefs.get("mots_cles") or "").split(",")[0].strip().lower()[:24]
+        if _dom and _dom not in ("tous", "tout", "-", "aucun"):
+            by_domaine[_dom] = by_domaine.get(_dom, 0) + 1
+        if ((s.get("profil", {}) or {}).get("profil_plus", {}) or {}).get("reconversion_active"):
+            reconversions += 1
         ca = s.get("created_at")
         if ca:
             signups[ca[:10]] = signups.get(ca[:10], 0) + 1
@@ -682,6 +690,8 @@ def _admin_stats() -> dict:
         "inscriptions_14j": serie,
         "par_canal": by_channel,
         "par_objectif": dict(sorted(by_objectif.items(), key=lambda x: -x[1])[:6]),
+        "top_domaines": dict(sorted(by_domaine.items(), key=lambda x: -x[1])[:8]),
+        "reconversions": reconversions,
         "premium_codes": premium_store.stats(),
         "credit_codes": credit_store.stats(),
         "sources_marketing": srcs[:15],
@@ -4189,6 +4199,11 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             lignes.append(f"📲 Canal : {canal}")
         if d.get("par_objectif"):
             lignes.append("🎯 Objectifs : " + " · ".join(f"{k} {v}" for k, v in d["par_objectif"].items()))
+        if d.get("top_domaines"):
+            lignes.append("🔎 *Demandes* (domaines cherchés) : "
+                          + " · ".join(f"{k} {v}" for k, v in d["top_domaines"].items()))
+        if d.get("reconversions"):
+            lignes.append(f"🧭 Reconversions en cours : *{d['reconversions']}*")
         lignes += [f"💎 Codes Premium · libres : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
                    f"🎟️ Codes crédits · libres : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
         if d["sources_marketing"]:
