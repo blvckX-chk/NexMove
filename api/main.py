@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.34.0"
+VERSION         = "3.35.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -5815,6 +5815,25 @@ async def deliver_text(session, text, with_menu=False, options=None):
     kb = _tg_keyboard(options) if options else (_tg_keyboard(get_menu(session, "root")[1]) if with_menu else None)
     return await send_message(to, text, kb)
 
+async def _send_typing(session) -> None:
+    """Indicateur « en train d'écrire… » AVANT une opération lente (recherche, analyse CV) :
+    réduit la latence PERÇUE (l'utilisateur voit que ça bosse au lieu d'un silence). Best-effort :
+    jamais bloquant, jamais une erreur remontée. Telegram dure ~5s ; Messenger via sender_action."""
+    try:
+        ch = session.get("channel", "telegram"); to = session.get("chat_id")
+        if not to:
+            return
+        if ch == "telegram" and TELEGRAM_TOKEN:
+            await http().post(f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendChatAction",
+                              json={"chat_id": to, "action": "typing"}, timeout=5.0)
+        elif ch == "messenger" and MESSENGER_TOKEN:
+            await http().post(f"https://graph.facebook.com/v19.0/me/messages",
+                              params={"access_token": MESSENGER_TOKEN},
+                              json={"recipient": {"id": to}, "sender_action": "typing_on"}, timeout=5.0)
+        # WhatsApp Cloud API : pas d'indicateur de frappe simple -> no-op.
+    except Exception as e:
+        logger.debug(f"[typing] {e}")
+
 async def deliver_file(session, filename, data, caption=""):
     ch = session.get("channel", "telegram"); to = session.get("chat_id")
     if ch == "whatsapp":
@@ -6165,6 +6184,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
     is_pdf = fn.endswith(".pdf") or pdf_bytes[:4] == b"%PDF"
     is_docx = fn.endswith((".docx", ".dotx"))
     is_image = fn.endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")) or pdf_bytes[:3] in (b"\xff\xd8\xff", b"\x89PN")
+    await _send_typing(session)   # latence perçue : l'analyse CV/vision prend quelques secondes
     profil_from_vision = None
     cv_text = ""
     try:
@@ -7967,6 +7987,9 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
                     session: dict = None) -> dict:
     profil = profil or {}
     exclude_urls = set(exclude_urls or set())
+    # Latence perçue : on montre « en train d'écrire… » pendant la recherche (2-4 s).
+    if session is not None:
+        await _send_typing(session)
     # Mémoire qui compose : on écarte aussi les offres DÉJÀ montrées lors des sessions précédentes.
     if session is not None:
         try:

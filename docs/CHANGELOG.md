@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.35 — Latence PERÇUE : indicateur « en train d'écrire… »
+- La recherche d'offres fait 2 appels LLM séquentiels (~2-4 s) ; avant, l'utilisateur voyait un silence. Désormais le bot envoie un indicateur **« typing… »** (Telegram `sendChatAction`, Messenger `sender_action`) au début des opérations lentes (recherche `run_osint`, analyse CV/vision). Best-effort, jamais bloquant. La recherche web elle-même était déjà **parallèle** (`asyncio.gather`) et **cachée** — la latence réelle est surtout les 2 appels LLM, incompressibles sans perte de qualité ; on améliore donc le RESSENTI.
+
 ## v3.34 — Dashboard admin : la DEMANDE réelle (domaines cherchés) + reconversions
 - Le `/stats` admin (déjà riche : funnel CV→onboardés→payants, activation/conversion/rétention, canaux, objectifs, codes, top sources marketing) gagne deux signaux décisifs : **🔎 Demandes** = les domaines les plus cherchés par les utilisateurs (sais quelles sources prioriser, et montre la demande au jury), et **🧭 Reconversions en cours**. Zéro donnée personnelle, juste des agrégats.
 
