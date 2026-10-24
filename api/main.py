@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.30.0"
+VERSION         = "3.31.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1427,6 +1427,60 @@ def _reconversion_question(session: dict) -> str:
             "C'est une *reconversion* ? Dis-moi : as-tu déjà une *formation, des certifications ou des bases* "
             f"en {_md_clean(cible)}, ou tu pars de zéro ?\n"
             "_(Ça m'aide à cibler les bonnes offres : débutant accepté, alternance, certifications…)_")
+
+# ── Re-ciblage EN CONVERSATION (après l'onboarding) ──
+# Quand un utilisateur déjà onboardé exprime un NOUVEL objectif/domaine (« je veux aller en finance »,
+# « plutôt le marketing maintenant »), on met à jour SON PROFIL et on relance la logique conseiller
+# (reconversion -> question, sinon recherche). Sinon la demande restait un simple conseil sans effet.
+_RETARGET_CUES = ("je veux", "je voudrais", "j'aimerais", "jaimerais", "je préfère", "je prefere",
+                "je vise", "je cherche", "je recherche", "plutôt", "plutot", "en fait", "finalement",
+                "je me réoriente", "je me reoriente", "me reconvert", "changer de", "m'orienter",
+                "aller vers", "aller dans", "aller en", "passer à", "passer a", "basculer", "orienter vers",
+                "maintenant je", "du coup je")
+
+def _extract_switch_domain(t: str) -> str:
+    """Extrait le DOMAINE visé dans une phrase de bascule (« je veux aller en finance »,
+    « finalement je préfère le marketing »). Robuste aux amorces (« en fait », « du coup »…)."""
+    low = (t or "").lower().strip()
+    low = re.sub(r"\b(en fait|finalement|du coup|maintenant|en vrai|au final|bon|alors|eh bien)\b", " ", low)
+    m = re.search(
+        r"\b(?:aller|travailler|bosser|exercer|reconvertir|orienter|passer|basculer|"
+        r"préfère|prefere|vise|veux|voudrais|aimerais|cherche|recherche|faire)\b"
+        r"(?:\s+(?:dans|en|vers|[àa]|aux?|de|du|des|le|la|les|l'|un|une|faire|travailler|aller|me|m'))*"
+        r"\s+([a-zàâäéèêëïîôöùûüç][a-zàâäéèêëïîôöùûüç \-']{2,30})", low)
+    if not m:
+        return ""
+    dom = re.split(r"\b(et|ou|mais|car|parce|pour|afin|si|comme|avec|dans|en|au|maintenant|stp|svp|merci)\b",
+                   m.group(1).strip())[0].strip(" -'")
+    if len(dom) < 3 or dom in _OBJ_TRAVAIL or dom in _OBJ_ETUDE or dom in _OBJ_REMOTE:
+        return ""
+    return dom[:40]
+
+def _detect_target_switch(session: dict, t: str):
+    """Détecte un changement EXPLICITE de cible (domaine) chez un utilisateur onboardé.
+    Renvoie {"objectif","domaine"} si le domaine visé change vraiment, sinon None."""
+    if not session.get("onboarding_complete"):
+        return None
+    low = (t or "").lower()
+    if len(low) < 6 or len(low) > 200 or not any(c in low for c in _RETARGET_CUES):
+        return None
+    dom = _extract_switch_domain(t)
+    if not dom:
+        return None
+    cur = str((session.get("profil", {}).get("preferences", {}) or {}).get("mots_cles") or "")
+    # Changement réel seulement si le nouveau domaine ne recoupe pas l'actuel.
+    if cur and not _dom_tokens(dom).isdisjoint(_dom_tokens(cur)):
+        return None
+    # Objectif éventuellement mis à jour selon la phrase.
+    if "bourse" in low:
+        obj = "bourse"
+    elif any(k in low for k in _OBJ_ETUDE):
+        obj = "étudier"
+    elif any(k in low for k in _OBJ_TRAVAIL) or any(k in low for k in ("travailler", "emploi", "poste", "job", "bosser")):
+        obj = "travailler"
+    else:
+        obj = ""
+    return {"objectif": obj, "domaine": dom}
 
 _BASE_NEG = ("zéro", "zero", "aucune", "aucun", "rien", "sans base", "sans aucune", "débutant complet",
              "debutant complet", "pars de zéro", "pars de zero", "je commence", "je débute", "je debute",
@@ -5052,6 +5106,33 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     if edited:
         _push(session, "user", t); _push(session, "assistant", edited); session["derniere_activite"] = now
         return edited, session
+
+    # Re-ciblage EN CONVERSATION : l'utilisateur onboardé change de cible (« je veux aller en finance »).
+    # On met à jour SON profil, on relance la logique conseiller (reconversion -> question, sinon
+    # recherche) — pour que la logique « suive » partout, pas seulement pendant l'onboarding.
+    _sw = _detect_target_switch(session, t)
+    if _sw:
+        profil = session.get("profil", {}) or {}
+        prefs = profil.get("preferences", {}) or {}
+        dom = _sw["domaine"]
+        prefs["mots_cles"] = dom
+        if _sw["objectif"] in ("travailler", "étudier", "bourse", "télétravail", "tous"):
+            prefs["objectif"] = _sw["objectif"]
+        profil["preferences"] = prefs
+        # Nouvelle cible -> on ré-évalue la reconversion (on oublie l'ancien acquittement + flag).
+        session.pop("reconv_ack", None); session["clarify_done"] = True
+        (profil.get("profil_plus") or profil.setdefault("profil_plus", {})).pop("reconversion_active", None)
+        session["profil"] = profil
+        _push(session, "user", t)
+        ack = f"👍 Ok, je recentre ta recherche sur *{_md_clean(dom)}*."
+        _rq = _reconv_ask_if_needed(session, f"/mobilite {dom}")
+        if _rq:
+            _push(session, "assistant", ack + "\n\n" + _rq); session["derniere_activite"] = now
+            return ack + "\n\n" + _rq, session
+        _msg, session = await process_text_message(session, f"/mobilite {dom}")
+        out = (ack + "\n\n" + (_msg or "")).strip()
+        session["derniere_activite"] = now
+        return out, session
 
     # Utilisateur actif · langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
     # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.

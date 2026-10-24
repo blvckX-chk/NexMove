@@ -2706,6 +2706,48 @@ def test_confirmation_declenche_conseiller_reconversion(monkeypatch):
     assert calls["osint"] == 0 and "formation" in msg.lower()
     assert s["profil"]["profil_plus"].get("reconversion_active") is True
 
+# ------------------ Re-ciblage EN CONVERSATION (v3.31) ------------------
+def test_detect_target_switch():
+    s = {"onboarding_complete": True, "profil": {"preferences": {"mots_cles": "développement web"}}}
+    sw = main._detect_target_switch(s, "en fait je veux aller en finance")
+    assert sw and sw["domaine"] == "finance"
+    # Même domaine -> pas de switch.
+    assert main._detect_target_switch(s, "je veux aller dans le développement") is None
+    # Pas onboardé -> None.
+    assert main._detect_target_switch({"onboarding_complete": False, "profil": {}}, "je veux aller en finance") is None
+    # Pas de cue de bascule -> None.
+    assert main._detect_target_switch(s, "merci beaucoup") is None
+
+def test_active_switch_sans_cv_relance_recherche(monkeypatch):
+    seen = {"osint": 0}
+    async def _osint(*a, **k):
+        seen["osint"] += 1
+        return {"message": "offres marketing", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    monkeypatch.setattr(main, "_veille_gate", lambda s: (True, ""))
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    # Profil SANS CV (pas de reconversion détectable) -> on relance directement la recherche.
+    s = {"user_id": "sw1", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
+         "profil": {"preferences": {"objectif": "travailler", "mots_cles": "comptabilité"}}}
+    msg, s = _run(main.process_text_message(s, "finalement je préfère le marketing"))
+    assert s["profil"]["preferences"]["mots_cles"] == "marketing"   # profil mis à jour
+    assert seen["osint"] == 1 and "recentre" in msg.lower()          # recherche relancée + accusé
+
+def test_active_switch_reconversion_pose_la_question(monkeypatch):
+    seen = {"osint": 0}
+    async def _osint(*a, **k):
+        seen["osint"] += 1
+        return {"message": "offres", "opportunites": [], "visa_info": {}}
+    monkeypatch.setattr(main, "run_osint", _osint)
+    # Profil avec CV info -> bascule vers finance = reconversion -> question AVANT de chercher.
+    s = {"user_id": "sw2", "etape": "ACTIF", "onboarding_complete": True, "cv_parsed": True, "historique": [],
+         "profil": {"formation": [{"domaine": "Informatique"}], "competences": {"techniques": ["Python"]},
+                    "preferences": {"objectif": "travailler", "mots_cles": "développement"}}}
+    msg, s = _run(main.process_text_message(s, "en fait je veux travailler dans la finance"))
+    assert s["profil"]["preferences"]["mots_cles"] == "finance"
+    assert s.get("reconv_pending") is True and seen["osint"] == 0   # on clarifie avant de chercher
+    assert "reconversion" in msg.lower() and "recentre" in msg.lower()
+
 def test_reconversion_detectee_par_mot_explicite():
     # Même si les domaines se recoupent, un « je me reconvertis » explicite suffit.
     s = {"user_id": "rc9", "cv_parsed": True,

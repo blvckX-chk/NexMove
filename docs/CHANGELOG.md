@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.31 — Re-ciblage EN CONVERSATION (la logique suit partout)
+- Dernier maillon de cohérence du conseiller. Avant, quand un utilisateur **déjà onboardé** disait « je veux aller en finance » / « finalement je préfère le marketing », le bot **conseillait** mais ne mettait **pas à jour son profil** ni ne relançait la recherche — la cible stockée (et le digest quotidien) restaient sur l'ancien domaine.
+- Désormais un **détecteur de bascule** (`_detect_target_switch`) repère un changement explicite de domaine, **met à jour le profil** (`mots_cles`/objectif), **ré-évalue la reconversion** (CV ≠ nouvelle cible → question bases/zéro) et **relance la recherche** (`/mobilite <domaine>`) ou les **formations** si zéro base. Message clair : « 👍 Ok, je recentre sur *finance*. » La logique conseiller s'applique maintenant aussi EN conversation, pas seulement pendant l'onboarding.
+
 ## v3.30 — Fin de l'onboarding ambigu (question + récap empilés) + pas de reset accidentel
 - **Bug testeur grave.** Le bot posait « Dans quel pays… finance ? » **ET** affichait le récap « Oui/Non » en même temps. L'utilisateur répondait « Au Bénin » → pris pour « ni oui ni non » → **tout l'onboarding était réinitialisé** (« Pas de souci, on reprend »). Frustration + perte de profil.
 - **Correctifs :**
