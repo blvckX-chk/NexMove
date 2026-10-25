@@ -64,6 +64,14 @@ def test_intent_canada():
 def test_intent_conversation_libre():
     assert main._free_text_to_command("salut ça va", "x") == ""
 
+def test_intent_vocabulaire_familier_emploi():
+    # Vocabulaire familier/local -> fast-path vers /mobilite (sans dépendre du LLM).
+    for phrase in ("je galère à trouver du taf", "je cherche du boulot", "je veux bosser",
+                   "je suis au chômage", "trouver un job", "je veux du travail"):
+        assert main._free_text_to_command(phrase, phrase).startswith("/mobilite"), phrase
+    # Une salutation ou une question hors-sujet ne doit PAS matcher.
+    assert main._free_text_to_command("merci beaucoup", "x") == ""
+
 
 # ------------------ Nationalité → pays local ------------------
 def test_pays_from_nat_benin():

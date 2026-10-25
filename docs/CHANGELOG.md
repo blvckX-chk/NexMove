@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.37 — Matching langage→commande : vocabulaire familier/local
+- Le matching est déjà solide (3 étages : mots-clés déterministes → routeur d'intention LLM → routeur d'action LLM qui comprend les paraphrases et enchaîne 2 actions). Angle mort comblé : l'étage 1 (rapide, gratuit, résilient si le LLM tombe) ignorait le **vocabulaire familier/local** d'Afrique de l'Ouest. « je galère à trouver du **taf** », « je cherche du **boulot** », « je suis au **chômage** », « je veux **bosser** », « trouver un **job** » → désormais captés directement vers `/mobilite` (recherche grounded), sans appel LLM. Plus rapide, plus fiable, et marche même si le LLM est indisponible.
+
 ## v3.36 — Recueil PROACTIF de retours : bug d'abord, avis/témoignage ensuite
 - L'aide existait (`/aide`, `/tuto`, `/menu`, `/outils`, `/commentpostuler`) mais rien ne sollicitait l'utilisateur. Désormais, après un vrai temps d'usage (~6 interactions, une fois), le bot invite à **signaler un bug** (qualité) ; bien plus tard (~tous les 30 échanges, rare), à laisser un **avis/témoignage** (preuve sociale). Jamais pendant un flux guidé ni une attente — non intrusif.
 - Nouvelle commande **/avis** (alias /temoignage, /feedback) : recueille le témoignage, le transmet à l'admin (Telegram) et le journalise, avec mention de **consentement** avant tout partage (cohérent avec la règle « jamais de faux avis »). Utile pour alimenter la vitrine avec de VRAIS retours.
