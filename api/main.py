@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.37.0"
+VERSION         = "3.38.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6624,9 +6624,22 @@ _PLACEHOLDER_RE = re.compile(
     r"\[(?:[^\]]{0,40})\]|\{\{[^}]*\}\}|<[^>]{0,40}>|\bXXX+\b|\b(?:votre entreprise|nom du poste|insérer|à compléter|lorem ipsum)\b",
     re.IGNORECASE)
 
-def _pack_quality_issues(pack: dict, cible_desc: str = "") -> list:
+# Tournures d'IA / clichés creux qu'une BONNE lettre n'utilise pas (le prompt les interdit ;
+# ici on VÉRIFIE leur absence pour déclencher une relance si le modèle a triché).
+_LETTER_CLICHES = (
+    "je suis convaincu", "je suis persuadé", "correspond parfaitement", "parfaitement à mes aspirations",
+    "dynamique et motivé", "c'est avec un grand intérêt", "c'est avec un grand enthousiasme",
+    "fort de mon expérience", "forte de mon expérience", "n'hésiterai pas à", "mener à bien",
+    "relever de nouveaux défis", "esprit d'équipe", "rigoureux et motivé", "au sein de votre prestigieuse",
+    "votre prestigieuse", "je serais ravi de", "je serais honoré", "ma candidature retiendra",
+    "retiendra toute votre attention", "dans l'attente de votre", "veuillez agréer",
+)
+
+def _pack_quality_issues(pack: dict, cible_desc: str = "", facts: list = None) -> list:
     """Vérification de sortie GÉNÉRIQUE d'un pack CV+lettre avant envoi.
-    Retourne la liste des problèmes détectés (vide = sortie saine)."""
+    Retourne la liste des problèmes détectés (vide = sortie saine).
+    `facts` = éléments CONCRETS du profil (orgs, diplômes, compétences) ; si fourni, on vérifie
+    que la lettre en cite au moins un (ancrage réel) et qu'elle n'empile pas les clichés d'IA."""
     issues = []
     if not isinstance(pack, dict):
         return ["réponse non structurée"]
@@ -6650,6 +6663,16 @@ def _pack_quality_issues(pack: dict, cible_desc: str = "") -> list:
     comp = pack.get("competences_mises_en_avant")
     if isinstance(comp, list) and not [c for c in comp if str(c).strip()]:
         issues.append("aucune compétence mise en avant")
+    # Clichés d'IA : 2 ou plus -> lettre trop « robotique », on relance.
+    if corps:
+        low = corps.lower()
+        if sum(1 for c in _LETTER_CLICHES if c in low) >= 2:
+            issues.append("trop de tournures d'IA / clichés creux")
+    # Ancrage : la lettre doit citer au moins UN élément concret du profil (anti-générique).
+    facts = facts or []
+    toks = {str(f).strip().lower() for f in facts if str(f).strip() and len(str(f).strip()) > 3}
+    if corps and toks and not any(tok in corps.lower() for tok in toks):
+        issues.append("lettre non ancrée (aucun élément concret du profil cité)")
     return issues
 
 def _offer_ctx_txt(offer_ctx: dict) -> str:
@@ -6708,21 +6731,32 @@ Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par 
 signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
 professionnel, phrases variées, pas de superlatifs creux.
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
+    # Éléments CONCRETS du profil pour vérifier l'ANCRAGE de la lettre (anti-générique).
+    _facts = []
+    for e in (profil.get("experience", []) or [])[:4]:
+        _facts += [e.get("organisation", ""), e.get("poste", "")]
+    for f in (profil.get("formation", []) or [])[:3]:
+        _facts += [f.get("domaine", ""), f.get("etablissement", "")]
+    _facts += list(competences)[:6]
+    _facts = [x for x in _facts if isinstance(x, str) and len(x.strip()) > 3]
     pack = await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
-    # VÉRIFICATION DE SORTIE GÉNÉRIQUE : champ vide, trop court/long, ou placeholder non rempli
+    # VÉRIFICATION DE SORTIE GÉNÉRIQUE : champ vide, trop court/long, placeholder, clichés d'IA, ancrage
     # -> on refait UNE fois avant d'envoyer au candidat.
-    issues = _pack_quality_issues(pack, cible_desc)
+    issues = _pack_quality_issues(pack, cible_desc, facts=_facts)
     if issues:
         logger.info(f"[pack] QC sortie: {issues} -> relance")
         try:
             pack2 = await call_groq(
                 system,
-                prompt + "\n\nIMPÉRATIF : lettre_corps = 220-300 mots non vide, avec 2 faits concrets du profil. "
+                prompt + "\n\nIMPÉRATIF : lettre_corps = 220-300 mots non vide, et cite NOMMÉMENT au moins deux faits "
+                "concrets du profil (un employeur/une mission ET un diplôme/une compétence réels ci-dessus). "
                 "titre_poste et resume_professionnel non vides. INTERDIT tout texte entre crochets [ ], toute mention "
-                "« à compléter », « XXX » ou « votre entreprise » : remplace par les vraies informations du profil et de la cible.",
+                "« à compléter », « XXX » ou « votre entreprise ». INTERDIT les clichés d'IA (« je suis convaincu », "
+                "« dynamique et motivé », « fort de mon expérience », « correspond parfaitement »…) : écris comme un "
+                "humain, avec des phrases concrètes et variées.",
                 temperature=0.5, max_tokens=1300, tier="quality")
             # On ne garde la relance que si elle est au moins aussi propre que la première.
-            if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc)) <= len(issues):
+            if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc, facts=_facts)) <= len(issues):
                 pack = pack2
         except Exception as e:
             logger.warning(f"[pack] relance QC: {e}")

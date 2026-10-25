@@ -1720,6 +1720,26 @@ def test_pack_quality_propre_ok():
             "lettre_corps": " ".join(["phrase"] * 120)}
     assert main._pack_quality_issues(good, "Analyste SOC") == []
 
+def test_pack_quality_detecte_cliches_ia():
+    bad = {"titre_poste": "Comptable", "resume_professionnel": "Comptable rigoureux et motivé avec de l'expérience.",
+           "competences_mises_en_avant": ["Sage"],
+           "lettre_corps": ("Je suis convaincu que ce poste correspond parfaitement à mes aspirations. "
+                            "Dynamique et motivé, " + " ".join(["mot"] * 110))}
+    issues = main._pack_quality_issues(bad, "Comptable")
+    assert any("cliché" in i or "cliche" in i or "IA" in i for i in issues)
+
+def test_pack_quality_detecte_lettre_non_ancree():
+    # La lettre ne cite AUCUN fait du profil (ni ACME, ni comptabilité, ni Sage) -> générique.
+    corps = "Bonjour, je souhaite rejoindre votre structure pour y apporter ma contribution. " + " ".join(["texte"] * 100)
+    bad = {"titre_poste": "Comptable", "resume_professionnel": "Un résumé assez long pour passer le seuil minimal ici.",
+           "competences_mises_en_avant": ["Sage"], "lettre_corps": corps}
+    issues = main._pack_quality_issues(bad, "Comptable", facts=["ACME", "comptabilité", "Sage"])
+    assert any("ancrée" in i or "ancree" in i or "générique" in i or "generique" in i for i in issues)
+    # Si la lettre cite un fait réel -> plus d'alerte d'ancrage.
+    good_corps = "Chez ACME, j'ai tenu la comptabilité sur Sage pendant deux ans. " + " ".join(["texte"] * 100)
+    good = dict(bad, lettre_corps=good_corps)
+    assert not any("ancrée" in i or "générique" in i for i in main._pack_quality_issues(good, "Comptable", facts=["ACME", "comptabilité", "Sage"]))
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

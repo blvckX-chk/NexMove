@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.38 — Qualité des lettres/CV générés : anti-cliché + ancrage vérifié
+- Le pack CV+lettre (le livrable que l'utilisateur montre à un employeur/une école) était déjà grounded et relancé sur défauts structurels, mais la QC ne vérifiait PAS les deux choses que le prompt exige. Ajoutées : (1) **détection des clichés d'IA** (« je suis convaincu que », « dynamique et motivé », « fort de mon expérience », « correspond parfaitement »…) — 2 ou plus → relance ; (2) **contrôle d'ancrage** — la lettre doit citer au moins UN élément CONCRET du profil (employeur, diplôme, compétence réels), sinon elle est jugée générique et relancée. La relance exige explicitement de nommer 2 faits réels et de bannir les clichés. Résultat : des lettres qui sonnent HUMAINES et personnelles, pas « IA ».
+
 ## v3.37 — Matching langage→commande : vocabulaire familier/local
 - Le matching est déjà solide (3 étages : mots-clés déterministes → routeur d'intention LLM → routeur d'action LLM qui comprend les paraphrases et enchaîne 2 actions). Angle mort comblé : l'étage 1 (rapide, gratuit, résilient si le LLM tombe) ignorait le **vocabulaire familier/local** d'Afrique de l'Ouest. « je galère à trouver du **taf** », « je cherche du **boulot** », « je suis au **chômage** », « je veux **bosser** », « trouver un **job** » → désormais captés directement vers `/mobilite` (recherche grounded), sans appel LLM. Plus rapide, plus fiable, et marche même si le LLM est indisponible.
 
