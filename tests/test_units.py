@@ -1425,6 +1425,42 @@ def test_rate_limiter(monkeypatch):
     main._RATE_BUCKET.clear()
     assert all(c.get("/health").status_code == 200 for _ in range(6))
 
+# ── Recueil proactif de retours : bug puis avis/témoignage (v3.36) ──
+def test_feedback_nudge_cadence():
+    # Pas onboardé -> rien.
+    assert main._feedback_nudge({"onboarding_complete": False, "_interactions": 10}) == ""
+    # Onboardé, seuil atteint -> 1er nudge (bug), marque comme demandé.
+    s = {"onboarding_complete": True, "etape": "ACTIF", "_interactions": 6}
+    out = main._feedback_nudge(s)
+    assert "/bug" in out and s["_fb_asked"] == 1
+    # Juste après -> plus rien (anti-spam) tant que le palier de répétition n'est pas atteint.
+    s["_interactions"] = 7
+    assert main._feedback_nudge(s) == ""
+    # Bien plus tard -> nudge AVIS.
+    s["_interactions"] = 6 + 30
+    out2 = main._feedback_nudge(s)
+    assert "/avis" in out2
+    # Jamais pendant un flux guidé ou une attente.
+    assert main._feedback_nudge({"onboarding_complete": True, "etape": "CVBUILD", "_interactions": 50}) == ""
+    assert main._feedback_nudge({"onboarding_complete": True, "etape": "ACTIF",
+                                 "reconv_pending": True, "_interactions": 50}) == ""
+
+def test_avis_command_remercie_et_transmet(monkeypatch):
+    sent = {"admin": None}
+    async def fake_send(to, text, kb=None): sent["admin"] = (to, text); return True
+    monkeypatch.setattr(main, "send_message", fake_send)
+    monkeypatch.setattr(main, "ADMIN_CHAT_ID", "42")
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "tok")
+    monkeypatch.setattr(main.opp_store, "add_contact", lambda *a, **k: 1)
+    s = {"user_id": "av1", "etape": "ACTIF", "onboarding_complete": True, "profil": {}, "historique": []}
+    # Sans argument -> invite à écrire.
+    msg, s = _run(main.process_text_message(s, "/avis"))
+    assert "avis" in msg.lower()
+    # Avec un témoignage -> merci + transmis à l'admin.
+    msg, s = _run(main.process_text_message(s, "/avis NexMove m'a trouvé un stage en 2 jours"))
+    assert "merci" in msg.lower() and sent["admin"] is not None
+    assert "stage en 2 jours" in sent["admin"][1]
+
 # ── Latence perçue : indicateur « typing » best-effort (v3.35) ──
 def test_send_typing_telegram(monkeypatch):
     calls = {"url": None, "json": None}

@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.36 — Recueil PROACTIF de retours : bug d'abord, avis/témoignage ensuite
+- L'aide existait (`/aide`, `/tuto`, `/menu`, `/outils`, `/commentpostuler`) mais rien ne sollicitait l'utilisateur. Désormais, après un vrai temps d'usage (~6 interactions, une fois), le bot invite à **signaler un bug** (qualité) ; bien plus tard (~tous les 30 échanges, rare), à laisser un **avis/témoignage** (preuve sociale). Jamais pendant un flux guidé ni une attente — non intrusif.
+- Nouvelle commande **/avis** (alias /temoignage, /feedback) : recueille le témoignage, le transmet à l'admin (Telegram) et le journalise, avec mention de **consentement** avant tout partage (cohérent avec la règle « jamais de faux avis »). Utile pour alimenter la vitrine avec de VRAIS retours.
+
 ## v3.35 — Latence PERÇUE : indicateur « en train d'écrire… »
 - La recherche d'offres fait 2 appels LLM séquentiels (~2-4 s) ; avant, l'utilisateur voyait un silence. Désormais le bot envoie un indicateur **« typing… »** (Telegram `sendChatAction`, Messenger `sender_action`) au début des opérations lentes (recherche `run_osint`, analyse CV/vision). Best-effort, jamais bloquant. La recherche web elle-même était déjà **parallèle** (`asyncio.gather`) et **cachée** — la latence réelle est surtout les 2 appels LLM, incompressibles sans perte de qualité ; on améliore donc le RESSENTI.
 

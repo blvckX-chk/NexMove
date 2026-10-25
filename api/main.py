@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.35.0"
+VERSION         = "3.36.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -800,6 +800,33 @@ def _upsell_line(session: dict, moment: str = "generic") -> str:
         ],
     }
     return secrets.choice(nudges.get(moment, nudges["generic"]))
+
+# ── Recueil PROACTIF de retours : bug d'abord (qualité), puis avis/témoignage (preuve sociale) ──
+_FB_FIRST_AT = 6     # 1er nudge après ~6 interactions utiles (l'utilisateur a « pris en main »)
+_FB_REPEAT = 30      # on re-sollicite au plus tous les ~30 échanges (jamais spammer)
+
+def _feedback_nudge(session: dict) -> str:
+    """Après un vrai temps d'usage, invite UNE fois à signaler un bug, puis (plus tard) à laisser
+    un avis/témoignage. Rare et non intrusif : jamais pendant un flux guidé ni une attente."""
+    if not session.get("onboarding_complete"):
+        return ""
+    if session.get("etape") in ("PREFERENCES", "PREF_TYPE_EMPLOI", "CONFIRMATION", "CVBUILD", "RECRUIT"):
+        return ""
+    if any(session.get(f) for f in ("reconv_pending", "clarify_pending", "awaiting_domain",
+                                    "awaiting_delete_confirm", "bug_mode")):
+        return ""
+    n = int(session.get("_interactions", 0))
+    asked = int(session.get("_fb_asked", 0))
+    last = int(session.get("_fb_at", 0))
+    if asked == 0 and n >= _FB_FIRST_AT:
+        session["_fb_asked"] = 1; session["_fb_at"] = n
+        return ("💬 _Tu utilises NexMove depuis un moment — ça t'aide ? Un souci ou un *bug* ? "
+                "→ /bug · une idée ? → /contact. Ton retour améliore le service._")
+    if asked >= 1 and (n - last) >= _FB_REPEAT:
+        session["_fb_asked"] = asked + 1; session["_fb_at"] = n
+        return ("🌟 _NexMove t'est utile ? Partage ton avis en une phrase → /avis. "
+                "Avec ton accord, il aidera d'autres candidats à nous faire confiance._")
+    return ""
 
 # Mots parasites d'un nom de fichier de CV (à ignorer pour deviner le nom du candidat).
 # Mots de « bruit » dans un nom de fichier de CV : commandes/formats + noms de MODÈLES/STYLES
@@ -3535,6 +3562,38 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         return msg, session
 
     _is_bug = low.startswith("/bug") or low.startswith("/probleme") or low.startswith("/problème") or low.startswith("/signaler")
+    if low.startswith("/avis") or low.startswith("/temoignage") or low.startswith("/témoignage") or low.startswith("/feedback"):
+        parts = t.split(maxsplit=1)
+        avis = parts[1].strip() if len(parts) > 1 else ""
+        session["_fb_at"] = session.get("_interactions", 0)   # on considère le nudge « servi »
+        if not avis:
+            msg = ("🌟 *Ton avis compte* — en une phrase, qu'est-ce que NexMove t'apporte (ou ce qui "
+                   "pourrait être mieux) ?\nÉcris : */avis ton message*.\n"
+                   "_Avec ton accord, on pourra le partager (anonymisé si tu préfères) pour aider "
+                   "d'autres candidats à nous faire confiance._")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
+            uid = session.get("user_id"); uname = session.get("username", "utilisateur")
+            forward = (f"🌟 *Témoignage / avis NexMove*\n"
+                       f"👤 @{_md_clean(uname)} (`{uid}`) · {_md_clean(str(session.get('channel','?')))}\n"
+                       f"🕒 {datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}\n\n"
+                       f"{_md_clean(avis)[:2000]}")
+            try:
+                await send_message(ADMIN_CHAT_ID, forward)
+            except Exception as e:
+                logger.error(f"[avis] forward: {e}")
+        try:
+            opp_store.add_contact(session.get("user_id"), session.get("username", ""),
+                                  "[AVIS] " + avis, True)
+        except Exception:
+            pass
+        msg = ("🙏 *Merci beaucoup !* Ton retour est précieux et aide NexMove à s'améliorer.\n"
+               "_Si tu es d'accord pour qu'on le partage (témoignage), réponds « ok » — sinon il reste privé._\n\n"
+               "En attendant : /veille pour de nouvelles offres · /parrainage pour inviter un ami.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if (low.startswith("/contact") or low.startswith("/support") or low.startswith("/rencontrer")
             or low.startswith("/rdv") or _is_bug):
         parts = t.split(maxsplit=1)
@@ -6495,6 +6554,11 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
             await deliver_text(session, "⚠️ Trop de messages. Attends une minute.")
             return
         msg, session = await process_text_message(session, text)
+        # Compteur d'interactions + nudge PROACTIF (bug / avis) après un vrai temps d'usage.
+        session["_interactions"] = int(session.get("_interactions", 0)) + 1
+        _nudge = _feedback_nudge(session)
+        if _nudge and msg and not session.get("_kb_options"):
+            msg = msg + "\n\n" + _nudge
         show_menu = session.pop("_show_menu", False)
         kb_options = session.pop("_kb_options", None)
         fb_kb = session.pop("_feedback_kb", None)
