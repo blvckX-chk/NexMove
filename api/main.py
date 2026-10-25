@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.36.0"
+VERSION         = "3.37.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -902,7 +902,15 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/campusfrance"
     if "canada" in low or "québec" in low or "quebec" in low:
         return "/canada"
-    if any(k in low for k in ("bourse", "opportunit", "offre d'emploi", "emploi", "poste", "stage", "recrut", "fellowship")):
+    # Recherche d'opportunités — vocabulaire LARGE (y compris familier/local Afrique de l'Ouest),
+    # pour capter le fast-path sans dépendre du LLM (plus rapide, plus fiable, et marche même si le LLM tombe).
+    if any(k in low for k in (
+            "bourse", "opportunit", "offre d'emploi", "offres d'emploi", "emploi", "poste", "stage",
+            "recrut", "fellowship", "travail", "travailler", "bosser", "boulot", "job", "taf", "taff",
+            "embauche", "embaucher", "chômage", "chomage", "chômeur", "chomeur", "sans emploi",
+            "gagner ma vie", "gagner sa vie", "activité génératrice", "cdi", "cdd", "alternance",
+            "apprentissage", "débouché", "debouche", "carrière", "carriere", "métier", "metier",
+            "cherche du travail", "trouver du travail", "trouver un job", "du travail")):
         return "/mobilite " + t
     return ""
 
