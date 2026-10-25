@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.38.0"
+VERSION         = "3.39.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4574,6 +4574,20 @@ des conseils, et une lettre/projet d'études (corps 250-320 mots, paragraphes s�
 Donne aussi la deadline au format ISO (deadline_iso: "AAAA-MM-JJ") si une date précise et À VENIR est connue, sinon "".
 JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":"","conseils":["..."],"objet":"","corps":""}}"""
                 r = await call_groq(system, prompt, temperature=0.2, max_tokens=1700)
+                # QC du PROJET D'ÉTUDES : ancré au profil + spécifique au programme + sans cliché -> relance 1 fois.
+                _pf = [str(x) for x in ([ident.get("nom", ""), profil.get("resume_profil", "")] + list(comp)) if str(x).strip()]
+                _pj_issues = _projet_issues(str(r.get("corps", "")), facts=_pf, target_terms=cible_desc)
+                if _pj_issues:
+                    logger.info(f"[dossier] QC projet: {_pj_issues} -> relance")
+                    try:
+                        r2 = await call_groq(system, prompt + "\n\nIMPÉRATIF : le 'corps' doit NOMMER le programme/la "
+                                             "bourse visé(e) ET au moins deux éléments concrets du profil (diplôme, "
+                                             "compétence, expérience réels). INTERDIT les clichés d'IA et tout crochet [ ].",
+                                             temperature=0.3, max_tokens=1700)
+                        if isinstance(r2, dict) and len(_projet_issues(str(r2.get("corps", "")), facts=_pf, target_terms=cible_desc)) <= len(_pj_issues):
+                            r = r2
+                    except Exception as e:
+                        logger.warning(f"[dossier] relance QC: {e}")
                 docs = r.get("documents", [])
                 msg = f"🗂️ *Dossier · {_md_clean(cible_desc)}*\n━━━━━━━━━━━━━━━━━━\n\n"
                 if r.get("deadline"):
@@ -6635,7 +6649,39 @@ _LETTER_CLICHES = (
     "retiendra toute votre attention", "dans l'attente de votre", "veuillez agréer",
 )
 
-def _pack_quality_issues(pack: dict, cible_desc: str = "", facts: list = None) -> list:
+def _text_cliche_count(txt: str) -> int:
+    low = (txt or "").lower()
+    return sum(1 for c in _LETTER_CLICHES if c in low)
+
+def _terms(s) -> set:
+    """Mots significatifs (>3 lettres) d'une chaîne ou liste, pour les contrôles d'ancrage/spécificité."""
+    if isinstance(s, (list, tuple)):
+        s = " ".join(str(x) for x in s)
+    return {w for w in re.sub(r"[^a-zàâäéèêëïîôöùûüç ]", " ", str(s or "").lower()).split() if len(w) > 3}
+
+def _projet_issues(corps: str, facts: list = None, target_terms=None) -> list:
+    """QC d'un projet d'études / lettre (hors generate_pack, ex. /dossier) : longueur, placeholder,
+    clichés d'IA, ancrage profil, et SPÉCIFICITÉ au programme visé."""
+    issues = []
+    corps = (corps or "").strip()
+    if len(corps.split()) < 80:
+        issues.append("projet trop court")
+    if corps and _PLACEHOLDER_RE.search(corps):
+        issues.append("placeholder non rempli")
+    if corps and any(g in corps for g in _BOX_GLYPHS):
+        issues.append("symbole parasite")
+    if corps and _text_cliche_count(corps) >= 2:
+        issues.append("trop de clichés d'IA")
+    low = corps.lower()
+    ftoks = _terms(facts)
+    if corps and ftoks and not any(tok in low for tok in ftoks):
+        issues.append("non ancré au profil")
+    ttoks = _terms(target_terms)
+    if corps and ttoks and not any(tok in low for tok in ttoks):
+        issues.append("non spécifique au programme visé")
+    return issues
+
+def _pack_quality_issues(pack: dict, cible_desc: str = "", facts: list = None, target_terms=None) -> list:
     """Vérification de sortie GÉNÉRIQUE d'un pack CV+lettre avant envoi.
     Retourne la liste des problèmes détectés (vide = sortie saine).
     `facts` = éléments CONCRETS du profil (orgs, diplômes, compétences) ; si fourni, on vérifie
@@ -6663,16 +6709,19 @@ def _pack_quality_issues(pack: dict, cible_desc: str = "", facts: list = None) -
     comp = pack.get("competences_mises_en_avant")
     if isinstance(comp, list) and not [c for c in comp if str(c).strip()]:
         issues.append("aucune compétence mise en avant")
-    # Clichés d'IA : 2 ou plus -> lettre trop « robotique », on relance.
-    if corps:
-        low = corps.lower()
-        if sum(1 for c in _LETTER_CLICHES if c in low) >= 2:
-            issues.append("trop de tournures d'IA / clichés creux")
+    # Clichés d'IA : 2+ dans la lettre, ou 1+ dans le résumé (court) -> trop « robotique », on relance.
+    if corps and _text_cliche_count(corps) >= 2:
+        issues.append("trop de tournures d'IA / clichés creux")
+    if resume and _text_cliche_count(resume) >= 1:
+        issues.append("résumé professionnel avec cliché d'IA")
     # Ancrage : la lettre doit citer au moins UN élément concret du profil (anti-générique).
-    facts = facts or []
-    toks = {str(f).strip().lower() for f in facts if str(f).strip() and len(str(f).strip()) > 3}
+    toks = _terms(facts)
     if corps and toks and not any(tok in corps.lower() for tok in toks):
         issues.append("lettre non ancrée (aucun élément concret du profil cité)")
+    # Spécificité : pour une bourse/un programme, la lettre doit mentionner la cible visée.
+    ttoks = _terms(target_terms)
+    if corps and ttoks and not any(tok in corps.lower() for tok in ttoks):
+        issues.append("lettre non spécifique à la cible/au programme visé")
     return issues
 
 def _offer_ctx_txt(offer_ctx: dict) -> str:
@@ -6739,10 +6788,12 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
         _facts += [f.get("domaine", ""), f.get("etablissement", "")]
     _facts += list(competences)[:6]
     _facts = [x for x in _facts if isinstance(x, str) and len(x.strip()) > 3]
+    # Pour une bourse/un programme, on exige que la lettre mentionne la cible (spécificité).
+    _target = cible_desc if type_cible == "bourse" else ""
     pack = await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
     # VÉRIFICATION DE SORTIE GÉNÉRIQUE : champ vide, trop court/long, placeholder, clichés d'IA, ancrage
     # -> on refait UNE fois avant d'envoyer au candidat.
-    issues = _pack_quality_issues(pack, cible_desc, facts=_facts)
+    issues = _pack_quality_issues(pack, cible_desc, facts=_facts, target_terms=_target)
     if issues:
         logger.info(f"[pack] QC sortie: {issues} -> relance")
         try:
@@ -6756,7 +6807,7 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
                 "humain, avec des phrases concrètes et variées.",
                 temperature=0.5, max_tokens=1300, tier="quality")
             # On ne garde la relance que si elle est au moins aussi propre que la première.
-            if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc, facts=_facts)) <= len(issues):
+            if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc, facts=_facts, target_terms=_target)) <= len(issues):
                 pack = pack2
         except Exception as e:
             logger.warning(f"[pack] relance QC: {e}")

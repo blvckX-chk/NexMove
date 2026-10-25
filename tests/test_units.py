@@ -1740,6 +1740,27 @@ def test_pack_quality_detecte_lettre_non_ancree():
     good = dict(bad, lettre_corps=good_corps)
     assert not any("ancrée" in i or "générique" in i for i in main._pack_quality_issues(good, "Comptable", facts=["ACME", "comptabilité", "Sage"]))
 
+def test_pack_quality_resume_cliche_et_specificite():
+    # Résumé avec cliché -> détecté.
+    bad = {"titre_poste": "Analyste", "resume_professionnel": "Profil dynamique et motivé, rigoureux et motivé.",
+           "competences_mises_en_avant": ["SQL"], "lettre_corps": " ".join(["mot"] * 120)}
+    assert any("résumé" in i or "resume" in i for i in main._pack_quality_issues(bad, "Analyste"))
+    # Spécificité : lettre qui ne mentionne PAS le programme visé -> flaggée.
+    corps = "Chez ACME j'ai piloté des projets data. " + " ".join(["texte"] * 100)
+    pk = {"titre_poste": "Master", "resume_professionnel": "Un résumé correct et suffisamment long pour passer.",
+          "competences_mises_en_avant": ["SQL"], "lettre_corps": corps}
+    iss = main._pack_quality_issues(pk, "Bourse Eiffel", facts=["ACME"], target_terms="Bourse Eiffel cybersécurité")
+    assert any("spécifique" in i or "specifique" in i for i in iss)
+
+def test_projet_issues():
+    # Projet générique, sans programme ni fait du profil -> plusieurs alertes.
+    corps = "Je souhaite poursuivre mes études pour enrichir mon parcours. " + " ".join(["texte"] * 90)
+    iss = main._projet_issues(corps, facts=["ACME", "cybersécurité"], target_terms="Master Montréal")
+    assert any("ancré" in i for i in iss) and any("spécifique" in i for i in iss)
+    # Projet ancré + spécifique -> propre.
+    bon = "Le Master de Montréal correspond à mon parcours en cybersécurité chez ACME. " + " ".join(["texte"] * 90)
+    assert main._projet_issues(bon, facts=["ACME", "cybersécurité"], target_terms="Master Montréal") == []
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
