@@ -31,6 +31,9 @@ CEREBRAS_MODEL      = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
 CEREBRAS_MODEL_FAST = os.getenv("CEREBRAS_MODEL_FAST", "llama3.1-8b")
 GEMINI_MODEL        = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL_FAST   = os.getenv("GEMINI_MODEL_FAST", "gemini-2.5-flash-lite")
+# Modèle VISION dédié à la lecture de texte sur affiches/annonces stylisées (plus costaud par défaut :
+# lit mieux le texte par-dessus un visuel). Surchargable via l'env si besoin de coût/latence.
+GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-pro")
 OPENROUTER_MODEL      = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b")
 OPENROUTER_MODEL_FAST = os.getenv("OPENROUTER_MODEL_FAST", "openai/gpt-oss-20b")
 # Modèle PREMIUM optionnel pour la rédaction CV/lettre (tier="quality"). Ex : "anthropic/claude-3.5-sonnet".
@@ -319,8 +322,9 @@ async def analyze_screenshot_vision(img_bytes: bytes, mime: str = "image/jpeg", 
 async def extract_text_vision(img_bytes: bytes, mime: str = "image/jpeg") -> str:
     """Transcrit TOUT le texte visible d'une image (affiche/annonce stylisée, flyer, bannière…)
     via la vision — là où l'OCR classique (tesseract) échoue sur les visuels graphiques.
-    Renvoie le texte brut, ou '' si indisponible. Sert au multimodal : lire une annonce prise en photo."""
-    if not (GEMINI_API_KEY and _PILImage and img_bytes):
+    Renvoie le texte brut, ou '' si indisponible. Sert au multimodal : lire une annonce prise en photo.
+    N.B. : n'utilise PAS PIL (envoi direct des octets à Gemini) -> pas de dépendance à _PILImage."""
+    if not (GEMINI_API_KEY and img_bytes):
         return ""
     system = ("Transcris FIDÈLEMENT tout le texte visible sur cette image (affiche, annonce, flyer, "
               "capture). Rends UNIQUEMENT le texte, dans l'ordre de lecture, sans commentaire ni mise en "
@@ -330,21 +334,24 @@ async def extract_text_vision(img_bytes: bytes, mime: str = "image/jpeg") -> str
             {"text": system},
             {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
         ]}],
-        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 700},
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 900},
     }
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
-        r = await http().post(url, json=payload, timeout=45.0)
-        if r.status_code != 200:
-            logger.warning(f"[ocr-vision] {r.status_code}: {r.text[:150]}")
-            return ""
-        cands = r.json().get("candidates") or []
-        if not cands:
-            return ""
-        return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", [])).strip()
-    except Exception as e:
-        logger.warning(f"[ocr-vision] {e}")
-        return ""
+    # Modèle costaud d'abord (lit mieux les affiches stylisées), repli sur le modèle standard.
+    for model in (GEMINI_VISION_MODEL, GEMINI_MODEL):
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            r = await http().post(url, json=payload, timeout=45.0)
+            if r.status_code != 200:
+                logger.warning(f"[ocr-vision] {model} {r.status_code}: {r.text[:150]}")
+                continue
+            cands = r.json().get("candidates") or []
+            txt = "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", [])).strip() if cands else ""
+            logger.info(f"[ocr-vision] {model} -> {len(txt)} caractères lus")
+            if txt:
+                return txt
+        except Exception as e:
+            logger.warning(f"[ocr-vision] {model} {e}")
+    return ""
 
 
 async def transcribe_audio(audio_bytes: bytes, mime: str = "audio/ogg") -> str:

@@ -2202,6 +2202,21 @@ def test_onboard_llm_extraction_et_done(monkeypatch):
     assert p["langues_opportunite"] == "français" and "nationalite" not in p   # vide non stocké
     assert done is True
 
+def test_objectif_capte_domaine_meme_si_choix_pas_clair(monkeypatch):
+    # Chemin DÉTERMINISTE (LLM onboarding off, comme en prod) : « je veux continuer en finance »
+    # n'est pas un choix littéral -> re-question, MAIS « finance » doit être capté (reconversion).
+    monkeypatch.setattr(main, "LLM_ONBOARDING", False)
+    s = {"user_id": "obj1", "etape": "PREFERENCES", "pref_current": "objectif", "onboarding_complete": False,
+         "profil": {"identite": {"nom": "X"}, "competences": {"techniques": ["PHP", "JavaScript"]},
+                    "preferences": {"mots_cles": "développement web, PHP"}}, "historique": []}
+    msg, s = _run(main.process_text_message(s, "Je veux continuer en finance"))
+    assert s["profil"]["preferences"]["mots_cles"] == "finance"   # domaine capté malgré la re-question
+    assert "finance" in msg.lower()
+    # Puis l'utilisateur précise l'objectif -> finance est conservé.
+    msg, s = _run(main.process_text_message(s, "Travail"))
+    assert s["profil"]["preferences"]["objectif"] == "travailler"
+    assert s["profil"]["preferences"]["mots_cles"] == "finance"
+
 def test_onboard_question_ne_conclut_pas(monkeypatch):
     # Le LLM pose une question ET l'objectif+domaine sont connus -> on ne doit PAS conclure
     # (sinon on empile « Dans quel pays ? » + le récap Oui/Non = ambigu).
