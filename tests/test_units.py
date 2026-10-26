@@ -3155,6 +3155,23 @@ def test_resume_prefs_masque_champs_vides():
     assert "Pays cibles : France" in r2
 
 # ------------------ Multimodal : repli VISION quand l'OCR rate une annonce stylisée (v3.27) ------------------
+def test_observabilite_log_miss_et_commande(monkeypatch):
+    main._ROUTE_MISSES.clear()
+    main._log_miss({"user_id": "o1", "channel": "telegram", "etape": "ACTIF"}, "truc incompréhensible xyz", "nlu_fallback")
+    assert len(main._ROUTE_MISSES) == 1 and main._misses_recent(5)[0]["kind"] == "nlu_fallback"
+    # /misses : réservé admin.
+    monkeypatch.setattr(main, "_is_admin", lambda s: False)
+    s = {"user_id": "u", "etape": "ACTIF", "onboarding_complete": True, "profil": {}, "historique": []}
+    msg, s = _run(main.process_text_message(s, "/misses"))
+    assert "administrateur" in msg.lower() or "réservé" in msg.lower()
+    # Admin : voit la liste.
+    monkeypatch.setattr(main, "_is_admin", lambda s: True)
+    s2 = {"user_id": "adm", "etape": "ACTIF", "onboarding_complete": True, "profil": {}, "historique": []}
+    msg2, s2 = _run(main.process_text_message(s2, "/misses"))
+    assert "xyz" in msg2 or "compris" in msg2.lower()
+    # NL admin : « ratés » -> /misses.
+    assert main._admin_nl_route("ratés", "ratés") == "/misses"
+
 def test_menu_outils_mis_en_avant():
     # La boîte à outils est désormais un bouton de premier niveau.
     _, root = main.get_menu({}, "root")

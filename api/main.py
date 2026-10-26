@@ -6,6 +6,7 @@ from urllib.parse import quote, urlparse, urljoin
 import ipaddress, socket
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
+from collections import deque
 
 import fitz
 import httpx
@@ -102,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.41.0"
+VERSION         = "3.42.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -619,6 +620,28 @@ def _parse_broadcast_args(arg: str) -> tuple[dict, str, bool, bool]:
     message = " ".join(toks[i:]).strip()
     return filters, message, do_send, inclure_dormants
 
+# ── Observabilité : journal des « ratés » de compréhension (pour apprendre des vrais échecs) ──
+# Capé en mémoire (léger, best-effort). Sert à savoir CE QUE le bot ne comprend pas, pour corriger.
+_ROUTE_MISSES: deque = deque(maxlen=200)
+
+def _log_miss(session: dict, text: str, kind: str) -> None:
+    """Enregistre un message que le bot n'a pas su router/comprendre (fallback générique, doc rejeté).
+    Best-effort, jamais bloquant. Aucune donnée sensible au-delà du message lui-même."""
+    try:
+        _ROUTE_MISSES.append({
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "uid": str(session.get("user_id", "")),
+            "canal": session.get("channel", "?"),
+            "kind": kind,
+            "etape": session.get("etape", "?"),
+            "text": (text or "").strip()[:200],
+        })
+    except Exception:
+        pass
+
+def _misses_recent(n: int = 20) -> list:
+    return list(_ROUTE_MISSES)[-n:][::-1]
+
 def _admin_stats() -> dict:
     """Dashboard de traction (commande /stats + panel web). Aucune donnée personnelle.
     Calcule activation, conversion, rétention 7j, inscriptions/jour et répartition par canal."""
@@ -692,6 +715,7 @@ def _admin_stats() -> dict:
         "par_objectif": dict(sorted(by_objectif.items(), key=lambda x: -x[1])[:6]),
         "top_domaines": dict(sorted(by_domaine.items(), key=lambda x: -x[1])[:8]),
         "reconversions": reconversions,
+        "misses_recents": len(_ROUTE_MISSES),
         "premium_codes": premium_store.stats(),
         "credit_codes": credit_store.stats(),
         "sources_marketing": srcs[:15],
@@ -1100,6 +1124,10 @@ def _admin_nl_route(low: str, t: str):
     if tl in ("stats", "statistiques", "statistique", "dashboard", "tableau de bord", "traction",
               "chiffres", "metrics", "kpi") or tl.startswith(("stats", "statistiques", "dashboard", "traction")):
         return "/stats"
+    # Ratés de compréhension (observabilité)
+    if tl in ("ratés", "rates", "loupés", "loupes", "incompris", "non compris", "les ratés",
+              "ce qui rate", "messages non compris", "échecs", "echecs") or "non compris" in tl:
+        return "/misses"
     # Codes premium
     if "code" in tl and any(k in tl for k in ("valide", "libre", "restant", "dispo")):
         return "/codes valides"
@@ -4246,6 +4274,26 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/misses") or low.startswith("/rates") or low.startswith("/incompris") or low.startswith("/loupes"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        rows = _misses_recent(25)
+        if not rows:
+            msg = "✅ *Aucun raté de compréhension récent.* (Le bot a su router tous les derniers messages.)"
+        else:
+            by_kind = {}
+            for r in rows:
+                by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
+            lignes = [f"🔎 *Ce que le bot n'a pas compris* ({len(rows)} récents · {', '.join(f'{k}:{v}' for k,v in by_kind.items())})",
+                      "_Chaque ligne = une occasion d'améliorer (mot-clé à ajouter, cas à gérer)._", ""]
+            for r in rows:
+                lignes.append(f"• [{r['kind']}] {_md_clean(r['text'])[:120]}  ·  _{r['ts'][11:16]} {r['canal']}_")
+            msg = "\n".join(lignes)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if (low.startswith("/stats") or low.startswith("/statistiques") or low.startswith("/stat ")
             or low == "/stat" or low.startswith("/dashboard") or low.startswith("/panel")):
         if not _is_admin(session):
@@ -4271,6 +4319,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                           + " · ".join(f"{k} {v}" for k, v in d["top_domaines"].items()))
         if d.get("reconversions"):
             lignes.append(f"🧭 Reconversions en cours : *{d['reconversions']}*")
+        if d.get("misses_recents"):
+            lignes.append(f"🔎 Messages non compris (récents) : *{d['misses_recents']}* → /misses pour les voir")
         lignes += [f"💎 Codes Premium · libres : {pc.get('unused',0)} · utilisés : {pc.get('used',0)}",
                    f"🎟️ Codes crédits · libres : {cc.get('unused',0)} · utilisés : {cc.get('used',0)}"]
         if d["sources_marketing"]:
@@ -5276,8 +5326,11 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
             except Exception as e:
                 logger.warning(f"[agent-chain] {act2}: {e}")
         return msg1, session
-    message = _trim_to_sentence((r.get("message") or "").strip()) \
+    _raw_msg = (r.get("message") or "").strip()
+    message = _trim_to_sentence(_raw_msg) \
         or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…)."
+    if not _raw_msg:   # ni action ni réponse du LLM -> message pas compris : on le journalise.
+        _log_miss(session, t, "nlu_fallback")
     _push(session, "user", t); _push(session, "assistant", message)
     # Profilage progressif : on capte en douceur ce que la personne révèle d'elle (sans l'interroger).
     try:
@@ -6396,6 +6449,7 @@ Document: {cv_text[:6000]}"""
                            "• Pour démarrer : envoie ton *CV* (PDF, Word ou image).\n"
                            "• Si c'est une *offre/annonce* : renvoie une photo *nette*, ou colle le *lien* / le *texte* et je l'analyse.")
         logger.info(f"[cv] {session.get('channel')} document non-CV (ni annonce exploitable)")
+        _log_miss(session, (caption or filename or "document image/doc rejeté"), "doc_rejet")
         return
     # Diplôme principal en premier (le plus élevé/récent) · sinon le bot retenait la licence au lieu du master
     profil["formation"] = _sort_formations(profil.get("formation"))
