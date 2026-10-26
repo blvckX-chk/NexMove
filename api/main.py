@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.43.0"
+VERSION         = "3.44.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1511,21 +1511,42 @@ _RETARGET_CUES = ("je veux", "je voudrais", "j'aimerais", "jaimerais", "je préf
                 "aller vers", "aller dans", "aller en", "passer à", "passer a", "basculer", "orienter vers",
                 "maintenant je", "du coup je")
 
+# Mots qui NE sont PAS un domaine métier/études (évite « changer de NUMÉRO » -> recherche garbage).
+_NOT_A_DOMAIN = {"numéro", "numero", "passe", "humain", "conseiller", "compte", "email", "mail", "adresse",
+                 "ligne", "attente", "fait", "vrai", "train", "moment", "avis", "métier", "metier", "voie",
+                 "carrière", "carriere", "domaine", "secteur", "boulot", "travail", "job", "vie", "pays",
+                 "ville", "langue", "mot", "sujet", "idée", "idee", "plan", "truc", "chose", "rien"}
+
 def _extract_switch_domain(t: str) -> str:
-    """Extrait le DOMAINE visé dans une phrase de bascule (« je veux aller en finance »,
-    « finalement je préfère le marketing »). Robuste aux amorces (« en fait », « du coup »…)."""
+    """Extrait le DOMAINE visé dans une phrase de bascule, de façon CONSERVATRICE : le domaine doit
+    suivre une PRÉPOSITION claire (dans/en/vers/pour/sur + article) ou « préfère/vise + article »,
+    jamais un simple verbe. Évite les faux positifs (« changer de numéro », « parler à un humain »)."""
     low = (t or "").lower().strip()
+    # On retire d'abord les amorces pour ne pas capter leur « en »/« à ».
     low = re.sub(r"\b(en fait|finalement|du coup|maintenant|en vrai|au final|bon|alors|eh bien)\b", " ", low)
-    m = re.search(
-        r"\b(?:aller|travailler|bosser|exercer|reconvertir|orienter|passer|basculer|"
-        r"préfère|prefere|vise|veux|voudrais|aimerais|cherche|recherche|faire)\b"
-        r"(?:\s+(?:dans|en|vers|[àa]|aux?|de|du|des|le|la|les|l'|un|une|faire|travailler|aller|me|m'))*"
-        r"\s+([a-zàâäéèêëïîôöùûüç][a-zàâäéèêëïîôöùûüç \-']{2,30})", low)
-    if not m:
+    art = r"(?:le\s+|la\s+|les\s+|l'|du\s+|de\s+la\s+|des\s+|de\s+l'|d'|un\s+|une\s+)?"
+    dom = ""
+    # 1) « … dans/en/vers/pour/sur [article] DOMAINE » (le cas le plus fiable).
+    m = re.search(r"\b(?:dans|en|vers|pour|sur)\s+" + art + r"([a-zàâäéèêëïîôöùûüç][a-zàâäéèêëïîôöùûüç \-']{2,30})", low)
+    if m:
+        dom = m.group(1)
+    else:
+        # 2) « préfère/vise/veux faire [article] DOMAINE » — article REQUIS (sinon on capterait un verbe).
+        m = re.search(r"\b(?:préfère|prefere|vise|veux faire|veux du|veux de la|veux de l')\s+"
+                      r"(?:le\s+|la\s+|les\s+|l'|du\s+|de\s+la\s+|des\s+|de\s+l'|d')"
+                      r"([a-zàâäéèêëïîôöùûüç][a-zàâäéèêëïîôöùûüç \-']{2,30})", low)
+        if m:
+            dom = m.group(1)
+    if not dom:
         return ""
-    dom = re.split(r"\b(et|ou|mais|car|parce|pour|afin|si|comme|avec|dans|en|au|maintenant|stp|svp|merci)\b",
-                   m.group(1).strip())[0].strip(" -'")
+    # Coupe aux mots d'arrêt et nettoie.
+    dom = re.split(r"\b(et|ou|mais|car|parce|pour|afin|si|comme|avec|dans|en|au|aux|maintenant|stp|svp|merci|please)\b",
+                   dom.strip())[0].strip(" -'")
+    first = dom.split()[0] if dom.split() else ""
     if len(dom) < 3 or dom in _OBJ_TRAVAIL or dom in _OBJ_ETUDE or dom in _OBJ_REMOTE:
+        return ""
+    # Un domaine dont le PREMIER mot n'est pas informatif (numéro, métier, humain…) est rejeté.
+    if first in _NOT_A_DOMAIN:
         return ""
     return dom[:40]
 
@@ -7182,11 +7203,12 @@ async def _summarize_academic_doc(session: dict, text: str) -> str:
     intitule = str(r.get("intitule", "") or "").strip()
     typ = str(r.get("type", "") or "").strip() or "document"
     etab = str(r.get("etablissement", "") or "").strip()
-    # Ancrage : au moins l'intitulé OU l'établissement doit apparaître dans le texte source.
+    # Ancrage (anti-invention) : au moins UN des champs renseignés doit apparaître dans le texte source.
     low = text.lower()
     if not (intitule or etab):
         return ""
-    if intitule and intitule.lower()[:12] not in low and etab and etab.lower()[:12] not in low:
+    _grounded = (intitule and intitule.lower()[:12] in low) or (etab and etab.lower()[:12] in low)
+    if not _grounded:
         return ""
     bits = [f"📜 *J'ai lu ton document* ({_md_clean(typ)})."]
     if intitule:

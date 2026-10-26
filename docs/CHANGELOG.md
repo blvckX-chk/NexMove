@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.44 — QC senior : corrige des faux positifs du re-ciblage + ancrage diplôme
+- Passe de contrôle qualité rigoureuse sur les ajouts récents. **Bug réel trouvé & corrigé** : le détecteur de bascule de domaine (v3.31) capturait des **verbes/du bruit** au lieu du domaine — « je veux changer de numéro » relançait une recherche sur « changer de numéro », « je préfère parler à un humain » basculait sur « parler à un humain », « bosser dans la data » captait « bosser ». Désormais le domaine doit suivre une **préposition claire** (dans/en/vers/pour/sur + article) ou « préfère/vise + article », avec une **liste d'exclusion** (numéro, humain, métier, mot de passe…) : plus de fausse bascule, tout en captant les vrais changements (« bosser dans la data » → data, « changer de métier pour la finance » → finance).
+- Durcissement de l'**ancrage** du résumé de document académique (v3.43) : au moins un champ renseigné (intitulé/établissement) doit figurer dans le texte source, sinon on n'affiche rien (anti-invention).
+
 ## v3.43 — Multimodal élargi : diplômes / relevés / attestations scannés
 - Avant, une image qui n'était ni un CV ni une annonce était rejetée (« pas un CV »). Désormais le bot reconnaît aussi un **document académique** (diplôme, relevé de notes, attestation, certificat) pris en photo : il le **lit** (vision), en extrait les infos clés (intitulé, établissement, année, mention) de façon **ancrée** (anti-invention : au moins l'intitulé ou l'établissement doit figurer dans le texte source), et répond **utilement** (« voici ce que j'en lis · tu peux le joindre à un dossier · /dossier <programme> »). Le multimodal ne se limite plus à CV + annonce.
 
