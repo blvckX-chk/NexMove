@@ -23,6 +23,12 @@ CEREBRAS_API_KEY   = os.getenv("CEREBRAS_API_KEY", "")
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
 # OpenRouter : 4e fournisseur, DERNIER RECOURS (pay-as-you-go). Dormant tant que la clé n'est pas fournie.
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+# Tchavi (passerelle LLM OpenAI-compatible, à crédits). Fournisseur PREMIUM optionnel : dormant tant que
+# la clé n'est pas fournie. Vérifie l'URL exacte dans ton tableau de bord Tchavi (section Clés API / doc).
+TCHAVI_API_KEY  = os.getenv("TCHAVI_API_KEY", "")
+TCHAVI_BASE_URL = os.getenv("TCHAVI_BASE_URL", "https://api.tchavi.com/v1").rstrip("/")
+TCHAVI_MODEL          = os.getenv("TCHAVI_MODEL", "gpt-4o-mini")            # raisonnement/smart
+TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)   # rédaction CV/lettre (quality)
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_MODEL_FAST     = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
@@ -63,6 +69,12 @@ _LLM_PROVIDERS = [
     # DERNIER RECOURS (payant) : ne s'active que si OPENROUTER_API_KEY est défini -> le bot ne tombe jamais.
     {"name": "openrouter", "url": "https://openrouter.ai/api/v1/chat/completions",
      "key": OPENROUTER_API_KEY, "model": OPENROUTER_MODEL, "model_fast": OPENROUTER_MODEL_FAST,
+     "api": "openai", "max_ctx": 120000},
+    # Tchavi (premium, à crédits) : dormant sans clé. Dans le repli il passe EN DERNIER (coût maîtrisé) ;
+    # mais sur le tier "quality" il passe en 1er (voir call_groq), et on peut le préférer pour le "smart"
+    # via SMART_LEAD_PROVIDER=tchavi.
+    {"name": "tchavi", "url": f"{TCHAVI_BASE_URL}/chat/completions",
+     "key": TCHAVI_API_KEY, "model": TCHAVI_MODEL, "model_fast": TCHAVI_MODEL,
      "api": "openai", "max_ctx": 120000},
 ]
 _LLM_FALLBACK_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
@@ -127,11 +139,19 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
     tried = False
     providers = _LLM_PROVIDERS
     if tier == "quality":
+        # Tier qualité (rédaction CV/lettre, projet d'études) : on met le(s) modèle(s) PREMIUM en 1er.
+        # Tchavi d'abord s'il est configuré (c'est le choix explicite de l'utilisateur pour le premium),
+        # puis OpenRouter, puis la chaîne standard en repli -> jamais de panne.
+        lead = []
+        if TCHAVI_API_KEY:
+            lead.append({"name": "tchavi-gen", "url": f"{TCHAVI_BASE_URL}/chat/completions",
+                         "key": TCHAVI_API_KEY, "model": TCHAVI_GENERATE_MODEL,
+                         "model_fast": TCHAVI_GENERATE_MODEL, "api": "openai", "max_ctx": 120000})
         if OPENROUTER_API_KEY:
-            gen = {"name": "openrouter-gen", "url": "https://openrouter.ai/api/v1/chat/completions",
-                   "key": OPENROUTER_API_KEY, "model": OPENROUTER_GENERATE_MODEL,
-                   "model_fast": OPENROUTER_GENERATE_MODEL, "api": "openai", "max_ctx": 120000}
-            providers = [gen] + _LLM_PROVIDERS
+            lead.append({"name": "openrouter-gen", "url": "https://openrouter.ai/api/v1/chat/completions",
+                         "key": OPENROUTER_API_KEY, "model": OPENROUTER_GENERATE_MODEL,
+                         "model_fast": OPENROUTER_GENERATE_MODEL, "api": "openai", "max_ctx": 120000})
+        providers = lead + _LLM_PROVIDERS
         tier = "smart"   # fallback = qualité standard
     elif tier == "smart" and SMART_LEAD_PROVIDER:
         # On met le fournisseur préféré en tête pour le conversationnel (meilleur contexte/anti-invention),

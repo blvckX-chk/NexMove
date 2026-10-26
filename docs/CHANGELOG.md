@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.49 — Fournisseur LLM PREMIUM optionnel (Tchavi) pour la qualité
+- Intégration **opt-in** de Tchavi (passerelle LLM OpenAI-compatible, à crédits) comme fournisseur **premium**. Dormant tant que `TCHAVI_API_KEY` est vide (aucun coût, aucun risque). Une fois la clé mise : le tier **"quality"** (rédaction CV / lettre / projet d'études — le livrable que l'utilisateur montre) passe par Tchavi **en premier**, avec **repli automatique** sur les modèles gratuits si Tchavi échoue → jamais de panne. Pour router aussi le **raisonnement** (conversation, sélection d'offres, conseils) via Tchavi : `SMART_LEAD_PROVIDER=tchavi`. Visible dans `/version` (module « Premium (Tchavi) »). Config : `TCHAVI_API_KEY`, `TCHAVI_BASE_URL`, `TCHAVI_MODEL`, `TCHAVI_GENERATE_MODEL` (voir .env.example).
+
 ## v3.48 — Reconversion captée même à la re-question + vision plus costaude
 - **Bug onboarding (capture testeur).** À l'étape objectif, « Je veux continuer en **finance** » n'étant pas un choix littéral (travailler/étudier/…), la validation re-posait la question et **perdait le domaine « finance »** : le récap gardait les compétences du CV (web dev). Désormais le domaine est **extrait et stocké AVANT** la validation du choix — même si l'objectif reste à préciser. Le bot accuse réception (« ✅ Noté : finance ») puis redemande seulement l'objectif ; « finance » est conservé jusqu'au récap (reconversion correcte).
 - **Vision plus robuste pour lire les affiches.** `extract_text_vision` : (1) ne dépend plus de PIL (il ne l'utilisait pas) ; (2) utilise un **modèle vision plus costaud** par défaut (`GEMINI_VISION_MODEL=gemini-2.5-pro`, repli sur flash) qui lit mieux le texte sur un visuel stylisé ; (3) **logue le nombre de caractères lus** (`[ocr-vision] … -> N caractères`) pour vérifier en prod que la lecture fonctionne. Si rien n'est lisible, l'échec reste gracieux (v3.47).

@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.48.0"
+VERSION         = "3.49.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -304,7 +304,7 @@ class MobilityRequest(BaseModel):
 from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
                  analyze_screenshot_vision, extract_text_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
-                 GROQ_API_KEY, CEREBRAS_API_KEY)  # noqa: F401
+                 GROQ_API_KEY, CEREBRAS_API_KEY, TCHAVI_API_KEY)  # noqa: F401
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
@@ -3637,6 +3637,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         if _embeddings_available(): flags.append("Sémantique")
         if GEMINI_API_KEY: flags.append("Vision")
         if ADZUNA_APP_ID and ADZUNA_APP_KEY: flags.append("Adzuna")
+        if TCHAVI_API_KEY: flags.append("Premium (Tchavi)")
         flags.append("Remote (RemoteOK/Remotive/Jobicy)")
         msg = (f"🧭 *NexMove · version {VERSION}*\n"
                f"🤖 IA : {prov}\n"
