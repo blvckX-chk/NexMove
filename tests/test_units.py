@@ -1675,7 +1675,8 @@ def test_real_portals_sont_des_urls():
 def test_llm_providers_openrouter():
     import llm
     names = [p["name"] for p in llm._LLM_PROVIDERS]
-    assert "openrouter" in names and names[-1] == "openrouter"       # dernier recours
+    assert "openrouter" in names and names[-1] in ("openrouter", "tchavi")   # payants en dernier recours
+    assert names.index("openrouter") >= 3                             # après les 3 gratuits
     for n in ("cerebras", "groq", "gemini"):
         assert n in names
     orp = [p for p in llm._LLM_PROVIDERS if p["name"] == "openrouter"][0]
@@ -3223,6 +3224,15 @@ def test_observabilite_log_miss_et_commande(monkeypatch):
     assert "xyz" in msg2 or "compris" in msg2.lower()
     # NL admin : « ratés » -> /misses.
     assert main._admin_nl_route("ratés", "ratés") == "/misses"
+
+def test_tchavi_provider_optin():
+    import llm
+    tch = [p for p in llm._LLM_PROVIDERS if p["name"] == "tchavi"]
+    assert tch, "le fournisseur tchavi doit être déclaré"
+    p = tch[0]
+    assert p["api"] == "openai" and p["url"].endswith("/chat/completions")
+    # Opt-in : dormant tant que la clé n'est pas fournie (aucun coût, aucun risque).
+    assert p["key"] == llm.TCHAVI_API_KEY
 
 def test_menu_outils_mis_en_avant():
     # La boîte à outils est désormais un bouton de premier niveau.
