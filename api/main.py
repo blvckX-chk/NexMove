@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.46.0"
+VERSION         = "3.47.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6504,6 +6504,22 @@ Document: {cv_text[:6000]}"""
                 await deliver_text(session, resume)
                 logger.info("[multimodal] document académique lu depuis une image/scan")
                 return
+        _raison_low = str(profil.get("raison_rejet") or "").lower()
+        _is_offer_context = _offer_hint or any(w in _raison_low for w in ("offre", "emploi", "recrut", "annonce", "poste"))
+        if _is_offer_context:
+            # L'utilisateur envoie clairement une OFFRE, mais l'affiche est trop stylisée pour une
+            # lecture FIABLE. On ne dit SURTOUT pas « pas un CV » : on reconnaît l'offre et on donne
+            # le chemin fiable (texte/lien).
+            msg_off = ("📸 Je vois que c'est une *offre d'emploi* 👍 — mais cette image est un peu "
+                       "*stylisée* pour que je la lise de façon *fiable* (je préfère ne rien inventer).\n\n"
+                       "👉 *Pour que je l'analyse à fond* (es-tu éligible ? comment postuler ?) :\n"
+                       "• *copie-colle le texte* de l'annonce, ou\n"
+                       "• *colle son lien*.\n\n"
+                       "_Astuce : une photo bien cadrée *sur le texte* (pas le visuel) marche aussi._")
+            await deliver_text(session, msg_off)
+            logger.info("[multimodal] offre probable non lisible -> guidage texte/lien")
+            _log_miss(session, (caption or "offre image non lisible"), "offre_illisible")
+            return
         raison = profil.get("raison_rejet") or "il ne ressemble pas à un CV"
         await deliver_text(session, f"🤔 {raison.capitalize()}.\n\n"
                            "• Pour démarrer : envoie ton *CV* (PDF, Word ou image).\n"
