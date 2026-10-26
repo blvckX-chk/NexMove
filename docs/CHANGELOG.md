@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.43 — Multimodal élargi : diplômes / relevés / attestations scannés
+- Avant, une image qui n'était ni un CV ni une annonce était rejetée (« pas un CV »). Désormais le bot reconnaît aussi un **document académique** (diplôme, relevé de notes, attestation, certificat) pris en photo : il le **lit** (vision), en extrait les infos clés (intitulé, établissement, année, mention) de façon **ancrée** (anti-invention : au moins l'intitulé ou l'établissement doit figurer dans le texte source), et répond **utilement** (« voici ce que j'en lis · tu peux le joindre à un dossier · /dossier <programme> »). Le multimodal ne se limite plus à CV + annonce.
+
 ## v3.42 — Observabilité : journal des « ratés » de compréhension
 - Pour viser l'excellence (OODA), il faut apprendre des VRAIS échecs. Le bot journalise désormais ce qu'il ne comprend pas : messages tombés sur le repli générique (ni action ni réponse du LLM) et documents/images rejetés (ni CV ni annonce). Nouvelle commande admin **/misses** (ou en langage naturel « ratés », « incompris ») qui liste les derniers cas, groupés par type — chaque ligne est une occasion d'amélioration (mot-clé à ajouter, cas à gérer). Le `/stats` affiche aussi un compteur « messages non compris ». Léger, best-effort, aucune donnée sensible au-delà du message.
 
