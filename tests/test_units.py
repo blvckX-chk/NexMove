@@ -2876,6 +2876,16 @@ def test_detect_target_switch():
     # Pas de cue de bascule -> None.
     assert main._detect_target_switch(s, "merci beaucoup") is None
 
+def test_detect_target_switch_pas_de_faux_positifs():
+    # QC senior : le détecteur ne doit PAS basculer sur du bruit (verbe, numéro, « humain »…).
+    s = {"onboarding_complete": True, "profil": {"preferences": {"mots_cles": "comptabilité"}}}
+    for faux in ("je veux changer de numéro", "je préfère parler à un humain",
+                 "je veux changer de mot de passe", "je cherche à comprendre", "je veux arrêter"):
+        assert main._detect_target_switch(s, faux) is None, faux
+    # Mais un VRAI changement de domaine est bien capté, même avec un verbe au milieu.
+    assert main._detect_target_switch(s, "je veux bosser dans la data")["domaine"] == "data"
+    assert main._detect_target_switch(s, "je veux changer de métier pour la finance")["domaine"] == "finance"
+
 def test_active_switch_sans_cv_relance_recherche(monkeypatch):
     seen = {"osint": 0}
     async def _osint(*a, **k):
