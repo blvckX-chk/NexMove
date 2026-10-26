@@ -72,6 +72,16 @@ def test_intent_vocabulaire_familier_emploi():
     # Une salutation ou une question hors-sujet ne doit PAS matcher.
     assert main._free_text_to_command("merci beaucoup", "x") == ""
 
+def test_intent_emploi_pas_de_faux_positifs():
+    # QC adversariale : les mots ambigus (travail/poste/job/carrière) NE routent PAS sans intention.
+    for faux in ("mon travail de maths est dur", "poste de télé", "la carrière de ce chanteur",
+                 "je bosse mon code", "job de rêve dans un film", "mon emploi du temps est chargé",
+                 "travailler ma souplesse"):
+        assert main._free_text_to_command(faux.lower(), faux) == "", faux
+    # Mais une vraie intention de recherche est bien captée.
+    for vrai in ("je veux un poste de comptable", "je cherche du travail", "je veux bosser dans la data"):
+        assert main._free_text_to_command(vrai.lower(), vrai).startswith("/mobilite"), vrai
+
 
 # ------------------ Nationalité → pays local ------------------
 def test_pays_from_nat_benin():
