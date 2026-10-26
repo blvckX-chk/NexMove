@@ -3183,6 +3183,43 @@ def test_menu_outils_mis_en_avant():
     for act in ("creercv", "extraire", "compresserimage", "enimages", "fusionner", "enpdf"):
         assert act in main._ACT_CMD   # le bouton mène bien à une commande
 
+def test_looks_like_diploma():
+    assert main._looks_like_diploma("Licence en Informatique, mention Bien, Université d'Abomey-Calavi, année universitaire 2024") is True
+    assert main._looks_like_diploma("Relevé de notes · semestre 4 · moyenne générale 14/20 · crédits ECTS") is True
+    assert main._looks_like_diploma("Salut, tu fais quoi ce soir ?") is False
+
+def test_summarize_academic_doc(monkeypatch):
+    async def fake(system, prompt, **k):
+        return {"type": "diplôme", "intitule": "Licence en Informatique", "etablissement": "Université d'Abomey-Calavi",
+                "annee": "2024", "mention": "Bien", "usage": "À joindre à un dossier de master ou une candidature."}
+    monkeypatch.setattr(main, "call_groq", fake)
+    src = "Diplôme de Licence en Informatique délivré à ... Université d'Abomey-Calavi, mention Bien, 2024."
+    out = _run(main._summarize_academic_doc({"user_id": "d1"}, src))
+    assert "Licence en Informatique" in out and "Abomey-Calavi" in out and "📜" in out
+    # Anti-invention : si rien n'est ancré dans la source -> on n'affiche pas.
+    async def fake2(system, prompt, **k):
+        return {"type": "diplôme", "intitule": "Doctorat en Médecine", "etablissement": "Harvard"}
+    monkeypatch.setattr(main, "call_groq", fake2)
+    assert _run(main._summarize_academic_doc({"user_id": "d2"}, src)) == ""
+
+def test_photo_diplome_exploite(monkeypatch):
+    sent = {}
+    async def fake_deliver(session, text, **kw): sent["reply"] = text; return True
+    async def fake_cv_vision(img, mime="image/jpeg", **k): return {"est_cv": False, "raison_rejet": "pas un CV"}
+    def fake_ocr(img): return ""
+    async def fake_ocr_vision(img, mime="image/jpeg"):
+        return "Diplôme de Licence en Informatique, Université d'Abomey-Calavi, mention Bien, année universitaire 2024, relevé de notes"
+    async def fake_summary(session, text): return "📜 *J'ai lu ton document* (diplôme).\n• Intitulé : *Licence en Informatique*"
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "analyze_cv_image_vision", fake_cv_vision)
+    monkeypatch.setattr(main, "extract_text_image", fake_ocr)
+    monkeypatch.setattr(main, "extract_text_vision", fake_ocr_vision)
+    monkeypatch.setattr(main, "_summarize_academic_doc", fake_summary)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    session = {"user_id": "dp1", "channel": "telegram", "profil": {"preferences": {}}, "historique": []}
+    _run(main.process_cv(session, b"\xff\xd8\xff diploma", "diplome.jpg"))
+    assert "document" in sent.get("reply", "").lower() and "ne ressemble pas" not in sent.get("reply", "").lower()
+
 def test_looks_like_opportunity_affiche_recrute():
     # Affiche courte « X RECRUTE … » = annonce sans ambiguïté (1 signal fort suffit).
     assert main._looks_like_opportunity("UMO RECRUTE AU BENIN LOGISITICIEN(NE) MAGASINIER(E) umo-interim.com") is True
