@@ -3155,6 +3155,36 @@ def test_resume_prefs_masque_champs_vides():
     assert "Pays cibles : France" in r2
 
 # ------------------ Multimodal : repli VISION quand l'OCR rate une annonce stylisée (v3.27) ------------------
+def test_looks_like_opportunity_affiche_recrute():
+    # Affiche courte « X RECRUTE … » = annonce sans ambiguïté (1 signal fort suffit).
+    assert main._looks_like_opportunity("UMO RECRUTE AU BENIN LOGISITICIEN(NE) MAGASINIER(E) umo-interim.com") is True
+    assert main._looks_like_opportunity("Avis de recrutement : 10 agents") is True
+    assert main._looks_like_opportunity("salut ça va bien ou quoi dis moi") is False
+
+def test_photo_annonce_via_legende_offre(monkeypatch):
+    # L'OCR ET la vision ne rendent presque rien, MAIS la légende dit « je peux postuler à cette offre »
+    # -> on doit quand même tenter l'analyse d'annonce (pas rejeter « pas un CV »).
+    sent = {}
+    async def fake_deliver(session, text, **kw): sent["reply"] = text; return True
+    async def fake_cv_vision(img, mime="image/jpeg", **k):
+        return {"est_cv": False, "raison_rejet": "ce n'est pas un CV"}
+    def fake_ocr(img): return ""
+    async def fake_ocr_vision(img, mime="image/jpeg"):
+        return "UMO RECRUTE AU BENIN LOGISTICIEN MAGASINIER umo-interim.com"
+    async def fake_analyze(session, text, source="cette annonce"):
+        return "✅ *Logisticien / Magasinier* · Compatibilité : 70%\nComment postuler : via umo-interim.com"
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "analyze_cv_image_vision", fake_cv_vision)
+    monkeypatch.setattr(main, "extract_text_image", fake_ocr)
+    monkeypatch.setattr(main, "extract_text_vision", fake_ocr_vision)
+    monkeypatch.setattr(main, "_analyze_opportunity_text", fake_analyze)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    session = {"user_id": "umo1", "channel": "telegram", "profil": {"preferences": {}}, "historique": []}
+    _run(main.process_cv(session, b"\xff\xd8\xff banner", "umo.jpg",
+                         caption="Est ce que en attendant je peux postuler à cette offre"))
+    assert "Logisticien" in sent.get("reply", "")
+    assert "ne ressemble pas" not in sent.get("reply", "").lower()
+
 def test_photo_annonce_repli_vision(monkeypatch):
     sent = {}
     async def fake_deliver(session, text, **kw): sent["reply"] = text; return True

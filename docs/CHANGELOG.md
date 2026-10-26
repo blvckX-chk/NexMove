@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.40 — Offre en photo : affiche « RECRUTE » + légende enfin comprises
+- Retour testeur (récurrent) : une affiche « *UMO RECRUTE AU BÉNIN · LOGISTICIEN/MAGASINIER* » + légende « je peux postuler à cette offre » répondait encore « *Il ne ressemble pas à un CV* ». Deux causes corrigées :
+  1. L'heuristique exigeait **2 indices** d'opportunité ; une affiche courte « X RECRUTE » n'en a qu'un. Désormais un **signal fort** (« recrute », « nous recrutons », « avis de recrutement », « poste à pourvoir »…) suffit — une affiche de recrutement est sans ambiguïté.
+  2. La **légende/intention de l'utilisateur** (« offre », « postuler », « annonce »…) était **ignorée**. Maintenant, si l'utilisateur dit explicitement que c'est une offre, le bot lit l'image (vision) et l'analyse comme une annonce, même si l'OCR est pauvre.
+- Résultat : le scénario « photo d'annonce + je peux postuler ? » fonctionne enfin de bout en bout.
+
 ## v3.39 — Qualité : CV (résumé) + projet d'études contrôlés
 - Suite du durcissement qualité. (1) **CV** : le *résumé professionnel* (en-tête du CV) est maintenant contrôlé contre les clichés d'IA (il alimentait le CV sans vérification). (2) **Projet d'études / dossier** (`/dossier`, Campus France/bourses) : le projet généré n'avait AUCUNE QC — désormais il est vérifié (longueur, placeholder, clichés, **ancrage au profil** ET **spécificité au programme visé**) et **relancé** une fois s'il est générique ou hors-sujet. (3) Les lettres de **bourse** (via `generate_pack`) doivent explicitement mentionner le programme ciblé. Les documents envoyés à une école/un employeur sont donc concrets et personnalisés, pas du remplissage.
 
