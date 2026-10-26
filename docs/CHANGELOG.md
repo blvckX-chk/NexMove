@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.45 — QC adversariale : fin des faux positifs du matching emploi
+- Suite de la QC adversariale sur les heuristiques. `_looks_like_diploma` : robuste (0 faux positif). `_looks_like_opportunity` : seulement appliqué au texte d'images/pages web + filtré par le LLM (risque négligeable). **Corrigé** : `_free_text_to_command` routait vers une recherche d'emploi sur des mots AMBIGUS hors contexte (« mon travail de maths », « poste de télé », « la carrière de ce chanteur », « mon emploi du temps »). Désormais, deux niveaux : mots FORTS (taf, boulot, chômage, offre d'emploi, CDI…) → route direct ; mots AMBIGUS (travail, poste, job, métier, carrière) → seulement avec une intention de recherche (cherche/veux/trouver…) ou un article indéfini (« un poste », « du travail »). Les vraies demandes restent captées, les faux positifs disparaissent.
+
 ## v3.44 — QC senior : corrige des faux positifs du re-ciblage + ancrage diplôme
 - Passe de contrôle qualité rigoureuse sur les ajouts récents. **Bug réel trouvé & corrigé** : le détecteur de bascule de domaine (v3.31) capturait des **verbes/du bruit** au lieu du domaine — « je veux changer de numéro » relançait une recherche sur « changer de numéro », « je préfère parler à un humain » basculait sur « parler à un humain », « bosser dans la data » captait « bosser ». Désormais le domaine doit suivre une **préposition claire** (dans/en/vers/pour/sur + article) ou « préfère/vise + article », avec une **liste d'exclusion** (numéro, humain, métier, mot de passe…) : plus de fausse bascule, tout en captant les vrais changements (« bosser dans la data » → data, « changer de métier pour la finance » → finance).
 - Durcissement de l'**ancrage** du résumé de document académique (v3.43) : au moins un champ renseigné (intitulé/établissement) doit figurer dans le texte source, sinon on n'affiche rien (anti-invention).
