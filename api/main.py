@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.39.0"
+VERSION         = "3.40.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6352,16 +6352,23 @@ Document: {cv_text[:6000]}"""
                 opp_text = await asyncio.to_thread(extract_text_image, pdf_bytes)
             except Exception:
                 opp_text = ""
+        # Intention EXPLICITE de l'utilisateur : la légende/les derniers messages disent « offre »,
+        # « postuler », « annonce », « recrute »… -> on traite l'image comme une annonce, même si
+        # l'OCR est pauvre (cas de l'affiche « UMO RECRUTE » + légende « je peux postuler à cette offre »).
+        _hint_txt = ((caption or "") + " " + _recent_user_text(session, 3)).lower()
+        _offer_hint = any(w in _hint_txt for w in ("offre", "annonce", "postuler", "candidat", "recrut",
+                                                   "emploi", "ce poste", "cette offre", "job", "boulot"))
         # Repli VISION : les annonces sont souvent des visuels stylisés (texte sur photo) que l'OCR
-        # rate. Si on n'a rien d'exploitable, on fait lire l'image par la vision (Gemini).
-        if is_image and (not opp_text or not _looks_like_opportunity(opp_text)):
+        # rate. Si on n'a rien d'exploitable OU si l'utilisateur dit que c'est une offre, on fait lire
+        # l'image par la vision (Gemini).
+        if is_image and (not opp_text or not _looks_like_opportunity(opp_text) or _offer_hint):
             try:
                 vtext = await extract_text_vision(pdf_bytes, mime)
             except Exception:
                 vtext = ""
             if vtext:
                 opp_text = (opp_text + "\n" + vtext).strip() if opp_text else vtext
-        if opp_text and _looks_like_opportunity(opp_text):
+        if opp_text and (_looks_like_opportunity(opp_text) or _offer_hint):
             analyse = await _analyze_opportunity_text(session, opp_text, source="ta photo")
             if analyse:
                 if not used_credit:
@@ -7061,12 +7068,20 @@ _OPP_CUES = ("offre", "poste", "recrut", "candidat", "candidature", "bourse", "s
              "fellowship", "admission", "concours", "mission", "contrat", "rémunération", "remuneration",
              "h/f", "temps plein", "temps partiel")
 
+_OPP_STRONG = ("recrut", "nous recrutons", "nous embauchons", "embauche", "offre d'emploi",
+               "offres d'emploi", "appel à candidature", "appel a candidature", "poste à pourvoir",
+               "poste a pourvoir", "avis de recrutement")
+
 def _looks_like_opportunity(text: str) -> bool:
     """Heuristique : un texte (OCR d'une photo, scan, copier-coller) ressemble-t-il à une
     annonce d'opportunité (emploi/bourse/stage) ?"""
     low = (text or "").lower()
-    if len(low) < 40:
+    if len(low) < 25:
         return False
+    # Signal FORT : « X recrute », « nous recrutons », « avis de recrutement » = annonce sans ambiguïté
+    # (même courte, comme une affiche « UMO RECRUTE … LOGISTICIEN »). 1 suffit.
+    if any(s in low for s in _OPP_STRONG):
+        return True
     return sum(1 for c in _OPP_CUES if c in low) >= 2
 
 async def _analyze_opportunity_text(session: dict, text: str, source: str = "cette annonce"):
