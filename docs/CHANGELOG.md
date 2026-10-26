@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.41 — Boîte à outils mise en avant (menu dédié)
+- La boîte à outils (créer un CV, extraire le texte d'un scan/OCR, compresser PDF/image, fusionner, images↔PDF) existait mais n'était accessible qu'en tapant `/outils` — invisible pour la plupart. Désormais un bouton **🧰 Outils** figure au **premier niveau du menu**, avec un **sous-menu dédié** qui expose chaque outil en un clic (sur tous les canaux). Plus facile d'en tirer parti.
+
 ## v3.40 — Offre en photo : affiche « RECRUTE » + légende enfin comprises
 - Retour testeur (récurrent) : une affiche « *UMO RECRUTE AU BÉNIN · LOGISTICIEN/MAGASINIER* » + légende « je peux postuler à cette offre » répondait encore « *Il ne ressemble pas à un CV* ». Deux causes corrigées :
   1. L'heuristique exigeait **2 indices** d'opportunité ; une affiche courte « X RECRUTE » n'en a qu'un. Désormais un **signal fort** (« recrute », « nous recrutons », « avis de recrutement », « poste à pourvoir »…) suffit — une affiche de recrutement est sans ambiguïté.

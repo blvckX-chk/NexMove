@@ -3155,6 +3155,17 @@ def test_resume_prefs_masque_champs_vides():
     assert "Pays cibles : France" in r2
 
 # ------------------ Multimodal : repli VISION quand l'OCR rate une annonce stylisée (v3.27) ------------------
+def test_menu_outils_mis_en_avant():
+    # La boîte à outils est désormais un bouton de premier niveau.
+    _, root = main.get_menu({}, "root")
+    assert any("Outils" in lbl for lbl, _ in root)
+    # Le sous-menu outils expose les principaux outils, câblés sur de vraies commandes.
+    _, tools = main.get_menu({}, "tools")
+    actions = [a for _, a in tools]
+    assert "act:creercv" in actions and "act:extraire" in actions and "act:compresser" in actions
+    for act in ("creercv", "extraire", "compresserimage", "enimages", "fusionner", "enpdf"):
+        assert act in main._ACT_CMD   # le bouton mène bien à une commande
+
 def test_looks_like_opportunity_affiche_recrute():
     # Affiche courte « X RECRUTE … » = annonce sans ambiguïté (1 signal fort suffit).
     assert main._looks_like_opportunity("UMO RECRUTE AU BENIN LOGISITICIEN(NE) MAGASINIER(E) umo-interim.com") is True
