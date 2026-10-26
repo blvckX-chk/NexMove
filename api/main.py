@@ -102,7 +102,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.40.0"
+VERSION         = "3.41.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -5860,9 +5860,20 @@ def get_menu(session, key):
             ("ℹ️ Version", "act:version"),
             ("🗑️ Effacer données", "act:supprimer"),
             ("⬅️ Retour", "m:root")])
+    if key == "tools":
+        return ("🧰 *Boîte à outils* · prépare tes documents sans quitter la messagerie", [
+            ("📝 Créer un CV", "act:creercv"),
+            ("🔎 Extraire le texte (OCR)", "act:extraire"),
+            ("🗜️ Compresser un PDF", "act:compresser"),
+            ("🖼️ Compresser une image", "act:compresserimage"),
+            ("🔗 Fusionner des PDF", "act:fusionner"),
+            ("🖼️➡️📄 Images → PDF", "act:enpdf"),
+            ("📄➡️🖼️ PDF → images", "act:enimages"),
+            ("ℹ️ Tout voir", "act:outils"),
+            ("⬅️ Retour", "m:root")])
     return ("🧭 *NexMove* · que veux-tu faire ?", [
         ("🔎 Trouver", "m:find"), ("🇫🇷 Procédures", "m:cf"),
-        ("📄 Candidater", "m:apply"), ("🎓 Formations", "act:formations"),
+        ("📄 Candidater", "m:apply"), ("🧰 Outils", "m:tools"),
         ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
 
 # (WhatsApp/Messenger + _tg_keyboard -> channels.py, PR-C)
@@ -5928,6 +5939,8 @@ _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "pr
             "formations": "/formations", "supprimer": "/supprimer",
             "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
             "compresser": "/compresser", "fusionner": "/fusionner", "enpdf": "/enpdf",
+            "compresserimage": "/compresserimage", "enimages": "/enimages", "extraire": "/extraire",
+            "creercv": "/creercv",
             "outils": "/outils", "procedure": "/procedure", "budget": "/budget",
             "parcoursup": "/parcoursup", "monmaster": "/monmaster", "ecandidat": "/ecandidat",
             "dap": "/dap", "visa": "/visa", "recours": "/recours",
