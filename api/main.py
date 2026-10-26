@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.47.0"
+VERSION         = "3.48.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -5111,18 +5111,25 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             session["pref_current"] = None   # plus rien à demander -> on confirme
         elif field:
             # 2) Réponse normale : valider et enregistrer.
+            # Pour l'OBJECTIF : on extrait d'ABORD un éventuel DOMAINE (« je veux continuer en finance »
+            # -> finance) et on le stocke, MÊME si l'objectif (travailler/étudier…) n'est pas encore
+            # clair. Sinon une reconversion exprimée librement était perdue à la re-question.
+            obj_dom = _normalize_objectif(t) if field == "objectif" else ("", "")
+            if field == "objectif" and obj_dom[1]:
+                prefs["mots_cles"] = obj_dom[1]   # domaine explicite -> prioritaire sur les mots-clés du CV
+                profil["preferences"] = prefs; session["profil"] = profil
             ok, indice = valider_pref(field, t)
             if not ok:
                 _push(session, "user", t)
-                q = f"🤔 {indice}\n\n{_ask_pref(session, field)}"
+                # On accuse réception du domaine capté, pour que l'utilisateur voie que « finance » est pris.
+                pris = (f"✅ Noté : *{_md_clean(obj_dom[1])}*. " if (field == "objectif" and obj_dom[1]) else "")
+                q = f"🤔 {pris}{indice}\n\n{_ask_pref(session, field)}"
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
             if field == "objectif":
-                # On ne stocke PAS la phrase entière : on extrait l'objectif canonique + le domaine.
-                obj, dom = _normalize_objectif(t)
-                prefs["objectif"] = obj
-                if dom:   # domaine explicite (ex. reconversion) -> prioritaire sur les mots-clés du CV
-                    prefs["mots_cles"] = dom
+                prefs["objectif"] = obj_dom[0]
+                if obj_dom[1]:
+                    prefs["mots_cles"] = obj_dom[1]
             else:
                 prefs[field] = t
             profil["preferences"] = prefs; session["profil"] = profil

@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.48 — Reconversion captée même à la re-question + vision plus costaude
+- **Bug onboarding (capture testeur).** À l'étape objectif, « Je veux continuer en **finance** » n'étant pas un choix littéral (travailler/étudier/…), la validation re-posait la question et **perdait le domaine « finance »** : le récap gardait les compétences du CV (web dev). Désormais le domaine est **extrait et stocké AVANT** la validation du choix — même si l'objectif reste à préciser. Le bot accuse réception (« ✅ Noté : finance ») puis redemande seulement l'objectif ; « finance » est conservé jusqu'au récap (reconversion correcte).
+- **Vision plus robuste pour lire les affiches.** `extract_text_vision` : (1) ne dépend plus de PIL (il ne l'utilisait pas) ; (2) utilise un **modèle vision plus costaud** par défaut (`GEMINI_VISION_MODEL=gemini-2.5-pro`, repli sur flash) qui lit mieux le texte sur un visuel stylisé ; (3) **logue le nombre de caractères lus** (`[ocr-vision] … -> N caractères`) pour vérifier en prod que la lecture fonctionne. Si rien n'est lisible, l'échec reste gracieux (v3.47).
+
 ## v3.47 — Photo d'offre illisible : échec GRACIEUX (plus jamais « pas un CV »)
 - Quand l'utilisateur envoie clairement une OFFRE en photo (légende « je peux postuler à cette offre ») mais que l'affiche est trop stylisée pour une lecture fiable (OCR/vision ne rendent rien d'exploitable en prod), le bot répondait « *Il ne ressemble pas à un CV* » — frustrant et faux. Désormais il **reconnaît l'offre** et **guide vers le chemin fiable** : « Je vois que c'est une offre 👍 — colle le *texte* ou le *lien* et je l'analyse à fond. » Plus jamais de « pas un CV » sur une offre évidente. (La lecture directe des affiches stylisées reste dépendante de la qualité d'image ; le texte/lien est 100 % fiable.)
 
