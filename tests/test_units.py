@@ -3263,6 +3263,27 @@ def test_looks_like_opportunity_affiche_recrute():
     assert main._looks_like_opportunity("Avis de recrutement : 10 agents") is True
     assert main._looks_like_opportunity("salut ça va bien ou quoi dis moi") is False
 
+def test_photo_offre_illisible_message_gracieux(monkeypatch):
+    # Affiche d'offre + légende « je peux postuler » MAIS vision/OCR ne rendent rien de lisible
+    # -> on ne dit JAMAIS « pas un CV » : on reconnaît l'offre et on guide vers texte/lien.
+    sent = {}
+    async def fake_deliver(session, text, **kw): sent["reply"] = text; return True
+    async def fake_cv_vision(img, mime="image/jpeg", **k):
+        return {"est_cv": False, "raison_rejet": "c'est une offre d'emploi, pas un CV"}
+    def fake_ocr(img): return ""
+    async def fake_ocr_vision(img, mime="image/jpeg"): return ""   # vision ne rend rien (cas réel prod)
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "analyze_cv_image_vision", fake_cv_vision)
+    monkeypatch.setattr(main, "extract_text_image", fake_ocr)
+    monkeypatch.setattr(main, "extract_text_vision", fake_ocr_vision)
+    monkeypatch.setattr(main, "_quota_bump", lambda s, f: None)
+    session = {"user_id": "bus1", "channel": "telegram", "profil": {"preferences": {}}, "historique": []}
+    _run(main.process_cv(session, b"\xff\xd8\xff poster", "bus.jpg",
+                         caption="En attendant je peux postuler à cette offre ?"))
+    r = sent.get("reply", "")
+    assert "offre" in r.lower() and "ne ressemble pas" not in r.lower() and "pas un cv" not in r.lower()
+    assert "colle" in r.lower() or "texte" in r.lower() or "lien" in r.lower()
+
 def test_photo_annonce_via_legende_offre(monkeypatch):
     # L'OCR ET la vision ne rendent presque rien, MAIS la légende dit « je peux postuler à cette offre »
     # -> on doit quand même tenter l'analyse d'annonce (pas rejeter « pas un CV »).
