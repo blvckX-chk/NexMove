@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.53 — Candidature : PDF d'abord, Word à la demande + corrections
+- Retour testeur UX. Après `/postuler`, le bot envoie **les PDF d'abord** (moins d'encombrement), puis propose trois boutons : **📝 Versions Word** (générées à la demande), **✏️ Corriger**, **🎨 CV graphique**.
+- **Boucle de correction** : « ✏️ Corriger » → le bot demande « dis-moi quoi changer » ; la phrase suivante (ex. « raccourcis la lettre », « mets le titre Chargé de clientèle », « insiste sur mon stage ») **régénère** CV+lettre en appliquant précisément la correction (sans rien inventer), et renvoie les nouveaux PDF. Une commande annule proprement l'attente.
+
 ## v3.52 — CV : pédagogie ATS + choix clair + nom de fichier + filigrane visible
 - Beaucoup de candidats ne savent pas ce qu'est un **CV ATS** et préfèrent le « joli » graphique (souvent écarté par les logiciels de tri). Désormais le bot **explique** (encart « C'est quoi un CV ATS ? ») et **donne le choix** :
   - `/creercv` : le prompt de choix explique ATS vs graphique, recommande l'ATS, bouton « CV ATS (recommandé) ».
