@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.51.0"
+VERSION         = "3.52.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -434,6 +434,13 @@ def _sanitize_doc_text(s: str) -> str:
     cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
     cleaned = re.sub(r" +([,.;:!?])", r"\1", cleaned)
     return cleaned.strip()
+
+# Pédagogie : beaucoup de candidats préfèrent un CV « joli/graphique » alors que les recruteurs utilisent
+# des logiciels de tri (ATS) qui lisent mal ces CV. On explique, et on donne le choix.
+_ATS_INFO = ("ℹ️ *C'est quoi un CV ATS ?* Un CV *sobre, une seule colonne, sans image* — le seul format "
+             "bien lu par les *logiciels de tri des recruteurs* (ATS). Un CV trop graphique est souvent "
+             "mal lu et *écarté avant même d'être vu par un humain*. 👉 *Pour postuler, garde l'ATS.* "
+             "Pour un envoi direct ou LinkedIn, tu peux aussi prendre la version *graphique* (plus jolie).")
 
 def _scrub_outbound(text: str) -> str:
     """Retire les placeholders résiduels d'un message sortant et nettoie la ponctuation orpheline."""
@@ -3416,11 +3423,14 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             ok = await _deliver_cv(session, "deux")
             msg = "✅ Tes *deux CV* sont envoyés : **ATS** (robots de tri) + **graphique** (envoi direct)." if ok else "😕 Génération impossible, réessaie."
         else:
-            msg = ("📄 *Quel format de CV veux-tu ?*\n"
-                   "• *ATS* · sobre, lisible par les logiciels de tri (idéal pour postuler en ligne)\n"
-                   "• *Graphique* · mise en page soignée (idéal pour un envoi direct)\n\n"
+            msg = ("📄 *Quel format de CV veux-tu ?*\n\n"
+                   + _ATS_INFO + "\n\n"
+                   "• *ATS* → pour *postuler en ligne* (passe les filtres des recruteurs)\n"
+                   "• *Graphique* → pour un *envoi direct* / LinkedIn (plus joli)\n"
+                   "• *Les deux* → tu as les deux versions\n\n"
+                   "_Conseil : si tu hésites, prends l'ATS — c'est lui qui te fait passer les filtres._\n"
                    "Choisis ci-dessous, ou tape `/cv ats`, `/cv graphique` ou `/cv deux`.")
-            session["_kb_options"] = [("📄 CV ATS", "act:cv_ats"), ("🎨 CV graphique", "act:cv_graphique"),
+            session["_kb_options"] = [("📄 CV ATS (recommandé)", "act:cv_ats"), ("🎨 CV graphique", "act:cv_graphique"),
                                       ("📄🎨 Les deux", "act:cv_deux")]
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -4543,21 +4553,24 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
                 nom = _slug(profil.get("identite", {}).get("nom", "candidat"))
                 chat_id = session.get("chat_id")
-                ok_cv = await deliver_file(session,f"CV_{nom}.pdf", cv_buf.getvalue(), f"📄 CV adapté · {cible_desc[:60]}")
-                ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation · {cible_desc[:60]}")
+                ok_cv = await deliver_file(session, f"CV_ATS_{nom}.pdf", cv_buf.getvalue(), f"📄 CV *ATS* adapté · {cible_desc[:50]}")
+                ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation · {cible_desc[:50]}")
                 if _DOCX_OK:
                     try:
                         cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
                         lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
-                        await deliver_file(session, f"CV_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
+                        await deliver_file(session, f"CV_ATS_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
                         await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
                     except Exception as de:
                         logger.warning(f"[docx] postuler: {de}")
                 if ok_cv and ok_lm:
                     _focus_touch(session, cible_desc, "docs")
+                    _fili = "" if _is_premium(session) else "\n🔒 _Filigrane présent (compte gratuit) · le Premium l'enlève._"
                     msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n"
-                           "📄 PDF (à envoyer) + 📝 Word (à personnaliser).\n\n"
+                           "📄 PDF (à envoyer) + 📝 Word (à personnaliser)." + _fili + "\n\n"
+                           + _ATS_INFO + "\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
+                    session["_kb_options"] = [("🎨 Version graphique du CV", "act:cv_graphique")]
                 elif ok_cv or ok_lm:
                     msg = "⚠️ Un seul document a pu être envoyé. Réessaie dans un instant."
                 else:
@@ -5696,14 +5709,14 @@ def _draw_wm_footer(canvas, doc):
     canvas.saveState()
     try:
         w, _h = A4
-        canvas.setFont("Helvetica", 7)
+        canvas.setFont("Helvetica-Oblique", 8)
         canvas.setFillColor(GRIS)
         try:
-            canvas.setFillAlpha(0.8)
+            canvas.setFillAlpha(0.95)
         except Exception:
             pass
-        canvas.drawCentredString(w / 2, 0.8 * cm,
-                                 "Généré gratuitement avec NexMove · passe en Premium pour un document sans filigrane")
+        canvas.drawCentredString(w / 2, 0.75 * cm,
+                                 "— Généré gratuitement avec NexMove · passe en Premium pour retirer ce filigrane —")
     except Exception:
         pass
     finally:
