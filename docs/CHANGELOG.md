@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.56 — Cohérence des suivis + filet dur anti-cliché + anti-invention + /qualite
+- **Bug de cohérence (capture WhatsApp greatyop).** Après l'analyse d'un **portail** de bourses, la question de suivi « *parmi ces bourses, lesquelles pour l'informatique ?* » repartait en **recherche web** et répondait à côté (bourse sans rapport, puis « aucune opportunité trouvée »). Deux causes corrigées :
+  1. Le portail **ne mémorisait pas** les opportunités listées → ajout de `last_portail` (titre + exemples) et rappel dans le contexte conversationnel.
+  2. Le routage captait « bourses » comme une **nouvelle recherche** → détecteur de **question de suivi déictique** (« ces bourses », « lesquelles », « citées plus haut »…) qui répond **en conversation, ancré sur les opportunités déjà listées** (réelles), au lieu de relancer `/mobilite`.
+- **Filet DUR anti-cliché** : même après la relance QC, si un cliché subsiste, on réécrit **chirurgicalement** la seule phrase fautive (mêmes faits) et, si elle reste fautive, on la **supprime** → garantie qu'aucun cliché ne part au candidat.
+- **Anti-invention** : une **ancienneté chiffrée** (« 7 ans d'expérience ») absente du profil déclenche une relance + interdiction explicite d'inventer une durée.
+- **Panneau admin `/qualite`** : taux de relance QC, taux de filet dur, et **répartition par fournisseur** (Tchavi premium vs gratuit) — exploite la traçabilité A/B de v3.55.
+
 ## v3.55 — QC tolérance zéro + dossier complet + traçabilité A/B
 - **Tolérance ZÉRO clichés** (lettres/CV) : voir ci-dessous.
 - **Dossier incomplet signalé** (`/postuler`) : si les coordonnées (e-mail, téléphone, ville) manquent sur le CV/lettre, le bot **avertit** (« ⚠️ Coordonnées incomplètes… un recruteur ne pourra pas te recontacter ») sans bloquer l'envoi, et indique comment les ajouter (`profil` → `email: …`) puis relancer.

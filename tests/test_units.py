@@ -1812,6 +1812,61 @@ def test_projet_issues():
     bon = "Le Master de Montréal correspond à mon parcours en cybersécurité chez ACME. " + " ".join(["texte"] * 90)
     assert main._projet_issues(bon, facts=["ACME", "cybersécurité"], target_terms="Master Montréal") == []
 
+# ── v3.56 : cohérence (suivi d'un portail), filet dur anti-cliché, anti-invention ──
+def test_refers_to_prior_list():
+    # Avec un portail listé en mémoire, une question déictique -> traitée en conversation (pas de recherche).
+    s = {"last_portail": {"exemples": ["Bourse Zonta", "Bourses Mackenzie King"]}}
+    assert main._refers_to_prior_list("parmi ces bourses lesquelles conviennent pour l'informatique ?", s)
+    assert main._refers_to_prior_list("je parle des 4 bourses citées plus haut", s)
+    assert main._refers_to_prior_list("laquelle est la mieux pour moi", s)
+    # Sans contexte listé -> on ne détourne pas le routage.
+    assert not main._refers_to_prior_list("parmi ces bourses lesquelles pour l'info", {})
+    # Vraie nouvelle recherche (pas déictique) -> non.
+    assert not main._refers_to_prior_list("trouve-moi des bourses en informatique", s)
+
+def test_portail_ne_route_pas_vers_recherche(monkeypatch):
+    # Bug capturé (greatyop) : « parmi ces bourses… » partait en /mobilite au lieu de répondre sur la liste.
+    captured = {}
+    async def fake_groq(system, user, **kw):
+        captured["system"] = system
+        return {"action": "", "argument": "", "then": {"action": "", "argument": ""},
+                "message": "Parmi les bourses listées, Mackenzie King vise des études au Canada."}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "pf", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Marthe"}, "preferences": {"objectif": "travailler"}},
+         "last_portail": {"titre": "Bourses au Bénin", "exemples": ["Bourse Zonta", "Bourses Mackenzie King"]},
+         "last_link_cible": "Bourses au Bénin"}
+    msg, s = _run(main.process_text_message(s, "parmi ces bourses, lesquelles conviennent pour l'informatique ?"))
+    # Le conseiller a répondu lui-même (pas de « Aucune opportunité pertinente trouvée » du flux recherche).
+    assert "Aucune opportunité" not in msg
+    # Et le contexte envoyé au LLM rappelle les opportunités listées + l'exception « cas particulier ».
+    assert "Mackenzie King" in captured["system"] and "CAS PARTICULIER" in captured["system"]
+
+def test_invention_issues_anciennete():
+    blob = "Comptable chez ACME, licence de gestion, Excel, Sage"  # aucune mention de « 7 ans »
+    assert main._invention_issues("Fort de mes 7 ans d'expérience en finance, je postule.", blob)
+    # Si l'ancienneté figure au profil -> pas d'alerte.
+    assert not main._invention_issues("Avec mes 3 ans d'expérience, je postule.", "3 ans chez ACME, comptable")
+    # Pas de claim chiffré -> rien.
+    assert not main._invention_issues("J'ai géré la comptabilité sur Sage.", blob)
+
+def test_surgical_decliche_supprime_phrase(monkeypatch):
+    # Réécriture indisponible/toujours fautive -> la phrase à cliché est SUPPRIMÉE (rien ne passe).
+    async def fake_groq(system, user, **kw):
+        return {"phrases": ["Je suis convaincu que c'est parfait."]}  # réécriture encore fautive
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    txt = "Chez ACME j'ai tenu la compta sur Sage. Je suis convaincu de bien faire."
+    out = _run(main._surgical_decliche(txt))
+    assert main._text_cliche_count(out) == 0 and "ACME" in out
+
+def test_surgical_decliche_reecrit_phrase(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"phrases": ["Je maîtrise Sage après deux ans de clôtures annuelles."]}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    txt = "Fort de mon expérience, je maîtrise Sage."
+    out = _run(main._surgical_decliche(txt))
+    assert main._text_cliche_count(out) == 0 and "Sage" in out
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
