@@ -1867,6 +1867,24 @@ def test_surgical_decliche_reecrit_phrase(monkeypatch):
     out = _run(main._surgical_decliche(txt))
     assert main._text_cliche_count(out) == 0 and "Sage" in out
 
+def test_ne_redemande_pas_cv_deja_analyse(monkeypatch):
+    # Bug capture : « quoi de plus que le CV… » -> « envoie-moi à nouveau ton CV » alors qu'il est analysé.
+    async def fake_groq(system, user, **kw):
+        return {"action": "", "argument": "", "then": {"action": "", "argument": ""},
+                "message": ("En plus de ton CV, je peux le retravailler et rédiger une lettre. "
+                            "Envoie-moi à nouveau ton CV pour que je commence.")}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "cv", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Marthe"}, "preferences": {"objectif": "travailler"}}}
+    msg, s = _run(main.process_text_message(s, "quoi de plus que le cv que je t'ai soumis avant ?"))
+    assert "nvoie" not in msg.lower() or "cv" not in msg.lower().split("nvoie")[-1][:30]
+    assert not main._ASK_CV_RE.search(msg)
+
+def test_strip_cv_request_garde_le_reste():
+    txt = "Je peux retravailler ta mise en page. Envoie-moi à nouveau ton CV. On vise quel poste ?"
+    out = main._strip_cv_request(txt)
+    assert "mise en page" in out and "quel poste" in out and not main._ASK_CV_RE.search(out)
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

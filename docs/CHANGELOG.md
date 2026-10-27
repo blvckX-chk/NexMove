@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.57 — Ne jamais redemander un CV déjà analysé
+- **Bug (même capture WhatsApp).** À « *quoi de plus que le CV que je t'ai soumis ?* », le conseiller répondait « *envoie-moi à nouveau ton CV* » alors qu'il était **déjà analysé** (le modèle ignorait la consigne). Ajout d'un **garde-fou déterministe** : si `cv_parsed`, toute phrase qui réclame le CV (envoyer/renvoyer/`/creercv`…) est **retirée** de la réponse ; s'il ne reste rien d'utile, repli explicite (« je pars de ton CV déjà analysé, dis-moi la cible »).
+
 ## v3.56 — Cohérence des suivis + filet dur anti-cliché + anti-invention + /qualite
 - **Bug de cohérence (capture WhatsApp greatyop).** Après l'analyse d'un **portail** de bourses, la question de suivi « *parmi ces bourses, lesquelles pour l'informatique ?* » repartait en **recherche web** et répondait à côté (bourse sans rapport, puis « aucune opportunité trouvée »). Deux causes corrigées :
   1. Le portail **ne mémorisait pas** les opportunités listées → ajout de `last_portail` (titre + exemples) et rappel dans le contexte conversationnel.

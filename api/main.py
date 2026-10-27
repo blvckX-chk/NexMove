@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.56.0"
+VERSION         = "3.57.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2653,6 +2653,24 @@ def _mem_events_block(session: dict) -> str:
         d = str(e.get("d") or "").strip()
         parts.append(f"{lab}{(' · ' + d) if d else ''}")
     return " ; ".join(p for p in parts if p)
+
+# Le conseiller ne doit JAMAIS redemander un CV déjà analysé (bug capture WhatsApp : « quoi de plus
+# que le CV… » -> « envoie-moi à nouveau ton CV »). Détecteur déterministe d'une phrase qui réclame le CV.
+_ASK_CV_RE = re.compile(
+    r"(envoie|envoyer|renvoie|renvoyer|transmets|transmettre|partage|partager|donne|donner|fournis|fournir|"
+    r"joins|joindre|dépose|déposer|téléverse|téléverser|upload)[^.?!]*\bcv\b"
+    r"|\bton\s+cv\b[^.?!]*(à\s+nouveau|de\s+nouveau|svp|stp|s'il\s+te\s+pla[îi]t)"
+    r"|(besoin|j'ai\s+besoin|il\s+me\s+faut|il\s+faut)[^.?!]*\bton\s+cv\b"
+    r"|/creercv",
+    re.IGNORECASE)
+
+def _strip_cv_request(message: str) -> str:
+    """Retire les phrases qui réclament le CV (quand il est déjà analysé). Si tout saute, repli utile."""
+    parts = re.split(r"(?<=[.!?\n])\s+", message or "")
+    kept = [p for p in parts if p.strip() and not _ASK_CV_RE.search(p)]
+    out = " ".join(kept).strip()
+    return out or ("Je pars de ton CV déjà analysé. Dis-moi la cible (poste/bourse) et je te prépare "
+                   "un CV adapté + une lettre via /postuler.")
 
 def _conversation_context(session: dict) -> str:
     """Mémoire compacte et LISIBLE pour le routeur conversationnel : ce que le bot SAIT déjà
@@ -5523,6 +5541,9 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
     _raw_msg = (r.get("message") or "").strip()
     message = _trim_to_sentence(_raw_msg) \
         or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…)."
+    # Garde-fou déterministe : si le CV est DÉJÀ analysé, on ne laisse jamais le conseiller le redemander.
+    if session.get("cv_parsed") and _ASK_CV_RE.search(message):
+        message = _strip_cv_request(message)
     if not _raw_msg:   # ni action ni réponse du LLM -> message pas compris : on le journalise.
         _log_miss(session, t, "nlu_fallback")
     _push(session, "user", t); _push(session, "assistant", message)
