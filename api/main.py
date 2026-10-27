@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.57.0"
+VERSION         = "3.58.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -974,6 +974,25 @@ _REFER_PRIOR_RE = re.compile(
     r"la\s+(?:premi[èe]re|deuxi[èe]me|troisi[èe]me)|celles?-l[àa]|ceux-l[àa])\b",
     re.IGNORECASE)
 
+def _docpack_followup(low: str) -> str:
+    """Après /postuler : capte en langage naturel l'équivalent des 3 boutons (Word / Corriger / graphique),
+    car beaucoup TAPENT au lieu de cliquer. Renvoie 'word' | 'graphique' | 'corriger' | '' ."""
+    low = (low or "").strip()
+    if len(low) > 90:   # une vraie phrase longue n'est pas un clic de bouton
+        return ""
+    # Ne pas confondre avec une modif de PROFIL (« change mon pays/objectif/email/numéro »).
+    if re.search(r"\b(pays|objectif|email|e-mail|mail|num[ée]ro|t[ée]l[ée]phone|adresse|nom|pr[ée]nom|ville|langue)\b", low):
+        return ""
+    if re.search(r"\b(word|docx?|modifiable|éditable|editable|format\s+word)\b", low):
+        return "word"
+    if re.search(r"\b(graphique|coloré|colore|design|joli|visuel|mise\s+en\s+page)\b", low) and "cv" in low \
+            or re.search(r"\b(version|cv)\s+graphique\b", low):
+        return "graphique"
+    if re.search(r"\b(corrige\w*|corriger|modifie\w*|modifier|change\w*|changer|rectifie\w*|ajuste\w*|"
+                 r"retouche\w*|refais\s+la\s+lettre|raccourci\w*|rallonge\w*)\b", low):
+        return "corriger"
+    return ""
+
 def _refers_to_prior_list(low: str, session: dict) -> bool:
     """Vrai si le message est une QUESTION sur des opportunités déjà listées (portail/dernières offres),
     donc à traiter en conversation (ancré) et NON comme une nouvelle recherche web."""
@@ -987,6 +1006,16 @@ def _free_text_to_command(low: str, t: str) -> str:
         cible = re.sub(r".*?(comment\s+(postuler|candidater|je\s+postule|envoyer\s+ma\s+candidature|faire\s+la\s+candidature|déposer\s+ma\s+candidature))\s*(à|a|au|aux|pour|chez|sur|en)?\s*",
                        "", t, flags=re.I).strip(" ?.")
         return "/commentpostuler " + cible
+    # Créer / refaire son CV — routage DÉTERMINISTE (ne pas dépendre du LLM, qui ratait « Créercv »).
+    # « améliorer/retravailler mon CV » tombe aussi ici : _cvbuild_start génère depuis le profil s'il existe.
+    _nolow = low.translate(str.maketrans("àâäéèêëïîôöùûüç", "aaaeeeeiioouuuc")).replace(" ", "")
+    # Pas de routage direct si la phrase ENCHAÎNE deux intentions (« mon statut PUIS crée un cv ») :
+    # on laisse l'orchestrateur LLM gérer la séquence.
+    _sequence = bool(re.search(r"\b(puis|ensuite|apr[èe]s|d'abord|aussi)\b", low))
+    if not _sequence and (re.search(r"\b(cr[ée]er?|cr[ée]e|faire|r[ée]dige\w*|monte\w*|g[ée]n[èe]re\w*|refaire|refais|"
+                 r"am[ée]liore\w*|retravaille\w*|peaufine\w*)\b[^.?!]{0,25}\b(cv|curriculum)\b", low)
+            or _nolow in ("creercv", "creationcv", "nouveaucv", "creemoncv", "creeruncv", "fairemoncv")):
+        return "/creercv"
     if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
         return "/formations " + t
     if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")):
@@ -1057,7 +1086,8 @@ _CHAINABLE_ACTIONS = {"chances", "compatibilite", "commentpostuler", "formations
 _PREONB_DIRECT = {"campusfrance", "canada", "procedure", "ecoles", "formations", "budget", "logement",
                   "parcours", "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
                   "entretien", "aide", "contact", "offres", "credits", "parrainage", "version",
-                  "mobilite"}   # mobilite = recherche d'opportunités GROUNDED (web réel), jamais de l'invention
+                  "mobilite",   # mobilite = recherche d'opportunités GROUNDED (web réel), jamais de l'invention
+                  "creercv"}    # créer un CV : utile direct même sans profil (lance le questionnaire)
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -2200,6 +2230,10 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "- Confidentialité/RGPD : ses données restent confidentielles, servent uniquement à l'accompagner, "
         "ne sont pas revendues ; il peut TOUT effacer quand il veut avec /supprimer (droit à l'effacement).\n"
         "- Pour démarrer : envoyer son CV (PDF, Word ou image), ou /creercv s'il n'en a pas.\n"
+        "- Ce que fait /creercv EXACTEMENT (ne promets RIEN d'autre) : 5 questions courtes (nom, diplôme, "
+        "expériences, compétences, langues), puis génération immédiate du CV. Il n'y a PAS d'aperçu section "
+        "par section, PAS d'édition en temps réel : ne le laisse pas entendre. S'il a déjà envoyé un CV, "
+        "inutile de le refaire : dis simplement qu'on peut le peaufiner ou postuler.\n"
         "DÉSAMBIGUÏSATION : si son intention est VAGUE (ex. « je veux partir », « aide-moi », « je cherche "
         "quelque chose »), ne suppose pas · pose UNE seule question de clarification précise et utile "
         "(études ou travail ? quel pays ou objectif ?) avant d'aller plus loin.\n"
@@ -2256,7 +2290,57 @@ CVBUILD_STEPS = [
     ("langues",     "🌐 Quelles *langues* parles-tu et à quel niveau ? _(ex : français natif, anglais B2)_"),
 ]
 
-async def _cvbuild_start(session: dict) -> tuple[str, dict]:
+def _render_formation_recap(forms: list) -> str:
+    """Rend la liste des formations pour le récap d'analyse CV. Assemble UNIQUEMENT les morceaux
+    présents, joints par « · » (jamais de séparateur orphelin « • · ESDAM » quand le diplôme manque)."""
+    forms = forms or []
+    if not forms:
+        return "   • _Aucune formation détectée dans ton CV · dis-le-moi si c'est une erreur._"
+    lignes_f = []
+    for f in forms[:3]:
+        dip = (f.get("diplome", "") or "").strip()
+        dom = (f.get("domaine", "") or "").strip()
+        etab = (f.get("etablissement", "") or "").strip()
+        an = (f.get("annee", "") or "").strip()
+        tete = dip or dom   # repli sur le domaine si pas de diplôme
+        bouts = [b for b in (tete, etab) if b]
+        ligne = " · ".join(bouts) + (f" ({an})" if an else "")
+        if ligne.strip():
+            lignes_f.append("   • " + _md_clean(ligne))
+    txt = "\n".join(lignes_f) if lignes_f else "   • _non précisé_"
+    if len(forms) > 3:
+        txt += f"\n   • _(+{len(forms) - 3} autre·s)_"
+    return txt
+
+def _profile_is_usable(session: dict) -> bool:
+    """Vrai si on a DÉJÀ assez de matière (CV analysé) pour générer un CV sans tout redemander.
+    Évite le bug : CV analysé -> « /creercv » repart de zéro et redemande nom/parcours/expériences."""
+    if not session.get("cv_parsed"):
+        return False
+    profil = session.get("profil") or {}
+    ident = profil.get("identite") or {}
+    nom = (ident.get("nom") or "").strip()
+    has_nom = bool(nom) and nom not in ("—", "-", "Candidat")
+    has_contenu = bool(profil.get("formation") or profil.get("experience")
+                       or (profil.get("competences", {}) or {}).get("techniques"))
+    return has_nom or has_contenu
+
+async def _cvbuild_start(session: dict, force_scratch: bool = False) -> tuple[str, dict]:
+    # COHÉRENCE (v3.58) : si un CV a DÉJÀ été analysé, on ne repart PAS d'un questionnaire vierge.
+    # On génère directement depuis le profil existant et on propose de continuer / recommencer.
+    if not force_scratch and _profile_is_usable(session):
+        nom = _md_clean(((session.get("profil") or {}).get("identite") or {}).get("nom") or "ton profil")
+        ok = await _deliver_cv(session, "ats")
+        if ok:
+            session["_kb_options"] = [("🎨 Version graphique", "act:cv_graphique"),
+                                      ("✏️ Repartir de zéro", "act:cv_scratch"),
+                                      ("🎯 Postuler maintenant", "act:postuler_help")]
+            msg = (f"✅ J'ai déjà analysé ton CV — voici ton *CV ATS* généré pour *{nom}* (pas besoin de tout "
+                   "retaper 🙂).\n\n🎨 Tu veux une *version graphique* ? · ✏️ repartir de *zéro* ? · ou "
+                   "*postuler* à une offre (`/postuler <poste>`) ?")
+            _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+            return msg, session
+        # Si la génération échoue, on bascule proprement sur le questionnaire.
     session["etape"] = "CVBUILD"
     session["cvbuild_step"] = 0
     session["cvbuild_data"] = {}
@@ -5484,6 +5568,28 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     # EXCEPTION cohérence (v3.56) : si la personne parle d'opportunités DÉJÀ listées (« parmi ces bourses… »,
     # « les 4 citées plus haut »), on NE relance PAS une recherche web — on répond en conversation, ancré
     # sur ces opportunités précises (sinon le bot repartait chercher et répondait à côté).
+    # MÉCANISME GÉNÉRAL « ils ne cliquent pas les boutons » (v3.58) : après /postuler, les 3 boutons
+    # (Word / Corriger / CV graphique) sont souvent TAPÉS au lieu d'être cliqués. On capte l'équivalent
+    # en langage naturel tant qu'un pack de documents récent existe en session.
+    if session.get("_docpack"):
+        _act = _docpack_followup(low)
+        if _act:
+            _push(session, "user", t); session["derniere_activite"] = now
+            if _act == "word":
+                ok = await _send_docpack_word(session)
+                msg = ("📝 Versions *Word* (modifiables) envoyées ci-dessus." if ok
+                       else "😕 Plus de documents récents à convertir · refais /postuler <cible>.")
+            elif _act == "graphique":
+                ok = await _deliver_cv(session, "graphic")
+                msg = ("🎨 *CV graphique* envoyé ci-dessus · `/cv modeles` pour un autre style." if ok
+                       else "📄 Je n'ai pas pu générer le CV graphique · refais /postuler <cible>.")
+            else:  # corriger
+                session["doc_correct_pending"] = True
+                msg = ("✏️ *Dis-moi quoi changer* (en une phrase) : ex. « mets le titre *Chargé de clientèle* », "
+                       "« insiste sur mon stage », « raccourcis la lettre ».")
+            _push(session, "assistant", msg)
+            return msg, session
+
     _followup_liste = _refers_to_prior_list(low, session)
     if not _followup_liste:
         cmd = _free_text_to_command(low, t)
@@ -6394,6 +6500,11 @@ async def handle_action(session, data, callback_id=None):
             await deliver_text(session, f"✅ CV *{lbl}* envoyé (ci-dessus) · `/cv modeles` pour un autre style." if ok
                                else "📄 Envoie d'abord ton CV ou tape /creercv.", with_menu=True)
             return session
+        if act == "cv_scratch":
+            # L'utilisateur veut VRAIMENT repartir de zéro malgré un CV analysé.
+            msg, session = await _cvbuild_start(session, force_scratch=True)
+            await deliver_text(session, msg)
+            return session
         if act == "word":
             ok = await _send_docpack_word(session)
             await deliver_text(session, "📝 Versions Word (modifiables) envoyées ci-dessus." if ok
@@ -6849,21 +6960,7 @@ Document: {cv_text[:6000]}"""
         nom = devine or "—"
         if devine:
             profil.setdefault("identite", {})["nom"] = devine   # persister pour lettres/dossiers
-    forms = profil.get("formation", []) or []
-    if forms:
-        lignes_f = []
-        for f in forms[:3]:
-            dip = (f.get("diplome", "") or "").strip()
-            etab = (f.get("etablissement", "") or "").strip()
-            an = (f.get("annee", "") or "").strip()
-            ligne = dip + (f" · {etab}" if etab else "") + (f" ({an})" if an else "")
-            if ligne.strip():
-                lignes_f.append("   • " + _md_clean(ligne))
-        formation_txt = "\n".join(lignes_f) if lignes_f else "   • _non précisé_"
-        if len(forms) > 3:
-            formation_txt += f"\n   • _(+{len(forms) - 3} autre·s)_"
-    else:
-        formation_txt = "   • _Aucune formation détectée dans ton CV · dis-le-moi si c'est une erreur._"
+    formation_txt = _render_formation_recap(profil.get("formation", []) or [])
     skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
     nom_aff = nom if nom and nom != "—" else "_(je n'ai pas trouvé ton nom — dis-le-moi)_"
     message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom_aff}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"

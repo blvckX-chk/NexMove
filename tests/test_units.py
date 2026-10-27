@@ -1885,6 +1885,53 @@ def test_strip_cv_request_garde_le_reste():
     out = main._strip_cv_request(txt)
     assert "mise en page" in out and "quel poste" in out and not main._ASK_CV_RE.search(out)
 
+# ── v3.58 : cohérence création CV + mécanismes « ils ne cliquent pas les boutons » ──
+def test_creercv_routage_deterministe():
+    # « Créercv » (majuscule + accent, sans slash), « créer mon cv », « faire mon CV » -> /creercv.
+    assert main._free_text_to_command("créercv", "Créercv") == "/creercv"
+    assert main._free_text_to_command("créer mon cv", "x") == "/creercv"
+    assert main._free_text_to_command("tu peux faire mon cv professionnel", "x") == "/creercv"
+    assert main._free_text_to_command("améliore mon cv", "x") == "/creercv"
+    # Enchaînement -> on laisse l'orchestrateur LLM (pas de routage direct).
+    assert main._free_text_to_command("mon statut puis crée un cv", "x") != "/creercv"
+    # Pas de faux positif sur une recherche.
+    assert not main._free_text_to_command("je cherche un emploi", "x").startswith("/creercv")
+
+def test_profile_is_usable():
+    assert not main._profile_is_usable({})
+    assert not main._profile_is_usable({"cv_parsed": True, "profil": {"identite": {"nom": "Candidat"}}})
+    assert main._profile_is_usable({"cv_parsed": True, "profil": {"identite": {"nom": "Ketsia Mensah"}}})
+    assert main._profile_is_usable({"cv_parsed": True, "profil": {"formation": [{"diplome": "Bac"}]}})
+
+def test_creercv_ne_repart_pas_de_zero_si_cv_analyse(monkeypatch):
+    # Bug capture : CV analysé -> /creercv redemandait tout. Désormais on génère depuis le profil existant.
+    async def fake_deliver_cv(session, style="ats", template=None):
+        return True
+    monkeypatch.setattr(main, "_deliver_cv", fake_deliver_cv)
+    s = {"user_id": "kc", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "CV_RECU",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Ketsia Mensah"},
+                                       "competences": {"techniques": ["Couture"]}}}
+    msg, s = _run(main.process_text_message(s, "/creercv"))
+    assert s.get("etape") != "CVBUILD" and "déjà analysé" in msg
+
+def test_formation_sans_diplome_pas_de_separateur_orphelin():
+    # « • · ESDAM » : diplôme vide ne doit pas laisser un « · » en tête.
+    f = [{"diplome": "", "etablissement": "ESDAM", "annee": "2020"},
+         {"diplome": "Baccalauréat", "etablissement": "Collège La Référence", "annee": "2018"}]
+    out = main._render_formation_recap(f)
+    assert "· ESDAM" not in out and "ESDAM (2020)" in out
+    assert "Baccalauréat · Collège La Référence (2018)" in out
+
+def test_docpack_followup_langage_naturel():
+    assert main._docpack_followup("je veux la version word") == "word"
+    assert main._docpack_followup("en cv graphique stp") == "graphique"
+    assert main._docpack_followup("corrige la lettre") == "corriger"
+    assert main._docpack_followup("raccourcis la lettre") == "corriger"
+    # Ne pas confondre avec une modif de profil.
+    assert main._docpack_followup("change mon pays") == ""
+    # Phrase longue = pas un clic de bouton.
+    assert main._docpack_followup("je me demandais si tu pouvais m'expliquer en détail comment tout cela fonctionne vraiment") == ""
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
