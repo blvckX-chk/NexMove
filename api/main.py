@@ -24,7 +24,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib.colors import HexColor
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Table, TableStyle
-from reportlab.lib.enums import TA_JUSTIFY
+from reportlab.lib.enums import TA_JUSTIFY, TA_RIGHT
 
 # OCR optionnel (CV scannés / images). Nécessite le binaire tesseract-ocr + pytesseract.
 # Import tolérant : si tesseract n'est pas installé, l'app démarre quand même (OCR désactivé).
@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.50.0"
+VERSION         = "3.51.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -402,13 +402,27 @@ _OUTBOUND_PH_RE = re.compile(
 # carré dans Word/PDF. On les retire du texte des documents générés (CV, lettre).
 _BOX_GLYPHS = "�☐☑☒■□▪▫◻◼◽◾◆◇●○•‣⁃⁌⁍∙◦❖⬛⬜"
 
+# Caractères exotiques (tirets/espaces/guillemets) que la police PDF ne sait pas rendre -> « carreau ».
+# On les NORMALISE vers un équivalent ASCII sûr (ex. le « e‑commerce » avec tiret insécable devenait « e■commerce »).
+_CHAR_NORMALISE = {
+    "‐": "-", "‑": "-", "‒": "-", "―": "-", "−": "-",  # tirets/moins exotiques
+    "–": "-", "—": "-",                                              # en/em dash -> tiret simple
+    " ": " ", " ": " ", " ": " ", " ": " ", " ": " ", # espaces insécables/fines
+    "‘": "'", "’": "'", "‚": "'", "′": "'",                 # apostrophes typographiques
+    "“": '"', "”": '"', "„": '"', "″": '"',                 # guillemets anglais
+    "…": "...", "​": "", "‌": "", "‍": "", "﻿": "",    # points de suspension / largeur nulle
+}
+
 def _sanitize_doc_text(s: str) -> str:
-    """Nettoie le texte d'un document généré : retire les glyphes « carreau »/puces parasites,
-    le caractère de remplacement et les caractères de contrôle, sans toucher la ponctuation normale."""
+    """Nettoie le texte d'un document généré : normalise les tirets/espaces/guillemets exotiques (cause
+    des « carreaux » dans le PDF), retire les glyphes parasites, le caractère de remplacement et les
+    caractères de contrôle, sans toucher la ponctuation normale."""
     if not s:
         return s
     out = []
     for ch in str(s):
+        if ch in _CHAR_NORMALISE:
+            out.append(_CHAR_NORMALISE[ch]); continue
         if ch in _BOX_GLYPHS:
             continue
         # caractères de contrôle (hors \n \t) et zone privée (glyphes « tofu »)
@@ -5671,6 +5685,7 @@ def _condense_profil(profil: dict) -> dict:
 
 BLEU = HexColor("#1a237e")
 GRIS = HexColor("#546e7a")
+NOIR = HexColor("#111418")
 _WM_GREY = HexColor("#c9ced6")
 
 def _draw_wm_footer(canvas, doc):
@@ -5780,14 +5795,18 @@ def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style
     if experience:
         els.append(Paragraph("EXPÉRIENCE", s_sec))
         for exp in experience[:4]:
-            els.append(Paragraph(f"<b>{_xml(exp.get('poste',''))}</b> · {_xml(exp.get('organisation',''))}", s_body))
+            _poste = _sanitize_doc_text(exp.get('poste', '')); _org = _sanitize_doc_text(exp.get('organisation', ''))
+            els.append(Paragraph(f"<b>{_xml(_poste)}</b> · {_xml(_org)}", s_body))
             for m in exp.get("missions", [])[:4]:
-                els.append(Paragraph("• " + _xml(m), s_bullet))
+                m = _sanitize_doc_text(m)
+                if m:
+                    els.append(Paragraph("• " + _xml(m), s_bullet))
             els.append(Spacer(1, 4))
     if formation:
         els.append(Paragraph("FORMATION", s_sec))
         for f in formation[:3]:
-            els.append(Paragraph(f"<b>{_xml(f.get('diplome',''))}</b> · {_xml(f.get('etablissement',''))}", s_body))
+            _dip = _sanitize_doc_text(f.get('diplome', '')); _etab = _sanitize_doc_text(f.get('etablissement', ''))
+            els.append(Paragraph(f"<b>{_xml(_dip)}</b> · {_xml(_etab)}", s_body))
     # ATS : filigrane en pied SEULEMENT (ne pas polluer l'extraction par les robots) ; graphique : filigrane visuel.
     _pdf_build(doc, els, watermark, footer_only=(not graphic))
     return buf
@@ -5799,6 +5818,16 @@ def _slug(s):
     s = "".join(c for c in str(s or "candidat") if c.isalnum() or c in " -_")
     return (s.strip().replace(" ", "_")[:40]) or "candidat"
 
+_MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+            "septembre", "octobre", "novembre", "décembre"]
+
+def _date_fr_lieu(ville: str = "") -> str:
+    """Date d'en-tête à la française : « Cotonou, le 27 octobre 2026 » (ou sans ville si inconnue)."""
+    d = datetime.now(timezone.utc)
+    jour = f"le {d.day} {_MOIS_FR[d.month - 1]} {d.year}"
+    ville = (ville or "").split(",")[0].strip()
+    return f"{ville}, {jour}" if ville else jour.capitalize()
+
 def build_letter_pdf(profil: dict, objet: str, corps: str, watermark: bool = False) -> io.BytesIO:
     objet = _sanitize_doc_text(objet); corps = _sanitize_doc_text(corps)
     buf = io.BytesIO()
@@ -5806,15 +5835,16 @@ def build_letter_pdf(profil: dict, objet: str, corps: str, watermark: bool = Fal
     ident = profil.get("identite", {})
     s_head = ParagraphStyle("lh", fontSize=11, fontName="Helvetica-Bold", spaceAfter=2)
     s_small = ParagraphStyle("lsm", fontSize=9.5, textColor=GRIS, spaceAfter=1)
-    s_objet = ParagraphStyle("lo", fontSize=10.5, fontName="Helvetica-Bold", spaceBefore=14, spaceAfter=10)
+    s_date = ParagraphStyle("ld", fontSize=10, textColor=NOIR, spaceBefore=12, spaceAfter=14, alignment=TA_RIGHT)
+    s_objet = ParagraphStyle("lo", fontSize=10.5, fontName="Helvetica-Bold", spaceBefore=4, spaceAfter=10)
     s_body = ParagraphStyle("lb", fontSize=10.5, fontName="Helvetica", spaceAfter=8, leading=15, alignment=TA_JUSTIFY)
     els = []
-    els.append(Paragraph(_xml(ident.get("nom", "Candidat")), s_head))
+    els.append(Paragraph(_xml(_sanitize_doc_text(ident.get("nom", "Candidat"))), s_head))
     for c in [ident.get("email"), ident.get("telephone"), ident.get("localisation")]:
         if c:
-            els.append(Paragraph(_xml(c), s_small))
-    els.append(Spacer(1, 10))
-    els.append(Paragraph(datetime.now(timezone.utc).strftime("%d/%m/%Y"), s_small))
+            els.append(Paragraph(_xml(_sanitize_doc_text(c)), s_small))
+    # Date à la française, alignée à droite (convention lettre de motivation).
+    els.append(Paragraph(_xml(_date_fr_lieu(ident.get("localisation", ""))), s_date))
     els.append(Paragraph(f"<b>Objet :</b> {_xml(objet)}", s_objet))
     for para in (corps or "").split("\n\n"):
         para = para.strip()
@@ -5864,14 +5894,16 @@ def build_cv_docx(profil: dict, titre: str, resume: str, competences: list,
     if exp:
         section("Expérience")
         for e in exp[:5]:
-            p = d.add_paragraph(); r = p.add_run(f"{e.get('poste','')} · {e.get('organisation','')}"); r.bold = True
+            p = d.add_paragraph(); r = p.add_run(f"{_sanitize_doc_text(e.get('poste',''))} · {_sanitize_doc_text(e.get('organisation',''))}"); r.bold = True
             for m in (e.get("missions", []) or [])[:4]:
-                d.add_paragraph(str(m), style="List Bullet")
+                m = _sanitize_doc_text(m)
+                if m:
+                    d.add_paragraph(m, style="List Bullet")
     form = profil.get("formation", [])
     if form:
         section("Formation")
         for f in form[:4]:
-            p = d.add_paragraph(); r = p.add_run(f"{f.get('diplome','')} · {f.get('etablissement','')}"); r.bold = True
+            p = d.add_paragraph(); r = p.add_run(f"{_sanitize_doc_text(f.get('diplome',''))} · {_sanitize_doc_text(f.get('etablissement',''))}"); r.bold = True
     if watermark:
         _docx_watermark_footer(d)
     buf = io.BytesIO(); d.save(buf); return buf
@@ -5903,8 +5935,8 @@ def build_letter_docx(profil: dict, objet: str, corps: str, watermark: bool = Fa
     for c in [ident.get("email"), ident.get("telephone"), ident.get("localisation")]:
         if c:
             d.add_paragraph(str(c))
-    d.add_paragraph("")
-    d.add_paragraph(datetime.now(timezone.utc).strftime("%d/%m/%Y"))
+    _pd = d.add_paragraph(); _pd.alignment = 2  # WD_ALIGN_PARAGRAPH.RIGHT
+    _pd.add_run(_date_fr_lieu(ident.get("localisation", "")))
     p = d.add_paragraph(); r = p.add_run(f"Objet : {objet}"); r.bold = True
     for para in (corps or "").split("\n\n"):
         para = para.strip()
