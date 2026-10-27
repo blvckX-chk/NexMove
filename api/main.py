@@ -4590,7 +4590,15 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 if ok_cv and ok_lm:
                     _focus_touch(session, cible_desc, "docs")
                     _fili = "" if _is_premium(session) else "\n🔒 _Filigrane présent (compte gratuit) · le Premium l'enlève._"
-                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*." + _fili + "\n\n"
+                    # Alerte DOSSIER INCOMPLET : un recruteur doit pouvoir te joindre. On ne bloque pas
+                    # (les docs sont déjà envoyés), mais on signale les coordonnées absentes à compléter.
+                    _ident = profil.get("identite", {}) or {}
+                    _manque = [lbl for lbl, k in (("e-mail", "email"), ("téléphone", "telephone"), ("ville", "localisation"))
+                               if not str(_ident.get(k, "")).strip()]
+                    _warn = (f"\n\n⚠️ *Coordonnées incomplètes* : il manque {', '.join(_manque)} sur ton CV/lettre — "
+                             "un recruteur ne pourra pas te recontacter. Ajoute-les via `profil` "
+                             "(ex. `email: toi@mail.com`) puis relance `/postuler`.") if _manque else ""
+                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*." + _fili + _warn + "\n\n"
                            + _ATS_INFO + "\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets) avant d'envoyer.\n"
                            "👇 Besoin de la version *Word* modifiable, de *corriger* un détail, ou d'un CV *graphique* ?")
@@ -7176,6 +7184,12 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
                 pack = pack2
         except Exception as e:
             logger.warning(f"[pack] relance QC: {e}")
+    # Traçabilité A/B : quel fournisseur a RÉDIGÉ ce livrable (Tchavi premium vs modèle gratuit).
+    try:
+        import llm as _llm
+        logger.info(f"[pack] rédigé par {_llm.LAST_PROVIDER} ({_llm.LAST_MODEL}) · cible={type_cible}")
+    except Exception:
+        pass
     return pack
 
 @app.post("/api/chat")

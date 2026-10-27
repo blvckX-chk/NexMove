@@ -48,6 +48,11 @@ OPENROUTER_GENERATE_MODEL = os.getenv("OPENROUTER_GENERATE_MODEL", OPENROUTER_MO
 # contexte et des consignes anti-invention. Par défaut Gemini (fort, long contexte, déjà configuré).
 SMART_LEAD_PROVIDER = os.getenv("SMART_LEAD_PROVIDER", "gemini").strip().lower()
 
+# Dernier fournisseur/modèle ayant répondu avec succès (pour tracer qui a RÉDIGÉ chaque livrable :
+# A/B Tchavi premium vs modèles gratuits). Mis à jour par call_groq à chaque appel abouti.
+LAST_PROVIDER = ""
+LAST_MODEL = ""
+
 # Pillow (utilisé par la vision) — import tolérant
 try:
     from PIL import Image as _PILImage
@@ -171,6 +176,8 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
                 else:
                     raw = await _llm_openai(prov, model, system_prompt, user_prompt, temperature, max_tokens, json_mode)
                 logger.info(f"[llm] via {prov['name']} ({model})")
+                global LAST_PROVIDER, LAST_MODEL
+                LAST_PROVIDER, LAST_MODEL = prov["name"], model
                 return _llm_parse_json(raw) if json_mode else raw
             except _LLMFallback as f:
                 last = f

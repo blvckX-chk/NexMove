@@ -1287,6 +1287,30 @@ def test_comment_postuler(monkeypatch):
     assert "Comment postuler" in msg and "Candidature SOC" in msg
     assert "rh@x.co" in msg and "/postuler" in msg
 
+def test_postuler_alerte_coordonnees_incompletes(monkeypatch):
+    # v3.55 : coordonnées manquantes -> avertissement « Coordonnées incomplètes » (non bloquant, docs envoyés).
+    async def fake_pack(profil, cible, type_cible="emploi", **kw):
+        return {"titre_poste": "Analyste", "resume_professionnel": "Résumé pro suffisamment long pour le QC.",
+                "competences_mises_en_avant": ["SQL"], "lettre_objet": "Candidature",
+                "lettre_corps": " ".join(["mot"] * 120)}
+    async def fake_deliver(session, name, data, caption=""):
+        return True
+    monkeypatch.setattr(main, "generate_pack", fake_pack)
+    monkeypatch.setattr(main, "deliver_file", fake_deliver)
+    monkeypatch.setattr(main, "build_cv_pdf", lambda *a, **k: __import__("io").BytesIO(b"%PDF"))
+    monkeypatch.setattr(main, "build_letter_pdf", lambda *a, **k: __import__("io").BytesIO(b"%PDF"))
+    s = {"user_id": "pc", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "premium_tier": "premium", "premium_until": "2099-01-01T00:00:00+00:00", "etape": "ACTIF",
+         "profil": {"identite": {"nom": "Awa"}, "competences": {"techniques": ["SQL"]}}}  # pas d'email/tel/ville
+    msg, s = _run(main.process_text_message(s, "/postuler Analyste SOC"))
+    assert "Coordonnées incomplètes" in msg and "e-mail" in msg
+    # Avec coordonnées complètes -> pas d'alerte.
+    s2 = dict(s, profil={"identite": {"nom": "Awa", "email": "a@x.co", "telephone": "+229", "localisation": "Cotonou"},
+                         "competences": {"techniques": ["SQL"]}})
+    s2["historique"] = []
+    msg2, _ = _run(main.process_text_message(s2, "/postuler Analyste SOC"))
+    assert "Coordonnées incomplètes" not in msg2
+
 def test_comment_postuler_sans_profil():
     s = {"user_id": "np", "chat_id": "1", "historique": [], "onboarding_complete": True,
          "etape": "ACTIF", "profil": {}}

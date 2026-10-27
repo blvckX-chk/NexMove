@@ -2,7 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
-## v3.55 — Lettres/CV : contrôle qualité tolérance zéro sur les clichés
+## v3.55 — QC tolérance zéro + dossier complet + traçabilité A/B
+- **Tolérance ZÉRO clichés** (lettres/CV) : voir ci-dessous.
+- **Dossier incomplet signalé** (`/postuler`) : si les coordonnées (e-mail, téléphone, ville) manquent sur le CV/lettre, le bot **avertit** (« ⚠️ Coordonnées incomplètes… un recruteur ne pourra pas te recontacter ») sans bloquer l'envoi, et indique comment les ajouter (`profil` → `email: …`) puis relancer.
+- **Traçabilité A/B premium** : chaque livrable rédigé logue désormais **quel fournisseur l'a écrit** (`[pack] rédigé par tchavi-gen (…)` vs modèle gratuit), pour comparer en prod la qualité Tchavi premium vs gratuit. `llm.LAST_PROVIDER`/`LAST_MODEL`.
+
+### Détail — tolérance zéro sur les clichés
 - Retour testeur : une lettre comme « Je suis persuadée que ma capacité… » passait encore. Le QC ne doit **rien laisser passer**.
 - **Liste de clichés élargie** (~22 → ~55 tournures) : variantes féminines (« forte/riche de mon expérience »), et classiques des lettres (« atout majeur », « valeur ajoutée », « passionné·e par », « candidat idéal », « soif d'apprendre », « environnement stimulant », « contribuer au succès », « mes salutations distinguées »…).
 - **Tolérance ZÉRO** : désormais **un seul cliché** dans la lettre (ou le résumé) déclenche la relance de rédaction, au lieu de 2+. Même durcissement pour les projets d'études (`/dossier`). Le prompt de relance interdit explicitement la liste élargie.
