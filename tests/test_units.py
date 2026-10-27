@@ -1739,6 +1739,22 @@ def test_pack_quality_detecte_cliches_ia():
     issues = main._pack_quality_issues(bad, "Comptable")
     assert any("cliché" in i or "cliche" in i or "IA" in i for i in issues)
 
+def test_pack_quality_cliche_tolerance_zero():
+    # v3.55 : UN SEUL cliché dans la lettre suffit désormais à déclencher une relance (tolérance zéro).
+    corps = ("Chez ACME j'ai piloté la comptabilité sur Sage durant deux ans, en clôturant les bilans annuels. "
+             "Je suis convaincu de pouvoir apporter la même rigueur ici. " + " ".join(["texte"] * 80))
+    pk = {"titre_poste": "Comptable", "resume_professionnel": "Comptable expérimenté sur Sage, bilans et clôtures annuelles.",
+          "competences_mises_en_avant": ["Sage"], "lettre_corps": corps}
+    iss = main._pack_quality_issues(pk, "Comptable", facts=["ACME", "Sage"])
+    assert any("cliché" in i or "cliche" in i or "tournure" in i for i in iss)
+    # Variante féminine couverte aussi.
+    assert main._text_cliche_count("Forte de mon expérience, je postule.") >= 1
+    # Lettre vraiment propre (aucun cliché) -> aucune alerte de cliché.
+    propre = ("Chez ACME j'ai tenu la comptabilité sur Sage pendant deux ans et clôturé chaque exercice. "
+              + " ".join(["texte"] * 90))
+    ok = dict(pk, lettre_corps=propre)
+    assert not any("cliché" in i or "cliche" in i or "tournure" in i for i in main._pack_quality_issues(ok, "Comptable", facts=["ACME", "Sage"]))
+
 def test_pack_quality_detecte_lettre_non_ancree():
     # La lettre ne cite AUCUN fait du profil (ni ACME, ni comptabilité, ni Sage) -> générique.
     corps = "Bonjour, je souhaite rejoindre votre structure pour y apporter ma contribution. " + " ".join(["texte"] * 100)

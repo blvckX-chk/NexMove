@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.55 — Lettres/CV : contrôle qualité tolérance zéro sur les clichés
+- Retour testeur : une lettre comme « Je suis persuadée que ma capacité… » passait encore. Le QC ne doit **rien laisser passer**.
+- **Liste de clichés élargie** (~22 → ~55 tournures) : variantes féminines (« forte/riche de mon expérience »), et classiques des lettres (« atout majeur », « valeur ajoutée », « passionné·e par », « candidat idéal », « soif d'apprendre », « environnement stimulant », « contribuer au succès », « mes salutations distinguées »…).
+- **Tolérance ZÉRO** : désormais **un seul cliché** dans la lettre (ou le résumé) déclenche la relance de rédaction, au lieu de 2+. Même durcissement pour les projets d'études (`/dossier`). Le prompt de relance interdit explicitement la liste élargie.
+
 ## v3.54 — 10 modèles de CV graphiques pro
 - Le CV graphique n'avait qu'un seul style (bandeau bleu). Nouveau **système de 10 modèles** professionnels, 5 mises en page × couleurs : *Moderne Bleu, Émeraude, Bordeaux* (bannière), *Corporate Ardoise, Teal* (bandeau fin), *Indigo Minimal, Noir Minimal* (minimaliste), *Élégant* (serif centré), *Sidebar Marine, Sidebar Anthracite* (colonne latérale colorée). `/cv modeles` les liste (avec boutons), `/cv <modèle>` en génère un ; aussi via Outils → « Modèles de CV (10) ». Le nom de fichier reprend le modèle. L'ATS reste inchangé (toujours recommandé pour postuler). Repli propre sur le modèle par défaut si un nom inconnu est donné.
 

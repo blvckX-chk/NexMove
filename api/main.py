@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.54.0"
+VERSION         = "3.55.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6993,12 +6993,22 @@ _PLACEHOLDER_RE = re.compile(
 # Tournures d'IA / clichés creux qu'une BONNE lettre n'utilise pas (le prompt les interdit ;
 # ici on VÉRIFIE leur absence pour déclencher une relance si le modèle a triché).
 _LETTER_CLICHES = (
-    "je suis convaincu", "je suis persuadé", "correspond parfaitement", "parfaitement à mes aspirations",
-    "dynamique et motivé", "c'est avec un grand intérêt", "c'est avec un grand enthousiasme",
-    "fort de mon expérience", "forte de mon expérience", "n'hésiterai pas à", "mener à bien",
-    "relever de nouveaux défis", "esprit d'équipe", "rigoureux et motivé", "au sein de votre prestigieuse",
-    "votre prestigieuse", "je serais ravi de", "je serais honoré", "ma candidature retiendra",
-    "retiendra toute votre attention", "dans l'attente de votre", "veuillez agréer",
+    "je suis convaincu", "je suis persuadé", "je suis vivement intéress", "correspond parfaitement",
+    "parfaitement à mes aspirations", "parfaitement à mon profil", "en parfaite adéquation",
+    "dynamique et motivé", "dynamique et rigoureux", "autonome et rigoureux", "sérieux et motivé",
+    "c'est avec un grand intérêt", "c'est avec un grand enthousiasme", "c'est avec enthousiasme",
+    "c'est avec un vif intérêt", "fort de mon expérience", "forte de mon expérience",
+    "riche de mon expérience", "n'hésiterai pas à", "mener à bien", "relever de nouveaux défis",
+    "relever ce défi", "nouveau défi", "esprit d'équipe", "rigoureux et motivé", "motivé et rigoureux",
+    "au sein de votre prestigieuse", "votre prestigieuse", "votre renommée", "votre réputation",
+    "je serais ravi de", "je serais honoré", "je serais enchant", "ce serait un honneur",
+    "ma candidature retiendra", "retiendra toute votre attention", "dans l'attente de votre",
+    "dans l'attente d'une réponse", "veuillez agréer", "mes salutations distinguées",
+    "atout majeur", "atout pour votre équipe", "valeur ajoutée", "force de proposition",
+    "passionné par", "passionnée par", "depuis mon plus jeune âge", "touche-à-tout", "polyvalent",
+    "capacité d'adaptation", "soif d'apprendre", "apprendre et grandir", "environnement stimulant",
+    "mettre mes compétences au service", "contribuer au succès", "contribuer activement",
+    "je suis la personne qu'il vous faut", "parfait candidat", "candidat idéal",
 )
 
 def _text_cliche_count(txt: str) -> int:
@@ -7022,8 +7032,8 @@ def _projet_issues(corps: str, facts: list = None, target_terms=None) -> list:
         issues.append("placeholder non rempli")
     if corps and any(g in corps for g in _BOX_GLYPHS):
         issues.append("symbole parasite")
-    if corps and _text_cliche_count(corps) >= 2:
-        issues.append("trop de clichés d'IA")
+    if corps and _text_cliche_count(corps) >= 1:
+        issues.append("cliché d'IA à bannir")
     low = corps.lower()
     ftoks = _terms(facts)
     if corps and ftoks and not any(tok in low for tok in ftoks):
@@ -7061,9 +7071,9 @@ def _pack_quality_issues(pack: dict, cible_desc: str = "", facts: list = None, t
     comp = pack.get("competences_mises_en_avant")
     if isinstance(comp, list) and not [c for c in comp if str(c).strip()]:
         issues.append("aucune compétence mise en avant")
-    # Clichés d'IA : 2+ dans la lettre, ou 1+ dans le résumé (court) -> trop « robotique », on relance.
-    if corps and _text_cliche_count(corps) >= 2:
-        issues.append("trop de tournures d'IA / clichés creux")
+    # Clichés d'IA : tolérance ZÉRO — un seul cliché creux dans la lettre OU le résumé relance la rédaction.
+    if corps and _text_cliche_count(corps) >= 1:
+        issues.append("tournure d'IA / cliché creux à bannir (tolérance zéro)")
     if resume and _text_cliche_count(resume) >= 1:
         issues.append("résumé professionnel avec cliché d'IA")
     # Ancrage : la lettre doit citer au moins UN élément concret du profil (anti-générique).
@@ -7156,9 +7166,10 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
                 prompt + "\n\nIMPÉRATIF : lettre_corps = 220-300 mots non vide, et cite NOMMÉMENT au moins deux faits "
                 "concrets du profil (un employeur/une mission ET un diplôme/une compétence réels ci-dessus). "
                 "titre_poste et resume_professionnel non vides. INTERDIT tout texte entre crochets [ ], toute mention "
-                "« à compléter », « XXX » ou « votre entreprise ». INTERDIT les clichés d'IA (« je suis convaincu », "
-                "« dynamique et motivé », « fort de mon expérience », « correspond parfaitement »…) : écris comme un "
-                "humain, avec des phrases concrètes et variées.",
+                "« à compléter », « XXX » ou « votre entreprise ». TOLÉRANCE ZÉRO sur les clichés d'IA : UN SEUL suffit "
+                "à rejeter (« je suis convaincu/persuadé », « dynamique et motivé », « fort/riche de mon expérience », "
+                "« correspond parfaitement », « atout majeur », « valeur ajoutée », « passionné par », « candidat idéal »…) "
+                ": écris comme un humain, avec des phrases concrètes et variées.",
                 temperature=0.5, max_tokens=1300, tier="quality")
             # On ne garde la relance que si elle est au moins aussi propre que la première.
             if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc, facts=_facts, target_terms=_target)) <= len(issues):
