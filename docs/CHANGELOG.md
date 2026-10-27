@@ -2,6 +2,27 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.57 — Ne jamais redemander un CV déjà analysé
+- **Bug (même capture WhatsApp).** À « *quoi de plus que le CV que je t'ai soumis ?* », le conseiller répondait « *envoie-moi à nouveau ton CV* » alors qu'il était **déjà analysé** (le modèle ignorait la consigne). Ajout d'un **garde-fou déterministe** : si `cv_parsed`, toute phrase qui réclame le CV (envoyer/renvoyer/`/creercv`…) est **retirée** de la réponse ; s'il ne reste rien d'utile, repli explicite (« je pars de ton CV déjà analysé, dis-moi la cible »).
+
+## v3.56 — Cohérence des suivis + filet dur anti-cliché + anti-invention + /qualite
+- **Bug de cohérence (capture WhatsApp greatyop).** Après l'analyse d'un **portail** de bourses, la question de suivi « *parmi ces bourses, lesquelles pour l'informatique ?* » repartait en **recherche web** et répondait à côté (bourse sans rapport, puis « aucune opportunité trouvée »). Deux causes corrigées :
+  1. Le portail **ne mémorisait pas** les opportunités listées → ajout de `last_portail` (titre + exemples) et rappel dans le contexte conversationnel.
+  2. Le routage captait « bourses » comme une **nouvelle recherche** → détecteur de **question de suivi déictique** (« ces bourses », « lesquelles », « citées plus haut »…) qui répond **en conversation, ancré sur les opportunités déjà listées** (réelles), au lieu de relancer `/mobilite`.
+- **Filet DUR anti-cliché** : même après la relance QC, si un cliché subsiste, on réécrit **chirurgicalement** la seule phrase fautive (mêmes faits) et, si elle reste fautive, on la **supprime** → garantie qu'aucun cliché ne part au candidat.
+- **Anti-invention** : une **ancienneté chiffrée** (« 7 ans d'expérience ») absente du profil déclenche une relance + interdiction explicite d'inventer une durée.
+- **Panneau admin `/qualite`** : taux de relance QC, taux de filet dur, et **répartition par fournisseur** (Tchavi premium vs gratuit) — exploite la traçabilité A/B de v3.55.
+
+## v3.55 — QC tolérance zéro + dossier complet + traçabilité A/B
+- **Tolérance ZÉRO clichés** (lettres/CV) : voir ci-dessous.
+- **Dossier incomplet signalé** (`/postuler`) : si les coordonnées (e-mail, téléphone, ville) manquent sur le CV/lettre, le bot **avertit** (« ⚠️ Coordonnées incomplètes… un recruteur ne pourra pas te recontacter ») sans bloquer l'envoi, et indique comment les ajouter (`profil` → `email: …`) puis relancer.
+- **Traçabilité A/B premium** : chaque livrable rédigé logue désormais **quel fournisseur l'a écrit** (`[pack] rédigé par tchavi-gen (…)` vs modèle gratuit), pour comparer en prod la qualité Tchavi premium vs gratuit. `llm.LAST_PROVIDER`/`LAST_MODEL`.
+
+### Détail — tolérance zéro sur les clichés
+- Retour testeur : une lettre comme « Je suis persuadée que ma capacité… » passait encore. Le QC ne doit **rien laisser passer**.
+- **Liste de clichés élargie** (~22 → ~55 tournures) : variantes féminines (« forte/riche de mon expérience »), et classiques des lettres (« atout majeur », « valeur ajoutée », « passionné·e par », « candidat idéal », « soif d'apprendre », « environnement stimulant », « contribuer au succès », « mes salutations distinguées »…).
+- **Tolérance ZÉRO** : désormais **un seul cliché** dans la lettre (ou le résumé) déclenche la relance de rédaction, au lieu de 2+. Même durcissement pour les projets d'études (`/dossier`). Le prompt de relance interdit explicitement la liste élargie.
+
 ## v3.54 — 10 modèles de CV graphiques pro
 - Le CV graphique n'avait qu'un seul style (bandeau bleu). Nouveau **système de 10 modèles** professionnels, 5 mises en page × couleurs : *Moderne Bleu, Émeraude, Bordeaux* (bannière), *Corporate Ardoise, Teal* (bandeau fin), *Indigo Minimal, Noir Minimal* (minimaliste), *Élégant* (serif centré), *Sidebar Marine, Sidebar Anthracite* (colonne latérale colorée). `/cv modeles` les liste (avec boutons), `/cv <modèle>` en génère un ; aussi via Outils → « Modèles de CV (10) ». Le nom de fichier reprend le modèle. L'ATS reste inchangé (toujours recommandé pour postuler). Repli propre sur le modèle par défaut si un nom inconnu est donné.
 

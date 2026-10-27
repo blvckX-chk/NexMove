@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.54.0"
+VERSION         = "3.57.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -682,6 +682,38 @@ def _log_miss(session: dict, text: str, kind: str) -> None:
 def _misses_recent(n: int = 20) -> list:
     return list(_ROUTE_MISSES)[-n:][::-1]
 
+# Qualité des livrables (CV/lettre) : qui a rédigé + si le QC a dû relancer / passer le filet dur.
+# Sert au panel admin /qualite pour arbitrer Tchavi premium vs modèles gratuits (A/B). En mémoire.
+_PACK_STATS: deque = deque(maxlen=300)
+
+def _record_pack_stat(provider: str, relance: bool, filet_dur: bool) -> None:
+    try:
+        _PACK_STATS.append({"ts": datetime.now(timezone.utc).isoformat(),
+                            "provider": provider or "?", "relance": bool(relance), "filet_dur": bool(filet_dur)})
+    except Exception:
+        pass
+
+def _qualite_report() -> str:
+    """Résumé lisible : nb de livrables, taux de relance QC, taux de filet dur anti-cliché,
+    et répartition par fournisseur (premium vs gratuit)."""
+    rows = list(_PACK_STATS)
+    n = len(rows)
+    if not n:
+        return "📊 *Qualité des livrables*\n_Aucun CV/lettre généré depuis le dernier redémarrage._"
+    relances = sum(1 for r in rows if r.get("relance"))
+    filets = sum(1 for r in rows if r.get("filet_dur"))
+    par_prov = {}
+    for r in rows:
+        par_prov[r.get("provider", "?")] = par_prov.get(r.get("provider", "?"), 0) + 1
+    lignes = [f"📊 *Qualité des livrables* _(sur {n} derniers)_",
+              f"• Relance QC : {relances}/{n} ({round(100*relances/n)}%)",
+              f"• Filet dur anti-cliché : {filets}/{n} ({round(100*filets/n)}%)",
+              "• Rédigé par :"]
+    for prov, c in sorted(par_prov.items(), key=lambda x: -x[1]):
+        premium = " _(premium)_" if "tchavi" in prov or "openrouter" in prov else ""
+        lignes.append(f"    – {prov} : {c} ({round(100*c/n)}%){premium}")
+    return "\n".join(lignes)
+
 def _admin_stats() -> dict:
     """Dashboard de traction (commande /stats + panel web). Aucune donnée personnelle.
     Calcule activation, conversion, rétention 7j, inscriptions/jour et répartition par canal."""
@@ -930,6 +962,23 @@ def _name_from_filename(filename: str) -> str:
     if not mots:
         return ""
     return " ".join(m.capitalize() for m in mots[:3]).strip()
+
+# Marqueurs déictiques : la personne parle d'opportunités DÉJÀ affichées (portail/offres listées)
+# et non d'une nouvelle recherche. Ex. « parmi ces bourses… », « les 4 citées plus haut », « lesquelles ».
+_REFER_PRIOR_RE = re.compile(
+    r"\b(ces\s+(?:bourses?|offres?|opportunit\w+|programmes?|stages?|postes?)|"
+    r"parmi\s+(?:ces|ceux|celles|elles|eux|les)|"
+    r"lesquel\w*|laquelle|lequel|d'entre\s+(?:elles|eux)|"
+    r"cit[ée]e?s?\s+(?:plus\s+haut|ci-dessus|au-dessus|avant)|plus\s+haut|ci-dessus|au-dessus|"
+    r"la\s+liste|dans\s+la\s+liste|mentionn[ée]e?s?|"
+    r"la\s+(?:premi[èe]re|deuxi[èe]me|troisi[èe]me)|celles?-l[àa]|ceux-l[àa])\b",
+    re.IGNORECASE)
+
+def _refers_to_prior_list(low: str, session: dict) -> bool:
+    """Vrai si le message est une QUESTION sur des opportunités déjà listées (portail/dernières offres),
+    donc à traiter en conversation (ancré) et NON comme une nouvelle recherche web."""
+    has_ctx = bool((session.get("last_portail") or {}).get("exemples")) or bool(session.get("last_offers"))
+    return has_ctx and bool(_REFER_PRIOR_RE.search(low or ""))
 
 def _free_text_to_command(low: str, t: str) -> str:
     """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
@@ -2605,6 +2654,24 @@ def _mem_events_block(session: dict) -> str:
         parts.append(f"{lab}{(' · ' + d) if d else ''}")
     return " ; ".join(p for p in parts if p)
 
+# Le conseiller ne doit JAMAIS redemander un CV déjà analysé (bug capture WhatsApp : « quoi de plus
+# que le CV… » -> « envoie-moi à nouveau ton CV »). Détecteur déterministe d'une phrase qui réclame le CV.
+_ASK_CV_RE = re.compile(
+    r"(envoie|envoyer|renvoie|renvoyer|transmets|transmettre|partage|partager|donne|donner|fournis|fournir|"
+    r"joins|joindre|dépose|déposer|téléverse|téléverser|upload)[^.?!]*\bcv\b"
+    r"|\bton\s+cv\b[^.?!]*(à\s+nouveau|de\s+nouveau|svp|stp|s'il\s+te\s+pla[îi]t)"
+    r"|(besoin|j'ai\s+besoin|il\s+me\s+faut|il\s+faut)[^.?!]*\bton\s+cv\b"
+    r"|/creercv",
+    re.IGNORECASE)
+
+def _strip_cv_request(message: str) -> str:
+    """Retire les phrases qui réclament le CV (quand il est déjà analysé). Si tout saute, repli utile."""
+    parts = re.split(r"(?<=[.!?\n])\s+", message or "")
+    kept = [p for p in parts if p.strip() and not _ASK_CV_RE.search(p)]
+    out = " ".join(kept).strip()
+    return out or ("Je pars de ton CV déjà analysé. Dis-moi la cible (poste/bourse) et je te prépare "
+                   "un CV adapté + une lettre via /postuler.")
+
 def _conversation_context(session: dict) -> str:
     """Mémoire compacte et LISIBLE pour le routeur conversationnel : ce que le bot SAIT déjà
     (pour ne pas le redemander) + ce qui manque encore + dernier lien analysé + candidatures."""
@@ -2656,6 +2723,12 @@ def _conversation_context(session: dict) -> str:
         lignes.append(f"- Abonnement : {tier}")
     if session.get("last_link_cible"):
         lignes.append(f"- Dernier lien analysé : {session['last_link_cible']} (il peut demander à candidater / ses chances dessus)")
+    # Portail d'opportunités récemment analysé : on rappelle les intitulés listés pour que les questions
+    # de suivi (« est-ce que ça correspond à mon profil ? ») portent sur CES opportunités précises.
+    _port = session.get("last_portail") or {}
+    if _port.get("exemples"):
+        lignes.append("- Opportunités listées sur le dernier portail analysé (c'est de CELLES-CI que « ça/ces bourses/ces offres » parle) : "
+                      + " ; ".join(str(x) for x in _port["exemples"][:4]))
     try:
         cands = (opp_store.list_candidatures(session.get("user_id")) or [])[:3]
         if cands:
@@ -4392,6 +4465,15 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/qualite") or low.startswith("/qualité") or low.startswith("/qc"):
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        msg = _qualite_report()
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if (low.startswith("/stats") or low.startswith("/statistiques") or low.startswith("/stat ")
             or low == "/stat" or low.startswith("/dashboard") or low.startswith("/panel")):
         if not _is_admin(session):
@@ -4590,7 +4672,15 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 if ok_cv and ok_lm:
                     _focus_touch(session, cible_desc, "docs")
                     _fili = "" if _is_premium(session) else "\n🔒 _Filigrane présent (compte gratuit) · le Premium l'enlève._"
-                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*." + _fili + "\n\n"
+                    # Alerte DOSSIER INCOMPLET : un recruteur doit pouvoir te joindre. On ne bloque pas
+                    # (les docs sont déjà envoyés), mais on signale les coordonnées absentes à compléter.
+                    _ident = profil.get("identite", {}) or {}
+                    _manque = [lbl for lbl, k in (("e-mail", "email"), ("téléphone", "telephone"), ("ville", "localisation"))
+                               if not str(_ident.get(k, "")).strip()]
+                    _warn = (f"\n\n⚠️ *Coordonnées incomplètes* : il manque {', '.join(_manque)} sur ton CV/lettre — "
+                             "un recruteur ne pourra pas te recontacter. Ajoute-les via `profil` "
+                             "(ex. `email: toi@mail.com`) puis relance `/postuler`.") if _manque else ""
+                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*." + _fili + _warn + "\n\n"
                            + _ATS_INFO + "\n\n"
                            "⚠️ Relis et personnalise (dates, détails concrets) avant d'envoyer.\n"
                            "👇 Besoin de la version *Word* modifiable, de *corriger* un détail, ou d'un CV *graphique* ?")
@@ -5391,13 +5481,26 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 
     # Utilisateur actif · langage 100 % naturel : d'abord les mots-clés (instantané), sinon le LLM
     # décide en UN appel s'il faut lancer une ACTION ou répondre en conversation.
-    cmd = _free_text_to_command(low, t)
-    if cmd:
-        return await process_text_message(session, cmd)
+    # EXCEPTION cohérence (v3.56) : si la personne parle d'opportunités DÉJÀ listées (« parmi ces bourses… »,
+    # « les 4 citées plus haut »), on NE relance PAS une recherche web — on répond en conversation, ancré
+    # sur ces opportunités précises (sinon le bot repartait chercher et répondait à côté).
+    _followup_liste = _refers_to_prior_list(low, session)
+    if not _followup_liste:
+        cmd = _free_text_to_command(low, t)
+        if cmd:
+            return await process_text_message(session, cmd)
 
     contexte = _conversation_context(session)
     dialogue = _recent_dialogue(session, 4)
-    system = f"""Tu es NexMove. {CONSEILLER_PERSONA}
+    # Question sur des opportunités DÉJÀ listées : on autorise explicitement le conseiller à en discuter
+    # (elles sont RÉELLES, issues d'une page analysée) au lieu de relancer une recherche.
+    _liste_exc = ("\n\nCAS PARTICULIER (PRIORITAIRE) : l'utilisateur pose une question sur les opportunités "
+                  "DÉJÀ LISTÉES ci-dessus (ex. « parmi ces bourses, lesquelles pour l'informatique ? », "
+                  "« les 4 citées plus haut »). Ces opportunités sont RÉELLES (issues d'une page analysée). "
+                  "Alors NE lance PAS de recherche (action vide) : réponds toi-même (message) en indiquant, "
+                  "PARMI CELLES LISTÉES, lesquelles collent au domaine/profil demandé et pourquoi, puis invite "
+                  "à coller le lien d'UNE d'elles pour l'analyser en détail. N'invente aucune autre opportunité.") if _followup_liste else ""
+    system = f"""Tu es NexMove. {CONSEILLER_PERSONA}{_liste_exc}
 
 CE QUE TU SAIS DÉJÀ (contexte mémorisé · ne le redemande JAMAIS) :
 {contexte}
@@ -5438,6 +5541,9 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
     _raw_msg = (r.get("message") or "").strip()
     message = _trim_to_sentence(_raw_msg) \
         or "Je suis là pour t'aider · dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…)."
+    # Garde-fou déterministe : si le CV est DÉJÀ analysé, on ne laisse jamais le conseiller le redemander.
+    if session.get("cv_parsed") and _ASK_CV_RE.search(message):
+        message = _strip_cv_request(message)
     if not _raw_msg:   # ni action ni réponse du LLM -> message pas compris : on le journalise.
         _log_miss(session, t, "nlu_fallback")
     _push(session, "user", t); _push(session, "assistant", message)
@@ -6993,23 +7099,109 @@ _PLACEHOLDER_RE = re.compile(
 # Tournures d'IA / clichés creux qu'une BONNE lettre n'utilise pas (le prompt les interdit ;
 # ici on VÉRIFIE leur absence pour déclencher une relance si le modèle a triché).
 _LETTER_CLICHES = (
-    "je suis convaincu", "je suis persuadé", "correspond parfaitement", "parfaitement à mes aspirations",
-    "dynamique et motivé", "c'est avec un grand intérêt", "c'est avec un grand enthousiasme",
-    "fort de mon expérience", "forte de mon expérience", "n'hésiterai pas à", "mener à bien",
-    "relever de nouveaux défis", "esprit d'équipe", "rigoureux et motivé", "au sein de votre prestigieuse",
-    "votre prestigieuse", "je serais ravi de", "je serais honoré", "ma candidature retiendra",
-    "retiendra toute votre attention", "dans l'attente de votre", "veuillez agréer",
+    "je suis convaincu", "je suis persuadé", "je suis vivement intéress", "correspond parfaitement",
+    "parfaitement à mes aspirations", "parfaitement à mon profil", "en parfaite adéquation",
+    "dynamique et motivé", "dynamique et rigoureux", "autonome et rigoureux", "sérieux et motivé",
+    "c'est avec un grand intérêt", "c'est avec un grand enthousiasme", "c'est avec enthousiasme",
+    "c'est avec un vif intérêt", "fort de mon expérience", "forte de mon expérience",
+    "riche de mon expérience", "n'hésiterai pas à", "mener à bien", "relever de nouveaux défis",
+    "relever ce défi", "nouveau défi", "esprit d'équipe", "rigoureux et motivé", "motivé et rigoureux",
+    "au sein de votre prestigieuse", "votre prestigieuse", "votre renommée", "votre réputation",
+    "je serais ravi de", "je serais honoré", "je serais enchant", "ce serait un honneur",
+    "ma candidature retiendra", "retiendra toute votre attention", "dans l'attente de votre",
+    "dans l'attente d'une réponse", "veuillez agréer", "mes salutations distinguées",
+    "atout majeur", "atout pour votre équipe", "valeur ajoutée", "force de proposition",
+    "passionné par", "passionnée par", "depuis mon plus jeune âge", "touche-à-tout", "polyvalent",
+    "capacité d'adaptation", "soif d'apprendre", "apprendre et grandir", "environnement stimulant",
+    "mettre mes compétences au service", "contribuer au succès", "contribuer activement",
+    "je suis la personne qu'il vous faut", "parfait candidat", "candidat idéal",
 )
 
 def _text_cliche_count(txt: str) -> int:
     low = (txt or "").lower()
     return sum(1 for c in _LETTER_CLICHES if c in low)
 
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?…])\s+")
+
+def _sentence_has_cliche(sent: str) -> bool:
+    low = sent.lower()
+    return any(c in low for c in _LETTER_CLICHES)
+
+async def _surgical_decliche(corps: str) -> str:
+    """Filet DUR anti-cliché (v3.56) : garantit qu'aucun cliché ne part au candidat.
+    On ne régénère PAS toute la lettre (on perdrait l'ancrage) : on réécrit CHIRURGICALEMENT les
+    seules phrases fautives (même sens, mêmes faits, sans cliché). Toute phrase qui reste fautive
+    après réécriture est SUPPRIMÉE (une lettre survit mieux à une phrase en moins qu'à un cliché)."""
+    if not corps or _text_cliche_count(corps) == 0:
+        return corps
+    out_paras = []
+    for para in corps.split("\n\n"):
+        sents = [s for s in _SENT_SPLIT_RE.split(para.strip()) if s.strip()]
+        bad_idx = [i for i, s in enumerate(sents) if _sentence_has_cliche(s)]
+        if not bad_idx:
+            out_paras.append(para)
+            continue
+        # 1) Réécriture ciblée des phrases fautives en UN appel (rapide, localisé).
+        rewrites = {}
+        try:
+            numbered = "\n".join(f"{n+1}. {sents[i]}" for n, i in enumerate(bad_idx))
+            sys = ("Tu réécris des phrases de lettre de motivation pour SUPPRIMER tout cliché creux / tournure "
+                   "d'IA, en gardant EXACTEMENT le même sens et les mêmes faits concrets (ne rien inventer, ne "
+                   "rien ajouter). Français naturel, sobre, phrases concrètes. Interdits : « je suis convaincu/"
+                   "persuadé », « dynamique et motivé », « fort/riche de mon expérience », « correspond "
+                   "parfaitement », « atout majeur », « valeur ajoutée », « passionné par », « candidat idéal », "
+                   "etc. Réponds en JSON strict.")
+            usr = (f"Réécris chaque phrase (même numéro, même ordre) :\n{numbered}\n\n"
+                   'JSON: {"phrases":["réécriture 1","réécriture 2", ...]}')
+            r = await call_groq(sys, usr, temperature=0.3, max_tokens=500, tier="quality")
+            arr = r.get("phrases") if isinstance(r, dict) else None
+            if isinstance(arr, list):
+                for n, i in enumerate(bad_idx):
+                    if n < len(arr) and isinstance(arr[n], str) and arr[n].strip():
+                        rewrites[i] = arr[n].strip()
+        except Exception as e:
+            logger.warning(f"[decliche] réécriture: {e}")
+        # 2) Application : on garde la réécriture si elle est propre, sinon on SUPPRIME la phrase.
+        kept = []
+        for i, s in enumerate(sents):
+            if i in bad_idx:
+                cand = rewrites.get(i, "")
+                if cand and not _sentence_has_cliche(cand):
+                    kept.append(cand)
+                # sinon : phrase supprimée (pas de cliché qui passe)
+            else:
+                kept.append(s)
+        out_paras.append(" ".join(kept).strip())
+    result = "\n\n".join(p for p in out_paras if p.strip())
+    if _text_cliche_count(result):
+        logger.warning("[decliche] cliché résiduel après filet dur (anormal)")
+    return result
+
 def _terms(s) -> set:
     """Mots significatifs (>3 lettres) d'une chaîne ou liste, pour les contrôles d'ancrage/spécificité."""
     if isinstance(s, (list, tuple)):
         s = " ".join(str(x) for x in s)
     return {w for w in re.sub(r"[^a-zàâäéèêëïîôöùûüç ]", " ", str(s or "").lower()).split() if len(w) > 3}
+
+# Anti-invention (v3.56) : une lettre qui invente « 5 ans d'expérience » est PIRE qu'un cliché.
+# On capte uniquement les affirmations CHIFFRÉES d'ancienneté (haute précision, peu de faux positifs) :
+# si le nombre d'années annoncé n'apparaît NULLE PART dans le profil réel -> invention probable.
+_XP_CLAIM_RE = re.compile(r"\b(\d{1,2})\s*(?:an|ans|année|années)\b[^.]{0,40}?\b(?:d['e]?\s*)?(?:exp[ée]rience|exp\b|pratique|carrière|métier|poste|secteur|domaine)",
+                          re.IGNORECASE)
+
+def _invention_issues(corps: str, profil_blob: str) -> list:
+    """Détecte une ancienneté chiffrée invoquée dans la lettre mais absente du profil (invention)."""
+    issues = []
+    if not corps or not profil_blob:
+        return issues
+    blob = profil_blob.lower()
+    for m in _XP_CLAIM_RE.finditer(corps):
+        n = m.group(1)
+        # Le chiffre d'ancienneté annoncé doit exister tel quel dans le profil (CV/expériences).
+        if not re.search(rf"\b{re.escape(n)}\b", blob):
+            issues.append(f"ancienneté inventée ({n} ans non présents dans le profil)")
+            break
+    return issues
 
 def _projet_issues(corps: str, facts: list = None, target_terms=None) -> list:
     """QC d'un projet d'études / lettre (hors generate_pack, ex. /dossier) : longueur, placeholder,
@@ -7022,8 +7214,8 @@ def _projet_issues(corps: str, facts: list = None, target_terms=None) -> list:
         issues.append("placeholder non rempli")
     if corps and any(g in corps for g in _BOX_GLYPHS):
         issues.append("symbole parasite")
-    if corps and _text_cliche_count(corps) >= 2:
-        issues.append("trop de clichés d'IA")
+    if corps and _text_cliche_count(corps) >= 1:
+        issues.append("cliché d'IA à bannir")
     low = corps.lower()
     ftoks = _terms(facts)
     if corps and ftoks and not any(tok in low for tok in ftoks):
@@ -7061,9 +7253,9 @@ def _pack_quality_issues(pack: dict, cible_desc: str = "", facts: list = None, t
     comp = pack.get("competences_mises_en_avant")
     if isinstance(comp, list) and not [c for c in comp if str(c).strip()]:
         issues.append("aucune compétence mise en avant")
-    # Clichés d'IA : 2+ dans la lettre, ou 1+ dans le résumé (court) -> trop « robotique », on relance.
-    if corps and _text_cliche_count(corps) >= 2:
-        issues.append("trop de tournures d'IA / clichés creux")
+    # Clichés d'IA : tolérance ZÉRO — un seul cliché creux dans la lettre OU le résumé relance la rédaction.
+    if corps and _text_cliche_count(corps) >= 1:
+        issues.append("tournure d'IA / cliché creux à bannir (tolérance zéro)")
     if resume and _text_cliche_count(resume) >= 1:
         issues.append("résumé professionnel avec cliché d'IA")
     # Ancrage : la lettre doit citer au moins UN élément concret du profil (anti-générique).
@@ -7144,10 +7336,14 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
     _facts = [x for x in _facts if isinstance(x, str) and len(x.strip()) > 3]
     # Pour une bourse/un programme, on exige que la lettre mentionne la cible (spécificité).
     _target = cible_desc if type_cible == "bourse" else ""
+    # Blob du profil réel (pour détecter une ancienneté inventée dans la lettre).
+    _profil_blob = " ".join(str(x) for x in (_facts + [resume, formations_txt, experiences_txt, str(competences)]))
     pack = await call_groq(system, prompt, temperature=0.4, max_tokens=1200, tier="quality")
     # VÉRIFICATION DE SORTIE GÉNÉRIQUE : champ vide, trop court/long, placeholder, clichés d'IA, ancrage
     # -> on refait UNE fois avant d'envoyer au candidat.
     issues = _pack_quality_issues(pack, cible_desc, facts=_facts, target_terms=_target)
+    if isinstance(pack, dict):
+        issues += _invention_issues(pack.get("lettre_corps") or "", _profil_blob)
     if issues:
         logger.info(f"[pack] QC sortie: {issues} -> relance")
         try:
@@ -7156,15 +7352,42 @@ JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":
                 prompt + "\n\nIMPÉRATIF : lettre_corps = 220-300 mots non vide, et cite NOMMÉMENT au moins deux faits "
                 "concrets du profil (un employeur/une mission ET un diplôme/une compétence réels ci-dessus). "
                 "titre_poste et resume_professionnel non vides. INTERDIT tout texte entre crochets [ ], toute mention "
-                "« à compléter », « XXX » ou « votre entreprise ». INTERDIT les clichés d'IA (« je suis convaincu », "
-                "« dynamique et motivé », « fort de mon expérience », « correspond parfaitement »…) : écris comme un "
-                "humain, avec des phrases concrètes et variées.",
+                "« à compléter », « XXX » ou « votre entreprise ». TOLÉRANCE ZÉRO sur les clichés d'IA : UN SEUL suffit "
+                "à rejeter (« je suis convaincu/persuadé », « dynamique et motivé », « fort/riche de mon expérience », "
+                "« correspond parfaitement », « atout majeur », « valeur ajoutée », « passionné par », « candidat idéal »…) "
+                ": écris comme un humain, avec des phrases concrètes et variées. "
+                "ANTI-INVENTION ABSOLUE : n'invente AUCUNE durée d'expérience ni aucun chiffre d'ancienneté "
+                "(ex. « 5 ans d'expérience ») qui ne figure pas explicitement dans le profil ci-dessus.",
                 temperature=0.5, max_tokens=1300, tier="quality")
             # On ne garde la relance que si elle est au moins aussi propre que la première.
-            if isinstance(pack2, dict) and len(_pack_quality_issues(pack2, cible_desc, facts=_facts, target_terms=_target)) <= len(issues):
+            def _score(p):
+                return len(_pack_quality_issues(p, cible_desc, facts=_facts, target_terms=_target)) + \
+                       len(_invention_issues(p.get("lettre_corps") or "", _profil_blob))
+            if isinstance(pack2, dict) and _score(pack2) <= _score(pack):
                 pack = pack2
         except Exception as e:
             logger.warning(f"[pack] relance QC: {e}")
+    # FILET DUR anti-cliché (v3.56) : même après relance, un cliché résiduel ne doit JAMAIS partir.
+    # On réécrit chirurgicalement les phrases fautives (lettre + résumé) sans toucher au reste.
+    _residu = False
+    if isinstance(pack, dict):
+        corps0 = pack.get("lettre_corps") or ""
+        if _text_cliche_count(corps0):
+            _residu = True
+            pack["lettre_corps"] = await _surgical_decliche(corps0)
+        resume0 = pack.get("resume_professionnel") or ""
+        if _text_cliche_count(resume0):
+            _residu = True
+            pack["resume_professionnel"] = await _surgical_decliche(resume0)
+    # Traçabilité A/B + stats qualité (/qualite) : qui a rédigé, et si QC a dû relancer / nettoyer.
+    try:
+        import llm as _llm
+        prov = _llm.LAST_PROVIDER
+        logger.info(f"[pack] rédigé par {prov} ({_llm.LAST_MODEL}) · cible={type_cible} · "
+                    f"relance={bool(issues)} · filet_dur={_residu}")
+        _record_pack_stat(prov, bool(issues), _residu)
+    except Exception:
+        pass
     return pack
 
 @app.post("/api/chat")
@@ -7616,6 +7839,11 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
             msg += "\n🔎 *On y trouve notamment :*\n" + "\n".join(f"• {e}" for e in exs) + "\n"
         msg += ("\n👉 Pour une analyse précise (tes chances + comment postuler), colle-moi le lien d'*UNE* "
                 "opportunité de cette page, ou son *texte*. Tu peux aussi lancer /veille pour que je t'en trouve d'adaptées.")
+        # MÉMOIRE DU PORTAIL : on garde le résumé + les exemples pour que les questions de suivi
+        # (« est-ce que ÇA correspond à mon profil ? ») aient un référent (sinon le routeur répond à l'aveugle).
+        session["last_portail"] = {"titre": titre_p, "resume": resume_p, "exemples": exs}
+        session["last_link_cible"] = titre_p
+        _focus_touch(session, titre_p, "analyse")
         _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
         return msg, session
     # QC 2e passe : analyse écartée si non-opportunité OU non ancrée dans le contenu réel de la page.

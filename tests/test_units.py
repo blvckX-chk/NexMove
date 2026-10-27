@@ -1287,6 +1287,30 @@ def test_comment_postuler(monkeypatch):
     assert "Comment postuler" in msg and "Candidature SOC" in msg
     assert "rh@x.co" in msg and "/postuler" in msg
 
+def test_postuler_alerte_coordonnees_incompletes(monkeypatch):
+    # v3.55 : coordonnées manquantes -> avertissement « Coordonnées incomplètes » (non bloquant, docs envoyés).
+    async def fake_pack(profil, cible, type_cible="emploi", **kw):
+        return {"titre_poste": "Analyste", "resume_professionnel": "Résumé pro suffisamment long pour le QC.",
+                "competences_mises_en_avant": ["SQL"], "lettre_objet": "Candidature",
+                "lettre_corps": " ".join(["mot"] * 120)}
+    async def fake_deliver(session, name, data, caption=""):
+        return True
+    monkeypatch.setattr(main, "generate_pack", fake_pack)
+    monkeypatch.setattr(main, "deliver_file", fake_deliver)
+    monkeypatch.setattr(main, "build_cv_pdf", lambda *a, **k: __import__("io").BytesIO(b"%PDF"))
+    monkeypatch.setattr(main, "build_letter_pdf", lambda *a, **k: __import__("io").BytesIO(b"%PDF"))
+    s = {"user_id": "pc", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "premium_tier": "premium", "premium_until": "2099-01-01T00:00:00+00:00", "etape": "ACTIF",
+         "profil": {"identite": {"nom": "Awa"}, "competences": {"techniques": ["SQL"]}}}  # pas d'email/tel/ville
+    msg, s = _run(main.process_text_message(s, "/postuler Analyste SOC"))
+    assert "Coordonnées incomplètes" in msg and "e-mail" in msg
+    # Avec coordonnées complètes -> pas d'alerte.
+    s2 = dict(s, profil={"identite": {"nom": "Awa", "email": "a@x.co", "telephone": "+229", "localisation": "Cotonou"},
+                         "competences": {"techniques": ["SQL"]}})
+    s2["historique"] = []
+    msg2, _ = _run(main.process_text_message(s2, "/postuler Analyste SOC"))
+    assert "Coordonnées incomplètes" not in msg2
+
 def test_comment_postuler_sans_profil():
     s = {"user_id": "np", "chat_id": "1", "historique": [], "onboarding_complete": True,
          "etape": "ACTIF", "profil": {}}
@@ -1739,6 +1763,22 @@ def test_pack_quality_detecte_cliches_ia():
     issues = main._pack_quality_issues(bad, "Comptable")
     assert any("cliché" in i or "cliche" in i or "IA" in i for i in issues)
 
+def test_pack_quality_cliche_tolerance_zero():
+    # v3.55 : UN SEUL cliché dans la lettre suffit désormais à déclencher une relance (tolérance zéro).
+    corps = ("Chez ACME j'ai piloté la comptabilité sur Sage durant deux ans, en clôturant les bilans annuels. "
+             "Je suis convaincu de pouvoir apporter la même rigueur ici. " + " ".join(["texte"] * 80))
+    pk = {"titre_poste": "Comptable", "resume_professionnel": "Comptable expérimenté sur Sage, bilans et clôtures annuelles.",
+          "competences_mises_en_avant": ["Sage"], "lettre_corps": corps}
+    iss = main._pack_quality_issues(pk, "Comptable", facts=["ACME", "Sage"])
+    assert any("cliché" in i or "cliche" in i or "tournure" in i for i in iss)
+    # Variante féminine couverte aussi.
+    assert main._text_cliche_count("Forte de mon expérience, je postule.") >= 1
+    # Lettre vraiment propre (aucun cliché) -> aucune alerte de cliché.
+    propre = ("Chez ACME j'ai tenu la comptabilité sur Sage pendant deux ans et clôturé chaque exercice. "
+              + " ".join(["texte"] * 90))
+    ok = dict(pk, lettre_corps=propre)
+    assert not any("cliché" in i or "cliche" in i or "tournure" in i for i in main._pack_quality_issues(ok, "Comptable", facts=["ACME", "Sage"]))
+
 def test_pack_quality_detecte_lettre_non_ancree():
     # La lettre ne cite AUCUN fait du profil (ni ACME, ni comptabilité, ni Sage) -> générique.
     corps = "Bonjour, je souhaite rejoindre votre structure pour y apporter ma contribution. " + " ".join(["texte"] * 100)
@@ -1771,6 +1811,79 @@ def test_projet_issues():
     # Projet ancré + spécifique -> propre.
     bon = "Le Master de Montréal correspond à mon parcours en cybersécurité chez ACME. " + " ".join(["texte"] * 90)
     assert main._projet_issues(bon, facts=["ACME", "cybersécurité"], target_terms="Master Montréal") == []
+
+# ── v3.56 : cohérence (suivi d'un portail), filet dur anti-cliché, anti-invention ──
+def test_refers_to_prior_list():
+    # Avec un portail listé en mémoire, une question déictique -> traitée en conversation (pas de recherche).
+    s = {"last_portail": {"exemples": ["Bourse Zonta", "Bourses Mackenzie King"]}}
+    assert main._refers_to_prior_list("parmi ces bourses lesquelles conviennent pour l'informatique ?", s)
+    assert main._refers_to_prior_list("je parle des 4 bourses citées plus haut", s)
+    assert main._refers_to_prior_list("laquelle est la mieux pour moi", s)
+    # Sans contexte listé -> on ne détourne pas le routage.
+    assert not main._refers_to_prior_list("parmi ces bourses lesquelles pour l'info", {})
+    # Vraie nouvelle recherche (pas déictique) -> non.
+    assert not main._refers_to_prior_list("trouve-moi des bourses en informatique", s)
+
+def test_portail_ne_route_pas_vers_recherche(monkeypatch):
+    # Bug capturé (greatyop) : « parmi ces bourses… » partait en /mobilite au lieu de répondre sur la liste.
+    captured = {}
+    async def fake_groq(system, user, **kw):
+        captured["system"] = system
+        return {"action": "", "argument": "", "then": {"action": "", "argument": ""},
+                "message": "Parmi les bourses listées, Mackenzie King vise des études au Canada."}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "pf", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Marthe"}, "preferences": {"objectif": "travailler"}},
+         "last_portail": {"titre": "Bourses au Bénin", "exemples": ["Bourse Zonta", "Bourses Mackenzie King"]},
+         "last_link_cible": "Bourses au Bénin"}
+    msg, s = _run(main.process_text_message(s, "parmi ces bourses, lesquelles conviennent pour l'informatique ?"))
+    # Le conseiller a répondu lui-même (pas de « Aucune opportunité pertinente trouvée » du flux recherche).
+    assert "Aucune opportunité" not in msg
+    # Et le contexte envoyé au LLM rappelle les opportunités listées + l'exception « cas particulier ».
+    assert "Mackenzie King" in captured["system"] and "CAS PARTICULIER" in captured["system"]
+
+def test_invention_issues_anciennete():
+    blob = "Comptable chez ACME, licence de gestion, Excel, Sage"  # aucune mention de « 7 ans »
+    assert main._invention_issues("Fort de mes 7 ans d'expérience en finance, je postule.", blob)
+    # Si l'ancienneté figure au profil -> pas d'alerte.
+    assert not main._invention_issues("Avec mes 3 ans d'expérience, je postule.", "3 ans chez ACME, comptable")
+    # Pas de claim chiffré -> rien.
+    assert not main._invention_issues("J'ai géré la comptabilité sur Sage.", blob)
+
+def test_surgical_decliche_supprime_phrase(monkeypatch):
+    # Réécriture indisponible/toujours fautive -> la phrase à cliché est SUPPRIMÉE (rien ne passe).
+    async def fake_groq(system, user, **kw):
+        return {"phrases": ["Je suis convaincu que c'est parfait."]}  # réécriture encore fautive
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    txt = "Chez ACME j'ai tenu la compta sur Sage. Je suis convaincu de bien faire."
+    out = _run(main._surgical_decliche(txt))
+    assert main._text_cliche_count(out) == 0 and "ACME" in out
+
+def test_surgical_decliche_reecrit_phrase(monkeypatch):
+    async def fake_groq(system, user, **kw):
+        return {"phrases": ["Je maîtrise Sage après deux ans de clôtures annuelles."]}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    txt = "Fort de mon expérience, je maîtrise Sage."
+    out = _run(main._surgical_decliche(txt))
+    assert main._text_cliche_count(out) == 0 and "Sage" in out
+
+def test_ne_redemande_pas_cv_deja_analyse(monkeypatch):
+    # Bug capture : « quoi de plus que le CV… » -> « envoie-moi à nouveau ton CV » alors qu'il est analysé.
+    async def fake_groq(system, user, **kw):
+        return {"action": "", "argument": "", "then": {"action": "", "argument": ""},
+                "message": ("En plus de ton CV, je peux le retravailler et rédiger une lettre. "
+                            "Envoie-moi à nouveau ton CV pour que je commence.")}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "cv", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Marthe"}, "preferences": {"objectif": "travailler"}}}
+    msg, s = _run(main.process_text_message(s, "quoi de plus que le cv que je t'ai soumis avant ?"))
+    assert "nvoie" not in msg.lower() or "cv" not in msg.lower().split("nvoie")[-1][:30]
+    assert not main._ASK_CV_RE.search(msg)
+
+def test_strip_cv_request_garde_le_reste():
+    txt = "Je peux retravailler ta mise en page. Envoie-moi à nouveau ton CV. On vise quel poste ?"
+    out = main._strip_cv_request(txt)
+    assert "mise en page" in out and "quel poste" in out and not main._ASK_CV_RE.search(out)
 
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
