@@ -26,7 +26,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 # Tchavi (passerelle LLM OpenAI-compatible, à crédits). Fournisseur PREMIUM optionnel : dormant tant que
 # la clé n'est pas fournie. Vérifie l'URL exacte dans ton tableau de bord Tchavi (section Clés API / doc).
 TCHAVI_API_KEY  = os.getenv("TCHAVI_API_KEY", "")
-TCHAVI_BASE_URL = os.getenv("TCHAVI_BASE_URL", "https://api.tchavi.com/v1").rstrip("/")
+TCHAVI_BASE_URL = os.getenv("TCHAVI_BASE_URL", "https://tchavi.com/api/v1").rstrip("/")
 TCHAVI_MODEL          = os.getenv("TCHAVI_MODEL", "gpt-4o-mini")            # raisonnement/smart
 TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)   # rédaction CV/lettre (quality)
 

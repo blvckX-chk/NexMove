@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.50 — Tchavi : URL par défaut corrigée
+- Correction de l'URL par défaut de la passerelle Tchavi : `https://tchavi.com/api/v1` (l'endpoint réel d'après le dashboard), au lieu de `api.tchavi.com`. Reste surchargeable via `TCHAVI_BASE_URL`. Le code ajoute `/chat/completions`.
+
 ## v3.49 — Fournisseur LLM PREMIUM optionnel (Tchavi) pour la qualité
 - Intégration **opt-in** de Tchavi (passerelle LLM OpenAI-compatible, à crédits) comme fournisseur **premium**. Dormant tant que `TCHAVI_API_KEY` est vide (aucun coût, aucun risque). Une fois la clé mise : le tier **"quality"** (rédaction CV / lettre / projet d'études — le livrable que l'utilisateur montre) passe par Tchavi **en premier**, avec **repli automatique** sur les modèles gratuits si Tchavi échoue → jamais de panne. Pour router aussi le **raisonnement** (conversation, sélection d'offres, conseils) via Tchavi : `SMART_LEAD_PROVIDER=tchavi`. Visible dans `/version` (module « Premium (Tchavi) »). Config : `TCHAVI_API_KEY`, `TCHAVI_BASE_URL`, `TCHAVI_MODEL`, `TCHAVI_GENERATE_MODEL` (voir .env.example).
 
