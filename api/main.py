@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.52.0"
+VERSION         = "3.53.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2797,7 +2797,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # question en attente (confirmation de suppression, reconversion, clarification, domaine), il a
     # changé d'avis -> on annule proprement l'attente (sauf la poursuite directe /supprimer confirmer).
     if low.startswith("/") and not low.startswith("/supprimer confirmer"):
-        for _flag in ("awaiting_delete_confirm", "reconv_pending", "clarify_pending", "awaiting_domain"):
+        for _flag in ("awaiting_delete_confirm", "reconv_pending", "clarify_pending", "awaiting_domain", "doc_correct_pending"):
             if session.get(_flag):
                 session[_flag] = False
 
@@ -2809,6 +2809,19 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         msg = "👍 Suppression *annulée* · tes données sont conservées. Que veux-tu faire ?"
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
+
+    # On attendait une CORRECTION des documents générés -> on régénère en appliquant le changement.
+    if session.get("doc_correct_pending") and not low.startswith("/") and len(t.strip()) >= 2:
+        session["doc_correct_pending"] = False
+        dp = session.get("_docpack") or {}
+        cible = dp.get("cible")
+        if not cible:
+            msg = "Je n'ai plus de documents récents. Refais /postuler <cible>."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        session["_doc_correction"] = t.strip()[:300]
+        _push(session, "user", t)
+        return await process_text_message(session, "/postuler " + cible)
 
     # On attendait la réponse « reconversion ? » -> conseil adapté + relance de la recherche.
     if session.get("reconv_pending") and not low.startswith("/") and len(t.strip()) >= 2:
@@ -4547,7 +4560,8 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 type_cible = "bourse" if any(k in cible_desc.lower() for k in ("bourse", "scholarship", "master", "phd", "doctorat", "fellowship", "etude", "étude")) else "emploi"
                 # Candidature ADAPTÉE À L'OFFRE : on passe le contexte de l'offre si elle correspond à la cible.
                 _oc = offer_ctx if offer_ctx.get("titre") and not _dom_tokens(offer_ctx["titre"]).isdisjoint(_dom_tokens(cible_desc)) else None
-                pack = await generate_pack(profil, cible_desc, type_cible, offer_ctx=_oc)
+                _corr = session.pop("_doc_correction", "")   # correction demandée après une 1re génération
+                pack = await generate_pack(profil, cible_desc, type_cible, offer_ctx=_oc, correction=_corr)
                 competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))
                 cv_buf = await asyncio.to_thread(build_cv_pdf, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
                 lm_buf = await asyncio.to_thread(build_letter_pdf, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
@@ -4555,22 +4569,22 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 chat_id = session.get("chat_id")
                 ok_cv = await deliver_file(session, f"CV_ATS_{nom}.pdf", cv_buf.getvalue(), f"📄 CV *ATS* adapté · {cible_desc[:50]}")
                 ok_lm = await deliver_file(session,f"LM_{nom}.pdf", lm_buf.getvalue(), f"✉️ Lettre de motivation · {cible_desc[:50]}")
-                if _DOCX_OK:
-                    try:
-                        cv_dx = await asyncio.to_thread(build_cv_docx, profil, pack.get("titre_poste") or cible_desc, pack.get("resume_professionnel", ""), competences, watermark=not _is_premium(session))
-                        lm_dx = await asyncio.to_thread(build_letter_docx, profil, pack.get("lettre_objet") or f"Candidature · {cible_desc}", pack.get("lettre_corps", ""), watermark=not _is_premium(session))
-                        await deliver_file(session, f"CV_ATS_{nom}.docx", cv_dx.getvalue(), "📝 Version Word (modifiable)")
-                        await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Version Word (modifiable)")
-                    except Exception as de:
-                        logger.warning(f"[docx] postuler: {de}")
+                # On garde le contenu généré pour fournir le Word À LA DEMANDE (moins d'encombrement) et
+                # pour appliquer d'éventuelles CORRECTIONS sans tout refaire.
+                session["_docpack"] = {"cible": cible_desc, "type": type_cible,
+                                       "titre": pack.get("titre_poste") or cible_desc,
+                                       "resume": pack.get("resume_professionnel", ""),
+                                       "objet": pack.get("lettre_objet") or f"Candidature · {cible_desc}",
+                                       "corps": pack.get("lettre_corps", ""), "competences": list(competences)}
                 if ok_cv and ok_lm:
                     _focus_touch(session, cible_desc, "docs")
                     _fili = "" if _is_premium(session) else "\n🔒 _Filigrane présent (compte gratuit) · le Premium l'enlève._"
-                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*.\n"
-                           "📄 PDF (à envoyer) + 📝 Word (à personnaliser)." + _fili + "\n\n"
+                    msg = (f"✅ CV adapté + lettre de motivation générés pour : *{_md_clean(cible_desc)}*." + _fili + "\n\n"
                            + _ATS_INFO + "\n\n"
-                           "⚠️ Relis et personnalise (dates, détails concrets, ton) avant d'envoyer.")
-                    session["_kb_options"] = [("🎨 Version graphique du CV", "act:cv_graphique")]
+                           "⚠️ Relis et personnalise (dates, détails concrets) avant d'envoyer.\n"
+                           "👇 Besoin de la version *Word* modifiable, de *corriger* un détail, ou d'un CV *graphique* ?")
+                    session["_kb_options"] = [("📝 Versions Word", "act:word"), ("✏️ Corriger", "act:corriger"),
+                                              ("🎨 CV graphique", "act:cv_graphique")]
                 elif ok_cv or ok_lm:
                     msg = "⚠️ Un seul document a pu être envoyé. Réessaie dans un instant."
                 else:
@@ -5921,6 +5935,24 @@ def build_cv_docx(profil: dict, titre: str, resume: str, competences: list,
         _docx_watermark_footer(d)
     buf = io.BytesIO(); d.save(buf); return buf
 
+async def _send_docpack_word(session: dict) -> bool:
+    """Envoie les versions WORD (CV + lettre) À LA DEMANDE, depuis le dernier pack généré (/postuler)."""
+    dp = session.get("_docpack") or {}
+    if not dp or not _DOCX_OK:
+        return False
+    profil = session.get("profil") or {}
+    nom = _slug((profil.get("identite") or {}).get("nom") or "candidat")
+    wm = not _is_premium(session)
+    try:
+        cv_dx = await asyncio.to_thread(build_cv_docx, profil, dp.get("titre", ""), dp.get("resume", ""), dp.get("competences", []), watermark=wm)
+        lm_dx = await asyncio.to_thread(build_letter_docx, profil, dp.get("objet", ""), dp.get("corps", ""), watermark=wm)
+        await deliver_file(session, f"CV_ATS_{nom}.docx", cv_dx.getvalue(), "📝 CV · version Word (modifiable)")
+        await deliver_file(session, f"LM_{nom}.docx", lm_dx.getvalue(), "📝 Lettre · version Word (modifiable)")
+        return True
+    except Exception as e:
+        logger.warning(f"[docx-ondemand] {e}")
+        return False
+
 async def _deliver_cv(session: dict, style: str = "ats") -> bool:
     """Génère et envoie le CV dans le style demandé ('ats', 'graphic' ou 'deux'). Renvoie True si OK."""
     profil = session.get("profil") or {}
@@ -6154,6 +6186,22 @@ async def handle_action(session, data, callback_id=None):
             ok = await _deliver_cv(session, style)
             await deliver_text(session, "✅ Ton CV est prêt (ci-dessus)." if ok
                                else "📄 Je dois d'abord connaître ton profil · envoie ton CV ou tape /creercv.", with_menu=True)
+            return session
+        if act == "word":
+            ok = await _send_docpack_word(session)
+            await deliver_text(session, "📝 Versions Word (modifiables) envoyées ci-dessus." if ok
+                               else "😕 Je n'ai pas de documents récents à convertir. Refais /postuler <cible>.",
+                               with_menu=True)
+            return session
+        if act == "corriger":
+            if not session.get("_docpack"):
+                await deliver_text(session, "Refais d'abord /postuler <cible>, puis tu pourras corriger.", with_menu=True)
+                return session
+            session["doc_correct_pending"] = True
+            session_manager.set(session.get("user_id"), session)
+            await deliver_text(session, "✏️ *Dis-moi quoi changer* (en une phrase) :\n"
+                               "ex. « mets le titre *Chargé de clientèle* », « insiste sur mon stage », "
+                               "« raccourcis la lettre », « ajoute la compétence Excel ».")
             return session
         if act in ("lien_postuler", "lien_chances", "lien_suivre"):
             cible = session.get("last_link_cible", "")
@@ -6939,7 +6987,8 @@ def _offer_ctx_txt(offer_ctx: dict) -> str:
         bits.append("exigences clés: " + " ; ".join(crit))
     return " | ".join(bits)
 
-async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi", offer_ctx: dict = None) -> dict:
+async def generate_pack(profil: dict, cible_desc: str, type_cible: str = "emploi", offer_ctx: dict = None,
+                        correction: str = "") -> dict:
     ident = profil.get("identite", {})
     competences = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:12]
     resume = profil.get("resume_profil", "")
@@ -6982,6 +7031,7 @@ CIBLE: {cible_desc}
 Contraintes lettre (lettre_corps) : 220-300 mots, 3-4 paragraphes séparés par une ligne vide, sans en-tête ni
 signature. Cite au moins deux éléments concrets tirés des EXPÉRIENCES/FORMATIONS ci-dessus. Ton sobre et
 professionnel, phrases variées, pas de superlatifs creux.
+{("CORRECTION DEMANDÉE PAR LE CANDIDAT (applique-la précisément, sans rien inventer) : " + correction.strip()) if correction.strip() else ""}
 JSON: {{"titre_poste":"","resume_professionnel":"","competences_mises_en_avant":[],"lettre_objet":"","lettre_corps":""}}"""
     # Éléments CONCRETS du profil pour vérifier l'ANCRAGE de la lettre (anti-générique).
     _facts = []

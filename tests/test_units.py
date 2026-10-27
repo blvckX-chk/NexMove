@@ -1840,6 +1840,34 @@ def test_cv_missions_sans_carreau():
     buf = main.build_cv_pdf(prof, "Analyste", "Résumé.", ["PHP"], "ats", watermark=True)
     assert len(buf.getvalue()) > 500   # PDF généré sans crash
 
+def test_correction_pending_relance_postuler(monkeypatch):
+    # Après génération, « ✏️ Corriger » arme doc_correct_pending ; la phrase suivante relance
+    # /postuler sur la même cible EN passant la correction.
+    seen = {"cible": None, "correction": None}
+    async def fake_postuler_capture(session, text):
+        # On intercepte le /postuler relancé pour vérifier qu'il porte la bonne cible + correction.
+        seen["cible"] = text
+        seen["correction"] = session.get("_doc_correction")
+        return "ok", session
+    s = {"user_id": "cor1", "etape": "ACTIF", "onboarding_complete": True, "historique": [],
+         "profil": {"identite": {"nom": "X"}, "preferences": {}},
+         "doc_correct_pending": True, "_docpack": {"cible": "Analyste SOC"}}
+    # On remplace process_text_message par un capteur APRÈS la 1re entrée (récursion) :
+    import types
+    orig = main.process_text_message
+    async def wrapper(session, text):
+        if text.startswith("/postuler"):
+            return await fake_postuler_capture(session, text)
+        return await orig(session, text)
+    monkeypatch.setattr(main, "process_text_message", wrapper)
+    _run(main.process_text_message(s, "raccourcis la lettre et insiste sur mon stage"))
+    assert seen["cible"] == "/postuler Analyste SOC"
+    assert "stage" in (seen["correction"] or "")
+
+def test_send_docpack_word_sans_pack(monkeypatch):
+    # Pas de pack récent -> renvoie False proprement (pas de crash).
+    assert _run(main._send_docpack_word({"user_id": "w0", "profil": {}})) is False
+
 def test_date_fr_lieu():
     d = main._date_fr_lieu("Abomey-Calavi, Bénin")
     assert d.startswith("Abomey-Calavi, le ") and "/" not in d   # format français, pas 27/10/2026
