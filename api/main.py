@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.53.0"
+VERSION         = "3.54.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3429,9 +3429,20 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         elif arg in ("ats", "sobre", "robot", "texte"):
             ok = await _deliver_cv(session, "ats")
             msg = "✅ *CV ATS* envoyé · sobre, une colonne, lisible par les logiciels de tri des recruteurs." if ok else "😕 Génération impossible, réessaie."
+        elif arg in ("modeles", "modèles", "templates", "modele", "modèle", "gabarits"):
+            msg = ("🎨 *10 modèles de CV graphiques* · choisis-en un (tape `/cv <modèle>`) :\n\n"
+                   + "\n".join(f"• *{v['label']}* → `/cv {k}`" for k, v in _CV_TEMPLATES.items())
+                   + "\n\n_Rappel : pour *postuler en ligne*, garde le CV *ATS*. Le graphique est pour un envoi direct._")
+            session["_kb_options"] = [(v["label"], f"act:tpl_{k}") for k, v in list(_CV_TEMPLATES.items())[:8]]
+        elif arg.replace(" ", "-") in _CV_TEMPLATES:
+            tk = arg.replace(" ", "-")
+            ok = await _deliver_cv(session, "graphic", template=tk)
+            msg = (f"✅ *CV graphique · modèle {_CV_TEMPLATES[tk]['label']}* envoyé.\n"
+                   "_Envie d'un autre style ? `/cv modeles`._") if ok else "😕 Génération impossible, réessaie."
         elif arg in ("graphique", "graphic", "design", "designe", "designé", "joli"):
             ok = await _deliver_cv(session, "graphic")
-            msg = "✅ *CV graphique* envoyé · mise en page soignée pour un envoi direct au recruteur." if ok else "😕 Génération impossible, réessaie."
+            msg = ("✅ *CV graphique* envoyé (modèle par défaut).\n"
+                   "🎨 *10 modèles au choix* : tape `/cv modeles`.") if ok else "😕 Génération impossible, réessaie."
         elif arg in ("deux", "les deux", "2", "tous", "both"):
             ok = await _deliver_cv(session, "deux")
             msg = "✅ Tes *deux CV* sont envoyés : **ATS** (robots de tri) + **graphique** (envoi direct)." if ok else "😕 Génération impossible, réessaie."
@@ -5770,71 +5781,145 @@ def _pdf_build(doc, els, watermark: bool, footer_only: bool = False):
     fn = _draw_wm_footer if footer_only else _draw_watermark
     doc.build(els, onFirstPage=fn, onLaterPages=fn)
 
+# ── Templates de CV GRAPHIQUES (10 modèles pro) · 5 mises en page × couleurs ──
+# layout : banniere | bandeau | minimal | centre | sidebar.  accent = couleur principale (hex).
+_CV_TEMPLATES = {
+    "moderne-bleu":       {"label": "Moderne Bleu",       "accent": "#1a237e", "layout": "banniere", "font": "Helvetica"},
+    "emeraude":           {"label": "Émeraude",           "accent": "#0f766e", "layout": "banniere", "font": "Helvetica"},
+    "bordeaux":           {"label": "Bordeaux",           "accent": "#7f1d1d", "layout": "banniere", "font": "Helvetica"},
+    "corporate-ardoise":  {"label": "Corporate Ardoise",  "accent": "#334155", "layout": "bandeau",  "font": "Helvetica"},
+    "teal":               {"label": "Teal",               "accent": "#0d9488", "layout": "bandeau",  "font": "Helvetica"},
+    "indigo-minimal":     {"label": "Indigo Minimal",     "accent": "#3730a3", "layout": "minimal",  "font": "Helvetica"},
+    "noir-minimal":       {"label": "Noir Minimal",       "accent": "#111418", "layout": "minimal",  "font": "Helvetica"},
+    "elegant":            {"label": "Élégant (serif)",    "accent": "#92400e", "layout": "centre",   "font": "Times-Roman"},
+    "sidebar-marine":     {"label": "Sidebar Marine",     "accent": "#1e3a5f", "layout": "sidebar",  "font": "Helvetica"},
+    "sidebar-anthracite": {"label": "Sidebar Anthracite", "accent": "#262626", "layout": "sidebar",  "font": "Helvetica"},
+}
+_CV_TEMPLATE_DEFAULT = "moderne-bleu"
+
+def _resolve_cv_template(name: str) -> dict:
+    key = (name or "").strip().lower().replace(" ", "-")
+    return _CV_TEMPLATES.get(key) or _CV_TEMPLATES[_CV_TEMPLATE_DEFAULT]
+
+def _cv_experience_blocks(experience, s_body, s_bullet):
+    out = []
+    for exp in (experience or [])[:4]:
+        _poste = _sanitize_doc_text(exp.get('poste', '')); _org = _sanitize_doc_text(exp.get('organisation', ''))
+        out.append(Paragraph(f"<b>{_xml(_poste)}</b> · {_xml(_org)}", s_body))
+        for m in exp.get("missions", [])[:4]:
+            m = _sanitize_doc_text(m)
+            if m:
+                out.append(Paragraph("• " + _xml(m), s_bullet))
+        out.append(Spacer(1, 4))
+    return out
+
 def build_cv_pdf(profil: dict, titre: str, resume: str, competences: list, style: str = "ats",
-                 watermark: bool = False) -> io.BytesIO:
-    """style='ats' : sobre, noir, une colonne, polices standard -> lisible par les robots de tri (ATS).
-    style='graphic' : bandeau coloré + titres de section en couleur -> pour un envoi direct / humain."""
+                 watermark: bool = False, template: str = None) -> io.BytesIO:
+    """style='ats' : sobre, noir, une colonne -> lisible par les robots de tri (ATS).
+    style='graphic' : modèle graphique pro parmi _CV_TEMPLATES (param `template`)."""
     titre = _sanitize_doc_text(titre); resume = _sanitize_doc_text(resume)
     competences = [_sanitize_doc_text(c) for c in (competences or []) if _sanitize_doc_text(c)]
     graphic = (style == "graphic")
-    NOIR = HexColor("#111418")
-    accent = BLEU if graphic else NOIR
+    tpl = _resolve_cv_template(template) if graphic else None
+    accent = HexColor(tpl["accent"]) if graphic else NOIR
+    base_font = (tpl["font"] if graphic else "Helvetica")
+    bold_font = "Times-Bold" if base_font == "Times-Roman" else "Helvetica-Bold"
+    layout = tpl["layout"] if graphic else "ats"
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.7*cm, rightMargin=1.7*cm,
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.6*cm, rightMargin=1.6*cm,
                             topMargin=(0.9 if graphic else 1.5)*cm, bottomMargin=1.4*cm)
-    s_sec = ParagraphStyle("se", fontSize=11, textColor=accent, fontName="Helvetica-Bold", spaceBefore=11, spaceAfter=4)
-    s_body = ParagraphStyle("b", fontSize=9.6, textColor=NOIR, fontName="Helvetica", spaceAfter=3, leading=13)
-    s_bullet = ParagraphStyle("bu", fontSize=9.6, textColor=NOIR, fontName="Helvetica", spaceAfter=2, leftIndent=12)
+    s_sec = ParagraphStyle("se", fontSize=11, textColor=accent, fontName=bold_font, spaceBefore=11, spaceAfter=4)
+    s_body = ParagraphStyle("b", fontSize=9.6, textColor=NOIR, fontName=base_font, spaceAfter=3, leading=13)
+    s_bullet = ParagraphStyle("bu", fontSize=9.6, textColor=NOIR, fontName=base_font, spaceAfter=2, leftIndent=12)
     identite = profil.get("identite", {})
     formation = profil.get("formation", [])
     experience = profil.get("experience", [])
     contacts = [x for x in [identite.get("email"), identite.get("telephone"), identite.get("localisation")] if x]
     nom = identite.get("nom", "Candidat")
-    els = []
-    if graphic:
-        s_nw = ParagraphStyle("nw", fontSize=21, leading=25, textColor=HexColor("#ffffff"), fontName="Helvetica-Bold")
-        s_sw = ParagraphStyle("sw", fontSize=10.5, leading=14, textColor=HexColor("#dde4ff"), fontName="Helvetica")
-        inner = [Paragraph(_xml(nom), s_nw)]
-        if titre:
-            inner.append(Paragraph(_xml(titre), s_sw))
-        if contacts:
-            inner.append(Paragraph(_xml(" · ".join(contacts)), s_sw))
-        band = Table([[inner]], colWidths=[doc.width])
-        band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), BLEU),
-                                  ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
-                                  ("TOPPADDING", (0, 0), (-1, -1), 15), ("BOTTOMPADDING", (0, 0), (-1, -1), 15)]))
-        els.append(band); els.append(Spacer(1, 12))
-    else:
-        s_nom = ParagraphStyle("n", fontSize=19, leading=23, textColor=NOIR, fontName="Helvetica-Bold", spaceAfter=4)
-        s_sous = ParagraphStyle("s", fontSize=11, leading=14, textColor=NOIR, fontName="Helvetica", spaceAfter=4)
-        els.append(Paragraph(_xml(nom), s_nom))
-        if titre:
-            els.append(Paragraph(_xml(titre), s_sous))
-        if contacts:
-            els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
-        els.append(Spacer(1, 8))
-    if resume:
-        els.append(Paragraph("PROFIL", s_sec))
-        els.append(Paragraph(_xml(resume), s_body))
-    if competences:
-        els.append(Paragraph("COMPÉTENCES", s_sec))
-        els.append(Paragraph(_xml(" · ".join(competences[:16])), s_body))
-    if experience:
-        els.append(Paragraph("EXPÉRIENCE", s_sec))
-        for exp in experience[:4]:
-            _poste = _sanitize_doc_text(exp.get('poste', '')); _org = _sanitize_doc_text(exp.get('organisation', ''))
-            els.append(Paragraph(f"<b>{_xml(_poste)}</b> · {_xml(_org)}", s_body))
-            for m in exp.get("missions", [])[:4]:
-                m = _sanitize_doc_text(m)
-                if m:
-                    els.append(Paragraph("• " + _xml(m), s_bullet))
-            els.append(Spacer(1, 4))
-    if formation:
-        els.append(Paragraph("FORMATION", s_sec))
+
+    def _section(title):
+        return Paragraph(title, s_sec)
+    def _sec_profil():
+        return [_section("PROFIL"), Paragraph(_xml(resume), s_body)] if resume else []
+    def _sec_comp():
+        return [_section("COMPÉTENCES"), Paragraph(_xml(" · ".join(competences[:16])), s_body)] if competences else []
+    def _sec_exp():
+        return ([_section("EXPÉRIENCE")] + _cv_experience_blocks(experience, s_body, s_bullet)) if experience else []
+    def _sec_form():
+        if not formation:
+            return []
+        out = [_section("FORMATION")]
         for f in formation[:3]:
             _dip = _sanitize_doc_text(f.get('diplome', '')); _etab = _sanitize_doc_text(f.get('etablissement', ''))
-            els.append(Paragraph(f"<b>{_xml(_dip)}</b> · {_xml(_etab)}", s_body))
-    # ATS : filigrane en pied SEULEMENT (ne pas polluer l'extraction par les robots) ; graphique : filigrane visuel.
+            out.append(Paragraph(f"<b>{_xml(_dip)}</b> · {_xml(_etab)}", s_body))
+        return out
+
+    els = []
+    WHITE = HexColor("#ffffff")
+    if layout == "sidebar":
+        # Colonne gauche colorée (identité + compétences), colonne droite (profil/exp/formation).
+        s_nw = ParagraphStyle("nw", fontSize=17, leading=21, textColor=WHITE, fontName=bold_font, spaceAfter=4)
+        s_sw = ParagraphStyle("sw", fontSize=9.5, leading=13, textColor=HexColor("#e5e7eb"), fontName=base_font, spaceAfter=2)
+        s_secw = ParagraphStyle("scw", fontSize=10, textColor=WHITE, fontName=bold_font, spaceBefore=10, spaceAfter=3)
+        left = [Paragraph(_xml(nom), s_nw)]
+        if titre:
+            left.append(Paragraph(_xml(titre), s_sw))
+        if contacts:
+            left.append(Spacer(1, 6))
+            for c in contacts:
+                left.append(Paragraph(_xml(c), s_sw))
+        if competences:
+            left.append(Paragraph("COMPÉTENCES", s_secw))
+            for c in competences[:12]:
+                left.append(Paragraph("• " + _xml(c), s_sw))
+        right = _sec_profil() + _sec_exp() + _sec_form()
+        lw = doc.width * 0.34
+        t = Table([[left, right]], colWidths=[lw, doc.width - lw])
+        t.setStyle(TableStyle([("BACKGROUND", (0, 0), (0, 0), accent),
+                               ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                               ("LEFTPADDING", (0, 0), (0, 0), 12), ("RIGHTPADDING", (0, 0), (0, 0), 12),
+                               ("TOPPADDING", (0, 0), (0, 0), 16), ("BOTTOMPADDING", (0, 0), (0, 0), 16),
+                               ("LEFTPADDING", (1, 0), (1, 0), 16), ("RIGHTPADDING", (1, 0), (1, 0), 4),
+                               ("TOPPADDING", (1, 0), (1, 0), 14)]))
+        els.append(t)
+    else:
+        if layout == "banniere":
+            s_nw = ParagraphStyle("nw", fontSize=21, leading=25, textColor=WHITE, fontName=bold_font)
+            s_sw = ParagraphStyle("sw", fontSize=10.5, leading=14, textColor=HexColor("#eef1ff"), fontName=base_font)
+            inner = [Paragraph(_xml(nom), s_nw)]
+            if titre: inner.append(Paragraph(_xml(titre), s_sw))
+            if contacts: inner.append(Paragraph(_xml(" · ".join(contacts)), s_sw))
+            band = Table([[inner]], colWidths=[doc.width])
+            band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent),
+                                      ("LEFTPADDING", (0, 0), (-1, -1), 16), ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+                                      ("TOPPADDING", (0, 0), (-1, -1), 15), ("BOTTOMPADDING", (0, 0), (-1, -1), 15)]))
+            els += [band, Spacer(1, 12)]
+        elif layout == "bandeau":
+            bar = Table([[""]], colWidths=[doc.width], rowHeights=[6])
+            bar.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)]))
+            s_nom = ParagraphStyle("n", fontSize=20, leading=24, textColor=accent, fontName=bold_font, spaceBefore=8, spaceAfter=2)
+            els += [bar, Paragraph(_xml(nom), s_nom)]
+            if titre: els.append(Paragraph(_xml(titre), ParagraphStyle("s", fontSize=11, textColor=NOIR, fontName=base_font, spaceAfter=2)))
+            if contacts: els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
+            els.append(Spacer(1, 6))
+        elif layout == "centre":
+            s_nom = ParagraphStyle("n", fontSize=22, leading=26, textColor=accent, fontName=bold_font, alignment=1, spaceAfter=3)
+            els.append(Paragraph(_xml(nom), s_nom))
+            if titre: els.append(Paragraph(_xml(titre), ParagraphStyle("s", fontSize=11.5, textColor=NOIR, fontName=base_font, alignment=1, spaceAfter=3)))
+            if contacts: els.append(Paragraph(_xml(" · ".join(contacts)), ParagraphStyle("c", fontSize=9.5, textColor=GRIS, fontName=base_font, alignment=1, spaceAfter=4)))
+            rule = Table([[""]], colWidths=[doc.width*0.4], rowHeights=[2]); rule.hAlign = "CENTER"
+            rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)]))
+            els += [rule, Spacer(1, 8)]
+        else:  # minimal
+            s_nom = ParagraphStyle("n", fontSize=20, leading=24, textColor=accent, fontName=bold_font, spaceAfter=2)
+            els.append(Paragraph(_xml(nom), s_nom))
+            if titre: els.append(Paragraph(_xml(titre), ParagraphStyle("s", fontSize=11, textColor=NOIR, fontName=base_font, spaceAfter=2)))
+            if contacts: els.append(Paragraph(_xml(" · ".join(contacts)), s_body))
+            rule = Table([[""]], colWidths=[doc.width], rowHeights=[1.5])
+            rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), accent)]))
+            els += [Spacer(1, 4), rule, Spacer(1, 6)]
+        els += _sec_profil() + _sec_comp() + _sec_exp() + _sec_form()
+    # ATS : filigrane en pied SEULEMENT ; graphique : filigrane visuel.
     _pdf_build(doc, els, watermark, footer_only=(not graphic))
     return buf
 
@@ -5953,21 +6038,29 @@ async def _send_docpack_word(session: dict) -> bool:
         logger.warning(f"[docx-ondemand] {e}")
         return False
 
-async def _deliver_cv(session: dict, style: str = "ats") -> bool:
-    """Génère et envoie le CV dans le style demandé ('ats', 'graphic' ou 'deux'). Renvoie True si OK."""
+async def _deliver_cv(session: dict, style: str = "ats", template: str = None) -> bool:
+    """Génère et envoie le CV dans le style demandé ('ats', 'graphic' ou 'deux'). Renvoie True si OK.
+    `template` : un des _CV_TEMPLATES pour le style graphique (défaut : moderne-bleu)."""
     profil = session.get("profil") or {}
     if not profil.get("identite"):
         return False
     nom = _slug((profil.get("identite") or {}).get("nom") or "candidat")
     comps = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("outils", []))[:14]
     resume = profil.get("resume_profil", "")
+    titre = next((f.get("domaine") for f in (profil.get("formation") or []) if f.get("domaine")), "") or ""
     styles = ["ats", "graphic"] if style in ("deux", "les deux", "2", "tous", "both") else [style]
     ok = False
     for st in styles:
         try:
-            buf = await asyncio.to_thread(build_cv_pdf, profil, "CV", resume, comps, st, watermark=not _is_premium(session))
-            label = "ATS (lisible par les robots de tri)" if st == "ats" else "graphique (envoi direct au recruteur)"
-            ok = await deliver_file(session, f"CV_{st}_{nom}.pdf", buf.getvalue(), f"📄 Ton CV *{label}*") or ok
+            buf = await asyncio.to_thread(build_cv_pdf, profil, titre, resume, comps, st,
+                                          watermark=not _is_premium(session), template=template)
+            if st == "ats":
+                fname, label = f"CV_ATS_{nom}.pdf", "ATS (lisible par les robots de tri)"
+            else:
+                tpl = _resolve_cv_template(template)
+                fname = f"CV_{_slug(tpl['label'])}_{nom}.pdf"
+                label = f"graphique · modèle *{tpl['label']}* (envoi direct au recruteur)"
+            ok = await deliver_file(session, fname, buf.getvalue(), f"📄 Ton CV {label}") or ok
         except Exception as e:
             logger.error(f"[cv] {st}: {e}")
     return ok
@@ -6050,6 +6143,7 @@ def get_menu(session, key):
     if key == "tools":
         return ("🧰 *Boîte à outils* · prépare tes documents sans quitter la messagerie", [
             ("📝 Créer un CV", "act:creercv"),
+            ("🎨 Modèles de CV (10)", "act:cv_modeles"),
             ("🔎 Extraire le texte (OCR)", "act:extraire"),
             ("🗜️ Compresser un PDF", "act:compresser"),
             ("🖼️ Compresser une image", "act:compresserimage"),
@@ -6127,7 +6221,7 @@ _ACT_CMD = {"veille": "/veille", "parcours": "/parcours", "etape": "/etape", "pr
             "ecoles": "/ecoles", "logement": "/logement", "entretien": "/entretien", "canada": "/canada",
             "compresser": "/compresser", "fusionner": "/fusionner", "enpdf": "/enpdf",
             "compresserimage": "/compresserimage", "enimages": "/enimages", "extraire": "/extraire",
-            "creercv": "/creercv",
+            "creercv": "/creercv", "cv_modeles": "/cv modeles",
             "outils": "/outils", "procedure": "/procedure", "budget": "/budget",
             "parcoursup": "/parcoursup", "monmaster": "/monmaster", "ecandidat": "/ecandidat",
             "dap": "/dap", "visa": "/visa", "recours": "/recours",
@@ -6186,6 +6280,13 @@ async def handle_action(session, data, callback_id=None):
             ok = await _deliver_cv(session, style)
             await deliver_text(session, "✅ Ton CV est prêt (ci-dessus)." if ok
                                else "📄 Je dois d'abord connaître ton profil · envoie ton CV ou tape /creercv.", with_menu=True)
+            return session
+        if act.startswith("tpl_"):
+            tk = act[4:]
+            ok = await _deliver_cv(session, "graphic", template=tk)
+            lbl = _CV_TEMPLATES.get(tk, {}).get("label", tk)
+            await deliver_text(session, f"✅ CV *{lbl}* envoyé (ci-dessus) · `/cv modeles` pour un autre style." if ok
+                               else "📄 Envoie d'abord ton CV ou tape /creercv.", with_menu=True)
             return session
         if act == "word":
             ok = await _send_docpack_word(session)

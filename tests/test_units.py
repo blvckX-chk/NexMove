@@ -1840,6 +1840,18 @@ def test_cv_missions_sans_carreau():
     buf = main.build_cv_pdf(prof, "Analyste", "Résumé.", ["PHP"], "ats", watermark=True)
     assert len(buf.getvalue()) > 500   # PDF généré sans crash
 
+def test_cv_templates_rendent_tous():
+    # Les 10 modèles graphiques se génèrent sans crash (+ l'ATS intact).
+    assert len(main._CV_TEMPLATES) >= 10
+    prof = {"identite": {"nom": "X", "email": "a@b.c"}, "experience": [{"poste": "Dév", "organisation": "Y",
+            "missions": ["sites e-commerce"]}], "formation": [{"diplome": "Licence", "etablissement": "IFRI"}]}
+    for key in main._CV_TEMPLATES:
+        buf = main.build_cv_pdf(prof, "Analyste", "Résumé.", ["PHP", "SQL"], "graphic", watermark=True, template=key)
+        assert len(buf.getvalue()) > 800, key
+    # Modèle inconnu -> repli sur le défaut (pas de crash).
+    assert len(main.build_cv_pdf(prof, "A", "R", ["PHP"], "graphic", template="n-existe-pas").getvalue()) > 800
+    assert len(main.build_cv_pdf(prof, "A", "R", ["PHP"], "ats").getvalue()) > 500
+
 def test_correction_pending_relance_postuler(monkeypatch):
     # Après génération, « ✏️ Corriger » arme doc_correct_pending ; la phrase suivante relance
     # /postuler sur la même cible EN passant la correction.

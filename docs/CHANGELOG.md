@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.54 — 10 modèles de CV graphiques pro
+- Le CV graphique n'avait qu'un seul style (bandeau bleu). Nouveau **système de 10 modèles** professionnels, 5 mises en page × couleurs : *Moderne Bleu, Émeraude, Bordeaux* (bannière), *Corporate Ardoise, Teal* (bandeau fin), *Indigo Minimal, Noir Minimal* (minimaliste), *Élégant* (serif centré), *Sidebar Marine, Sidebar Anthracite* (colonne latérale colorée). `/cv modeles` les liste (avec boutons), `/cv <modèle>` en génère un ; aussi via Outils → « Modèles de CV (10) ». Le nom de fichier reprend le modèle. L'ATS reste inchangé (toujours recommandé pour postuler). Repli propre sur le modèle par défaut si un nom inconnu est donné.
+
 ## v3.53 — Candidature : PDF d'abord, Word à la demande + corrections
 - Retour testeur UX. Après `/postuler`, le bot envoie **les PDF d'abord** (moins d'encombrement), puis propose trois boutons : **📝 Versions Word** (générées à la demande), **✏️ Corriger**, **🎨 CV graphique**.
 - **Boucle de correction** : « ✏️ Corriger » → le bot demande « dis-moi quoi changer » ; la phrase suivante (ex. « raccourcis la lettre », « mets le titre Chargé de clientèle », « insiste sur mon stage ») **régénère** CV+lettre en appliquant précisément la correction (sans rien inventer), et renvoie les nouveaux PDF. Une commande annule proprement l'attente.
