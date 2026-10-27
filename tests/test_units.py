@@ -1827,6 +1827,24 @@ def test_sanitize_doc_text_preserve_texte():
     s = "Je m'appelle Awa, j'ai 5 ans d'expérience en cybersécurité."
     assert main._sanitize_doc_text(s) == s
 
+def test_sanitize_normalise_tirets_exotiques():
+    # Le « e‑commerce » avec tiret insécable (U+2011) devenait un carré dans le PDF.
+    assert main._sanitize_doc_text("e‑commerce et e–business") == "e-commerce et e-business"
+    assert main._sanitize_doc_text("“guillemets” et l’apostrophe…") == '"guillemets" et l\'apostrophe...'
+    assert main._sanitize_doc_text("espace insécable") == "espace insécable"
+
+def test_cv_missions_sans_carreau():
+    # Les missions passent maintenant par le nettoyeur -> plus de carré dans le CV.
+    prof = {"identite": {"nom": "X"}, "experience": [{"poste": "Dév", "organisation": "Y",
+            "missions": ["sites et e‑commerce ■ WordPress"]}], "formation": []}
+    buf = main.build_cv_pdf(prof, "Analyste", "Résumé.", ["PHP"], "ats", watermark=True)
+    assert len(buf.getvalue()) > 500   # PDF généré sans crash
+
+def test_date_fr_lieu():
+    d = main._date_fr_lieu("Abomey-Calavi, Bénin")
+    assert d.startswith("Abomey-Calavi, le ") and "/" not in d   # format français, pas 27/10/2026
+    assert any(mois in d for mois in main._MOIS_FR)
+
 def test_pack_quality_detecte_carreau():
     bad = {"titre_poste": "Analyste", "resume_professionnel": "Analyste SOC junior formé au blue team réseau.",
            "competences_mises_en_avant": ["SIEM"],

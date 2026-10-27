@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.51 — Rendu CV/lettre : fin du « carré », date de lettre à la française
+- **Bug du carré (■) dans le CV** (ex. « e■commerce ») : les **missions/expériences/formations** n'étaient pas passées au nettoyeur de texte (seuls le résumé et les compétences l'étaient). Désormais TOUS les champs sont nettoyés, et le nettoyeur **normalise les tirets/espaces/guillemets exotiques** (tiret insécable, en/em-dash, espaces insécables, guillemets typographiques → équivalents ASCII sûrs) — cause exacte du carré. Corrigé en PDF ET en Word.
+- **Date de la lettre de motivation** : passait en « 27/10/2026 » mal placée. Désormais convention française : « *Abomey-Calavi, le 27 octobre 2026* », alignée à droite (PDF et Word).
+
 ## v3.50 — Tchavi : URL par défaut corrigée
 - Correction de l'URL par défaut de la passerelle Tchavi : `https://tchavi.com/api/v1` (l'endpoint réel d'après le dashboard), au lieu de `api.tchavi.com`. Reste surchargeable via `TCHAVI_BASE_URL`. Le code ajoute `/chat/completions`.
 
