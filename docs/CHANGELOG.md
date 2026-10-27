@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.52 — CV : pédagogie ATS + choix clair + nom de fichier + filigrane visible
+- Beaucoup de candidats ne savent pas ce qu'est un **CV ATS** et préfèrent le « joli » graphique (souvent écarté par les logiciels de tri). Désormais le bot **explique** (encart « C'est quoi un CV ATS ? ») et **donne le choix** :
+  - `/creercv` : le prompt de choix explique ATS vs graphique, recommande l'ATS, bouton « CV ATS (recommandé) ».
+  - `/postuler` : le CV est en **ATS** (bon pour postuler), le fichier s'appelle `CV_ATS_<nom>.pdf/.docx`, l'encart ATS est affiché, et un bouton **« 🎨 Version graphique du CV »** permet d'obtenir l'autre format en un clic.
+- **Filigrane** : sur compte gratuit, mention en pied plus **visible** (taille 8, italique, moins transparente) + rappel explicite dans le message (« Filigrane présent · le Premium l'enlève »). Rappel : sur le compte **admin/Premium, il n'y a PAS de filigrane** (c'est normal — c'est ce que voyait le testeur).
+
 ## v3.51 — Rendu CV/lettre : fin du « carré », date de lettre à la française
 - **Bug du carré (■) dans le CV** (ex. « e■commerce ») : les **missions/expériences/formations** n'étaient pas passées au nettoyeur de texte (seuls le résumé et les compétences l'étaient). Désormais TOUS les champs sont nettoyés, et le nettoyeur **normalise les tirets/espaces/guillemets exotiques** (tiret insécable, en/em-dash, espaces insécables, guillemets typographiques → équivalents ASCII sûrs) — cause exacte du carré. Corrigé en PDF ET en Word.
 - **Date de la lettre de motivation** : passait en « 27/10/2026 » mal placée. Désormais convention française : « *Abomey-Calavi, le 27 octobre 2026* », alignée à droite (PDF et Word).
