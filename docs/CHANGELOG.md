@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.58 — Création de CV cohérente + « ils ne cliquent pas les boutons »
+- **Bug capture WhatsApp (Ketsia).** CV analysé avec succès, puis « Créercv » → le bot **repartait de zéro** et redemandait nom/parcours/expériences (boucle). Corrigé :
+  - `/creercv` **détecte un CV déjà analysé** (`_profile_is_usable`) et **génère directement** depuis le profil, avec boutons *Version graphique · Repartir de zéro · Postuler* (au lieu du questionnaire vierge).
+  - **« Créercv » / « créer mon CV » / « faire mon CV » routés de façon DÉTERMINISTE** vers `/creercv` (avant : ça dépendait du LLM, qui répondait vaguement « utilise /creercv »). Les enchaînements (« … puis crée un cv ») restent gérés par l'orchestrateur.
+- **Malformation d'affichage « • · ESDAM »** : une formation sans diplôme laissait un séparateur `·` orphelin. Le récap n'assemble plus que les morceaux présents (`_render_formation_recap`).
+- **Mécanisme général « ils ne cliquent pas les boutons »** : après `/postuler`, les 3 boutons (Word / Corriger / CV graphique) sont désormais **compris en langage naturel** (« je veux le word », « corrige la lettre », « en graphique »), sans confondre avec une modif de profil.
+- **Sur-promesse supprimée** : le prompt d'accueil décrit `/creercv` **exactement** (5 questions puis génération, **pas** d'aperçu section par section) — fini le « tu pourras prévisualiser chaque section ».
+
 ## v3.57 — Ne jamais redemander un CV déjà analysé
 - **Bug (même capture WhatsApp).** À « *quoi de plus que le CV que je t'ai soumis ?* », le conseiller répondait « *envoie-moi à nouveau ton CV* » alors qu'il était **déjà analysé** (le modèle ignorait la consigne). Ajout d'un **garde-fou déterministe** : si `cv_parsed`, toute phrase qui réclame le CV (envoyer/renvoyer/`/creercv`…) est **retirée** de la réponse ; s'il ne reste rien d'utile, repli explicite (« je pars de ton CV déjà analysé, dis-moi la cible »).
 
