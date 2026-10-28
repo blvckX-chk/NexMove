@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.61 — Mise à jour de CV sans casser le profil + feedback tapé
+- **Re-upload d'un CV *différent* par un utilisateur déjà onboardé** : on ne refait plus tout l'onboarding et on **conserve ses préférences de recherche** (objectif, pays, mots-clés) au lieu de les écraser par les défauts de l'analyse. Message « 🔄 CV mis à jour · préférences conservées », l'utilisateur reste ACTIF.
+- **Feedback 👍/👎 tapé** (et pas seulement cliqué) : après des offres, « utile », « ça correspond », « pas pour moi », « hors sujet », « pas intéressé » enregistrent l'avis sur toutes les offres affichées (le négatif l'emporte sur le « intéress » de « pas intéressé »). Le 👍 guide vers `/postuler`.
+- _(Rappel : la confirmation à l'étape préférences acceptait déjà « oui / non / correction de champ » en langage libre — vérifié robuste, inchangé.)_
+
 ## v3.60 — QC adversariale sur v3.59 (3 bugs corrigés)
 - **« comment postuler à X »** (cible explicite) ne détourne plus vers la cible du *dernier lien analysé* — seul un « comment postuler » **nu** le fait.
 - **À l'écran CV, « oui mais le nom est faux » ne valide plus** : passage de `detecter_reponse_positive` (substring gourmand) à `_is_clear_affirmation` (un « oui » noyé dans une nuance ne confirme pas).
