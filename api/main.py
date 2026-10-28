@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.60.0"
+VERSION         = "3.61.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1011,6 +1011,27 @@ def _link_followup(low: str, session: dict) -> str:
         return "act:lien_chances"
     if re.search(r"\b(suivre|suis\s+cette|ajoute\w*\s+(à|a)\s+(mon\s+)?suivi|garde\w*\s+(cette|la)|me\s+rappeler|track)\b", low):
         return "act:lien_suivre"
+    return ""
+
+_FB_UP_RE = re.compile(r"\b(utiles?|pertinent\w*|parfait\w*|ça\s+me\s+va|ca\s+me\s+va|ça\s+m'int[ée]resse|"
+                        r"ca\s+m'int[ée]resse|int[ée]ress[ée]\w*|bonnes?\s+offres?|super\s+offres?|"
+                        r"top\s+ces?\s+offres?|ça\s+correspond|ca\s+correspond|bien\s+ces?\s+offres?)\b", re.IGNORECASE)
+_FB_DOWN_RE = re.compile(r"\b(hors\s+sujet|pas\s+pour\s+moi|pas\s+int[ée]ress[ée]\w*|ça\s+m'int[ée]resse\s+pas|"
+                         r"ca\s+m'int[ée]resse\s+pas|pas\s+adapt[ée]\w*|rien\s+pour\s+moi|pas\s+pertinent\w*|"
+                         r"pas\s+ces?\s+offres?|mauvaises?\s+offres?|pas\s+terrible|pas\s+top|c'est\s+nul)\b", re.IGNORECASE)
+
+def _offers_feedback_nl(low: str, session: dict) -> str:
+    """Après des offres affichées (boutons 👍/👎), capte un avis TAPÉ. Renvoie 'up' | 'down' | ''.
+    Beaucoup écrivent « utile » / « pas pour moi » au lieu de cliquer."""
+    if not session.get("last_offers"):
+        return ""
+    low = (low or "").strip()
+    if len(low) > 40:
+        return ""
+    if _FB_DOWN_RE.search(low):   # le négatif d'abord (« pas intéressé » contient « intéress »)
+        return "down"
+    if _FB_UP_RE.search(low):
+        return "up"
     return ""
 
 def _refers_to_prior_list(low: str, session: dict) -> bool:
@@ -5651,6 +5672,22 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         return await process_text_message(session, _cmd)
 
+    # MÉCANISME GÉNÉRAL (suite) : avis 👍/👎 TAPÉ sur les dernières offres (« utile » / « pas pour moi »).
+    _fb = _offers_feedback_nl(low, session)
+    if _fb:
+        vote = 1 if _fb == "up" else -1
+        try:
+            for o in (session.get("last_offers") or []):
+                if o.get("sig"):
+                    opp_store.add_feedback(session.get("user_id"), o["sig"], vote)
+        except Exception as e:
+            logger.warning(f"[fb-nl] {e}")
+        _push(session, "user", t)
+        msg = ("👍 Noté, merci ! J'affinerai dans ce sens.\n👉 Pour candidater à l'une d'elles : `/postuler <titre>`." if vote > 0
+               else "👎 Compris, j'en tiendrai compte pour mieux cibler. Tu peux préciser un domaine : /mobilite <domaine>.")
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     _followup_liste = _refers_to_prior_list(low, session)
     if not _followup_liste:
         cmd = _free_text_to_command(low, t)
@@ -7047,14 +7084,32 @@ Document: {cv_text[:6000]}"""
         message += "📈 *À renforcer :* " + _tidy_frag(", ".join(bilan["axes"][:3])) + "\n"
     if bilan.get("pistes"):
         message += "🎯 *Pistes réalistes pour toi :*\n" + "\n".join(f"• {_tidy_frag(p)}" for p in bilan["pistes"][:3]) + "\n"
-    message += "\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*)."
-    session["etape"] = "CV_RECU"
+    # MISE À JOUR DE CV (v3.61) : si l'utilisateur est DÉJÀ onboardé et envoie un nouveau CV, on NE
+    # refait PAS tout l'onboarding et on PRÉSERVE ses préférences de recherche (objectif, pays, mots-clés)
+    # au lieu de les écraser par les défauts de l'analyse — sinon un simple « CV v2 » cassait son profil.
+    _prev = session.get("profil") or {}
+    _was_onboarded = bool(session.get("onboarding_complete"))
+    _prev_prefs = _prev.get("preferences") or {}
+    if _was_onboarded and _prev_prefs:
+        profil["preferences"] = {**(profil.get("preferences") or {}), **_prev_prefs}   # l'existant gagne
     session["profil"] = profil
     session["cv_parsed"] = True
     session["last_cv_filename"] = (filename or "").strip().lower()   # anti re-analyse du MÊME fichier
     session["last_cv_size"] = len(pdf_bytes) if pdf_bytes else 0      # + taille (évite les faux positifs)
     _quota_bump(session, "cv")   # analyse réussie -> décompte le quota (admin exclu)
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    if _was_onboarded:
+        # Profil existant : on reste ACTIF, on confirme la mise à jour, préférences conservées.
+        session["etape"] = "ACTIF"
+        message += ("\n\n🔄 *CV mis à jour* · tes préférences de recherche sont *conservées*.\n"
+                    "👉 `/cv` pour le récupérer · `/postuler <poste>` · `/veille` pour de nouvelles offres.")
+        _push(session, "assistant", message)
+        session_manager.set(session.get("user_id"), session)
+        logger.info(f"[cv] {session.get('channel')} {nom} -> MAJ (onboardé, prefs conservées)")
+        await deliver_text(session, message, with_menu=True)
+        return
+    message += "\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*)."
+    session["etape"] = "CV_RECU"
     _push(session, "assistant", message)
     session_manager.set(session.get("user_id"), session)
     logger.info(f"[cv] {session.get('channel')} {nom} -> CV_RECU")

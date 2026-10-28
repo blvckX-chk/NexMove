@@ -2007,6 +2007,48 @@ def test_cv_recu_oui_mais_ne_valide_pas():
     msg, s = _run(main.process_text_message(s, "oui mais le nom est faux"))
     assert s.get("etape") == "CV_RECU"
 
+# ── v3.61 : re-upload CV différent (onboardé) + feedback NL ──
+def test_reupload_cv_different_preserve_preferences(monkeypatch):
+    sent = {}
+    async def cap(session, text, **k):
+        sent["msg"] = text; return True
+    monkeypatch.setattr(main, "deliver_text", cap)
+    monkeypatch.setattr(main, "_quota_or_credit", lambda *a, **k: (True, False, 5))
+    monkeypatch.setattr(main, "extract_text_pdf", lambda *a, **k: "Ketsia Mensah, styliste modéliste, licence en mode, compétences couture, coupe, montage et moulage sur mannequin, expérience en atelier.")
+    # On patche l'appel LLM de structuration via call_groq (retourne le profil).
+    async def fake_groq(system, user, **k):
+        return {"est_cv": True, "identite": {"nom": "Ketsia Mensah"},
+                "formation": [{"diplome": "Licence mode"}], "competences": {"techniques": ["Couture"]},
+                "preferences": {"objectif": "etudier"}, "bilan": {"forces": ["Créativité"]}}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "up1", "chat_id": "1", "onboarding_complete": True, "etape": "ACTIF", "cv_parsed": True,
+         "historique": [], "profil": {"identite": {"nom": "Ketsia"},
+                                       "preferences": {"objectif": "travailler", "mots_cles": "stylisme"}}}
+    _run(main.process_cv(s, b"%PDF-nouveau-cv-different", filename="CV v2.pdf"))
+    # Préférences conservées, pas de retour à l'onboarding.
+    assert s["profil"]["preferences"].get("objectif") == "travailler"
+    assert s["profil"]["preferences"].get("mots_cles") == "stylisme"
+    assert s.get("etape") == "ACTIF" and "mis à jour" in sent.get("msg", "")
+
+def test_feedback_nl_offres():
+    s = {"last_offers": [{"sig": "x1"}, {"sig": "x2"}]}
+    assert main._offers_feedback_nl("utile", s) == "up"
+    assert main._offers_feedback_nl("ça correspond bien", s) == "up"
+    assert main._offers_feedback_nl("pas pour moi", s) == "down"
+    assert main._offers_feedback_nl("pas intéressé", s) == "down"   # négatif capté malgré « intéress »
+    assert main._offers_feedback_nl("hors sujet", s) == "down"
+    # Sans offres affichées -> rien.
+    assert main._offers_feedback_nl("utile", {}) == ""
+
+def test_feedback_nl_enregistre_vote(monkeypatch):
+    votes = []
+    monkeypatch.setattr(main.opp_store, "add_feedback", lambda uid, sig, v: votes.append((sig, v)))
+    s = {"user_id": "fb", "chat_id": "1", "onboarding_complete": True, "etape": "ACTIF", "historique": [],
+         "cv_parsed": True, "profil": {"identite": {"nom": "T"}, "preferences": {"objectif": "travailler"}},
+         "last_offers": [{"sig": "a"}, {"sig": "b"}]}
+    msg, s = _run(main.process_text_message(s, "pas pour moi"))
+    assert votes == [("a", -1), ("b", -1)] and "Compris" in msg
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
