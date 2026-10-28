@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.60 — QC adversariale sur v3.59 (3 bugs corrigés)
+- **« comment postuler à X »** (cible explicite) ne détourne plus vers la cible du *dernier lien analysé* — seul un « comment postuler » **nu** le fait.
+- **À l'écran CV, « oui mais le nom est faux » ne valide plus** : passage de `detecter_reponse_positive` (substring gourmand) à `_is_clear_affirmation` (un « oui » noyé dans une nuance ne confirme pas).
+- **Re-upload** : dédup durcie — nom **non générique** ET **même taille d'octets** (deux CV différents nommés « cv.pdf » sur WhatsApp ne sont plus confondus).
+
 ## v3.59 — Liens propres dans le digest + 3 angles « ils ne cliquent pas »
 - **Liens en clair dans les offres du jour (capture Telegram).** Le digest quotidien affichait l'URL technique complète (`adzuna.fr/land/ad/…?se=…&v=…`). Désormais il réutilise `_offer_link` : **lien masqué cliquable** « 👉 Voir l'offre » sur Telegram/Messenger, lien court maison sur WhatsApp. Idem `/formations` et le récap d'offres post-CV. Garde-fou anti-Markdown cassé.
 - **Angle A — confirmation CV sans bouton.** À l'écran « CV analysé », taper « c'est faux » ou « nom : Ketsia Mensah » (au lieu de cliquer) **corrige le champ** ou propose de recommencer, **sans perdre le profil**.
