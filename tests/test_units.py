@@ -1932,6 +1932,46 @@ def test_docpack_followup_langage_naturel():
     # Phrase longue = pas un clic de bouton.
     assert main._docpack_followup("je me demandais si tu pouvais m'expliquer en détail comment tout cela fonctionne vraiment") == ""
 
+# ── v3.59 : liens propres dans le digest + angles « ils ne cliquent pas » ──
+def test_digest_lien_masque_telegram():
+    # Le digest ne doit plus afficher l'URL technique en clair sur Telegram (lien masqué cliquable).
+    assert main._offer_link(main._short("https://www.adzuna.fr/land/ad/5939630558?se=jr0wl"), "telegram").startswith("👉 [Voir l'offre](")
+    # WhatsApp : lien nu (markdown non supporté).
+    assert "[" not in main._offer_link("https://ex.co/abc", "whatsapp")
+    # URL cassant le markdown (parenthèse) -> repli nu, pas de lien cassé.
+    assert "[Voir" not in main._offer_link("https://ex.co/a(b)", "telegram")
+
+def test_link_followup_langage_naturel():
+    s = {"last_link_cible": "Bourse Eiffel"}
+    assert main._link_followup("comment postuler", s) == "act:lien_postuler"
+    assert main._link_followup("mes chances", s) == "act:lien_chances"
+    assert main._link_followup("je veux suivre cette bourse", s) == "act:lien_suivre"
+    # Sans cible mémorisée -> rien.
+    assert main._link_followup("mes chances", {}) == ""
+
+def test_cv_recu_correction_champ_en_langage_libre():
+    # À CV_RECU, « nom : Ketsia Mensah » corrige sans perdre le profil (pas besoin de bouton).
+    s = {"user_id": "r", "chat_id": "1", "historique": [], "onboarding_complete": False, "etape": "CV_RECU",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Mauvais Nom"}, "preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "nom : Ketsia Mensah"))
+    assert s.get("etape") == "CV_RECU" and s["profil"]["identite"]["nom"].lower().startswith("ketsia")
+
+def test_cv_recu_refus_ne_perd_pas_le_profil():
+    s = {"user_id": "r2", "chat_id": "1", "historique": [], "onboarding_complete": False, "etape": "CV_RECU",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Ketsia"}, "preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "c'est faux"))
+    assert "Corrige" in msg and s.get("profil", {}).get("identite", {}).get("nom") == "Ketsia"
+
+def test_reupload_meme_cv_pas_de_reanalyse(monkeypatch):
+    sent = {}
+    async def fake_deliver(session, text, **k):
+        sent["msg"] = text; return True
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    s = {"user_id": "u", "chat_id": "1", "cv_parsed": True, "last_cv_filename": "cv de ketsia.pdf",
+         "profil": {"identite": {"nom": "Ketsia"}}}
+    _run(main.process_cv(s, b"%PDF-xxxxxxxxxx", filename="CV de Ketsia.pdf"))
+    assert "déjà" in sent.get("msg", "")
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
