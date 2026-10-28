@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.58.0"
+VERSION         = "3.59.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -991,6 +991,23 @@ def _docpack_followup(low: str) -> str:
     if re.search(r"\b(corrige\w*|corriger|modifie\w*|modifier|change\w*|changer|rectifie\w*|ajuste\w*|"
                  r"retouche\w*|refais\s+la\s+lettre|raccourci\w*|rallonge\w*)\b", low):
         return "corriger"
+    return ""
+
+def _link_followup(low: str, session: dict) -> str:
+    """Après l'analyse d'un lien d'opportunité, les 3 boutons (Comment postuler / Mes chances / Suivre)
+    sont souvent TAPÉS. Si une cible de lien est en mémoire, on route en NL. Renvoie 'act:lien_...' | '' ."""
+    if not session.get("last_link_cible"):
+        return ""
+    low = (low or "").strip()
+    if len(low) > 60:
+        return ""
+    if re.search(r"\b(comment\s+(postuler|candidater)|je\s+postule|comment\s+faire)\b", low) \
+            or low in ("postuler", "candidater"):
+        return "act:lien_postuler"
+    if re.search(r"\b(mes\s+chances|quelles?\s+chances|mes\s+chance|chances|admissib|éligib|eligib|suis-je\s+pris)\b", low):
+        return "act:lien_chances"
+    if re.search(r"\b(suivre|suis\s+cette|ajoute\w*\s+(à|a)\s+(mon\s+)?suivi|garde\w*\s+(cette|la)|me\s+rappeler|track)\b", low):
+        return "act:lien_suivre"
     return ""
 
 def _refers_to_prior_list(low: str, session: dict) -> bool:
@@ -2016,7 +2033,7 @@ def _score_badge(score) -> str:
         lab = "Partiel"
     return f"{s}% · {lab}"
 
-def _render_scored_offers(opps, n: int = 3) -> str:
+def _render_scored_offers(opps, n: int = 3, channel: str = "telegram") -> str:
     """Affiche des offres AVEC leur note de compatibilité + raison + lien (format partagé)."""
     lignes = []
     for i, o in enumerate((opps or [])[:n], 1):
@@ -2025,9 +2042,10 @@ def _render_scored_offers(opps, n: int = 3) -> str:
         raison = _md_clean(str(o.get("raison", "") or "")).strip()
         if raison:
             ligne += f"\n   💬 {raison[:110]}"
-        lien = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
-        if lien:
-            ligne += f"\n   🔗 {_short(lien)}"   # lien court maison (évite les URL techniques à rallonge)
+        _raw = str(o.get("url", "") or o.get("portail_officiel", "")).replace("*", "").replace("`", "")
+        _lk = _offer_link(_short(_raw) if _raw else "", channel)
+        if _lk:
+            ligne += f"\n   {_lk}"
         lignes.append(ligne)
     return "\n".join(lignes)
 
@@ -4321,8 +4339,9 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 if cout:
                     msg += f" · 💶 {cout}"
                 msg += "\n"
-                if url:
-                    msg += f"   🔗 {url}\n"
+                _lk = _offer_link(url, session.get("channel", "telegram"))
+                if _lk:
+                    msg += f"   {_lk}\n"
                 if f.get("raison"):
                     msg += f"   💬 {_md_clean(f.get('raison', ''))}\n"
                 msg += "\n"
@@ -5285,7 +5304,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             if opps:
                 session["cv_preview_offers"] = opps[:6]   # réutilisées à la fin (pas de 2e recherche)
                 preview = ("🔎 *Déjà des offres notées pour ton profil :*\n"
-                           + _render_scored_offers(opps, 3)
+                           + _render_scored_offers(opps, 3, session.get("channel", "telegram"))
                            + "\n\n_Réponds à 2-3 questions pour affiner et recevoir les meilleures chaque jour._\n\n")
         except Exception as e:
             logger.error(f"cv-preview osint: {e}")
@@ -5296,6 +5315,27 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         q = preview + q
         _push(session, "user", t); _push(session, "assistant", q); session["derniere_activite"] = now
         return q, session
+
+    # CV_RECU, réponse NON positive (v3.59) : beaucoup ne cliquent pas « ✅ C'est correct ».
+    # On capte en langage libre : (1) un refus (« c'est faux », « non ») -> on propose de corriger /
+    # recommencer sans perdre le profil ; (2) une correction de champ (« nom : Ketsia », « mon email… »)
+    # -> on l'applique et on re-propose. Sinon on NE bloque PAS (créer cv / postuler… restent routés).
+    if etape == "CV_RECU":
+        edited = _try_profil_edit(session, t)
+        if edited:
+            _push(session, "user", t)
+            msg = (edited + "\n\n✅ C'est bon maintenant ? Réponds *Oui* pour continuer, "
+                   "ou corrige un autre champ (ex. « email : toi@mail.com »).")
+            _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if _is_explicit_negative(t):
+            _push(session, "user", t)
+            msg = ("Pas de souci 🙂 Deux options :\n"
+                   "• *Corrige directement* le champ faux : ex. « nom : Ketsia Mensah », « email : toi@mail.com ».\n"
+                   "• Ou *renvoie ton CV* (ou tape /creercv) pour tout refaire.")
+            session["_kb_options"] = [("🔄 Recommencer", "onb:reset")]
+            _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
 
     if etape == "PREFERENCES":
         profil = session.get("profil", {}) or {}
@@ -5453,7 +5493,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                     for o in res.get("opportunites", []):
                         opp_store.add(session.get("user_id"), o)
                 if top:
-                    msg += _render_scored_offers(top, 3)
+                    msg += _render_scored_offers(top, 3, session.get("channel", "telegram"))
                     _attach_feedback(session, top)
                 else:
                     msg += "\nJe scrute déjà le web · tape /veille dans un instant."
@@ -5589,6 +5629,24 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                        "« insiste sur mon stage », « raccourcis la lettre ».")
             _push(session, "assistant", msg)
             return msg, session
+
+    # MÉCANISME GÉNÉRAL (suite) : après l'analyse d'un lien, « comment postuler / mes chances / suivre »
+    # tapés en clair sont routés vers la bonne action sur la cible mémorisée.
+    _lf = _link_followup(low, session)
+    if _lf:
+        cible = session.get("last_link_cible", "")
+        if _lf == "act:lien_suivre":
+            try:
+                opp_store.add_candidature(session.get("user_id"), cible)
+                _focus_touch(session, cible, "suivi")
+            except Exception as e:
+                logger.error(f"lien_suivre nl: {e}")
+            msg = f"🗂️ *{_md_clean(cible)}* ajoutée à ton suivi · tape /mescandidatures."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        _cmd = ("/commentpostuler " if _lf == "act:lien_postuler" else "/chances ") + cible
+        _push(session, "user", t)
+        return await process_text_message(session, _cmd)
 
     _followup_liste = _refers_to_prior_list(low, session)
     if not _followup_liste:
@@ -6787,6 +6845,15 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
     if not pdf_bytes or len(pdf_bytes) > 20 * 1024 * 1024:
         await deliver_text(session, "❌ Fichier illisible ou trop lourd (max 20 Mo).")
         return
+    # RE-UPLOAD DU MÊME CV (v3.59) : s'il est déjà analysé et qu'on renvoie le MÊME fichier, inutile de
+    # le ré-analyser (ça brûlait un quota et relançait la boucle « donne-moi tes infos »). On le dit.
+    _fn_now = (filename or "").strip().lower()
+    if session.get("cv_parsed") and _fn_now and _fn_now == (session.get("last_cv_filename") or "").lower():
+        nom = _md_clean(((session.get("profil") or {}).get("identite") or {}).get("nom") or "ton profil")
+        await deliver_text(session, f"✅ J'ai *déjà* ce CV analysé (pour *{nom}*) — pas besoin de le renvoyer.\n\n"
+                           "👉 Tape `/cv` pour le récupérer, `/postuler <poste>` pour candidater, ou envoie un "
+                           "CV *différent* pour mettre à jour ton profil.", with_menu=True)
+        return
     # Quota gratuit : l'analyse de CV (LLM/vision) est coûteuse ; l'admin est illimité.
     ok, used_credit, _ = _quota_or_credit(session, "cv", FREE_CV_DAILY)
     if not ok:
@@ -6975,6 +7042,7 @@ Document: {cv_text[:6000]}"""
     session["etape"] = "CV_RECU"
     session["profil"] = profil
     session["cv_parsed"] = True
+    session["last_cv_filename"] = (filename or "").strip().lower()   # anti re-analyse du MÊME fichier
     _quota_bump(session, "cv")   # analyse réussie -> décompte le quota (admin exclu)
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     _push(session, "assistant", message)
@@ -8525,12 +8593,15 @@ def _short(url: str) -> str:
         logger.warning(f"[short] {e}")
         return url
 
-def _offer_link(lien: str, channel: str) -> str:
+def _offer_link(lien: str, channel: str = "telegram") -> str:
     """Rendu du lien d'une offre selon le canal : lien MASQUÉ (markdown) sur Telegram/Messenger
-    pour ne pas afficher l'URL technique ; lien nu sur WhatsApp (markdown non supporté)."""
+    pour ne pas afficher l'URL technique ; lien nu sur WhatsApp (markdown non supporté).
+    Garde-fou : si l'URL contient un caractère qui casserait le Markdown (parenthèse, crochet, espace),
+    on retombe sur l'URL nue raccourcie plutôt que d'afficher un lien cassé."""
+    lien = str(lien or "").replace("*", "").replace("`", "").strip()
     if not lien:
         return ""
-    if channel in ("telegram", "messenger"):
+    if channel in ("telegram", "messenger") and not any(c in lien for c in "()[] "):
         return f"👉 [Voir l'offre]({lien})"
     return f"👉 {lien}"
 
@@ -9259,8 +9330,9 @@ async def notify(_auth: bool = Depends(verify_api_key)):
             ids.append(oid)
             em = "🔥" if sc >= 75 else "✅"
             ligne = f"{_type_label(typ)}  {em}\n   *{_md_clean(titre)[:60]}*\n   🏢 {_md_clean(orga)} · 📊 {sc}/100"
-            if url:
-                ligne += "\n   🔗 " + str(url).replace("*", "").replace("`", "")
+            _lk = _offer_link(_short(str(url)) if url else "", s.get("channel", "telegram"))
+            if _lk:
+                ligne += "\n   " + _lk
             if deadline:
                 ligne += "\n   📅 " + _md_clean(deadline)
             lignes.append(ligne)

@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.59 — Liens propres dans le digest + 3 angles « ils ne cliquent pas »
+- **Liens en clair dans les offres du jour (capture Telegram).** Le digest quotidien affichait l'URL technique complète (`adzuna.fr/land/ad/…?se=…&v=…`). Désormais il réutilise `_offer_link` : **lien masqué cliquable** « 👉 Voir l'offre » sur Telegram/Messenger, lien court maison sur WhatsApp. Idem `/formations` et le récap d'offres post-CV. Garde-fou anti-Markdown cassé.
+- **Angle A — confirmation CV sans bouton.** À l'écran « CV analysé », taper « c'est faux » ou « nom : Ketsia Mensah » (au lieu de cliquer) **corrige le champ** ou propose de recommencer, **sans perdre le profil**.
+- **Angle B — boutons de lien en langage naturel.** Après l'analyse d'un lien, « comment postuler », « mes chances », « suivre cette bourse » tapés en clair déclenchent la bonne action sur la cible mémorisée.
+- **Angle C — re-upload du même CV.** Renvoyer le **même fichier** déjà analysé ne relance plus l'analyse (ni le quota ni la boucle « donne-moi tes infos ») : le bot dit qu'il l'a déjà et propose `/cv`, `/postuler` ou un CV *différent*.
+
 ## v3.58 — Création de CV cohérente + « ils ne cliquent pas les boutons »
 - **Bug capture WhatsApp (Ketsia).** CV analysé avec succès, puis « Créercv » → le bot **repartait de zéro** et redemandait nom/parcours/expériences (boucle). Corrigé :
   - `/creercv` **détecte un CV déjà analysé** (`_profile_is_usable`) et **génère directement** depuis le profil, avec boutons *Version graphique · Repartir de zéro · Postuler* (au lieu du questionnaire vierge).
