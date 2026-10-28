@@ -1967,10 +1967,45 @@ def test_reupload_meme_cv_pas_de_reanalyse(monkeypatch):
     async def fake_deliver(session, text, **k):
         sent["msg"] = text; return True
     monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    data = b"%PDF-xxxxxxxxxx"
     s = {"user_id": "u", "chat_id": "1", "cv_parsed": True, "last_cv_filename": "cv de ketsia.pdf",
-         "profil": {"identite": {"nom": "Ketsia"}}}
-    _run(main.process_cv(s, b"%PDF-xxxxxxxxxx", filename="CV de Ketsia.pdf"))
+         "last_cv_size": len(data), "profil": {"identite": {"nom": "Ketsia"}}}
+    _run(main.process_cv(s, data, filename="CV de Ketsia.pdf"))
     assert "déjà" in sent.get("msg", "")
+
+def test_reupload_qc_nom_generique_ou_taille_differente(monkeypatch):
+    # QC : deux CV différents nommés « cv.pdf » (WhatsApp) ne doivent PAS être confondus.
+    called = {"analyse": False}
+    async def fake_deliver(session, text, **k):
+        return True
+    async def fake_extract(*a, **k):
+        called["analyse"] = True; return ""   # on vérifie juste qu'on ENTRE dans l'analyse
+    monkeypatch.setattr(main, "deliver_text", fake_deliver)
+    monkeypatch.setattr(main, "_quota_or_credit", lambda *a, **k: (True, False, 5))
+    monkeypatch.setattr(main, "extract_text_pdf", lambda *a, **k: "")
+    # Nom générique -> jamais de dédup (on laisse passer, même nom/taille).
+    s = {"user_id": "u2", "chat_id": "1", "cv_parsed": True, "last_cv_filename": "cv.pdf",
+         "last_cv_size": 15, "profil": {"identite": {"nom": "X"}}}
+    sent = {}
+    async def cap(session, text, **k):
+        sent["msg"] = text; return True
+    monkeypatch.setattr(main, "deliver_text", cap)
+    _run(main.process_cv(s, b"%PDF-DIFFERENT!", filename="cv.pdf"))
+    assert "déjà" not in sent.get("msg", "")   # nom générique -> pas de blocage
+
+def test_link_followup_postuler_cible_explicite_non_detournee():
+    s = {"last_link_cible": "Bourse Eiffel"}
+    # Cible EXPLICITE différente -> on ne détourne pas vers la cible mémorisée.
+    assert main._link_followup("comment postuler à orange", s) == ""
+    # « comment postuler » tout court -> sur la cible mémorisée.
+    assert main._link_followup("comment postuler", s) == "act:lien_postuler"
+
+def test_cv_recu_oui_mais_ne_valide_pas():
+    # QC : « oui mais le nom est faux » ne doit PAS valider (rester à CV_RECU).
+    s = {"user_id": "om", "chat_id": "1", "historique": [], "onboarding_complete": False, "etape": "CV_RECU",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Mauvais"}, "preferences": {}}}
+    msg, s = _run(main.process_text_message(s, "oui mais le nom est faux"))
+    assert s.get("etape") == "CV_RECU"
 
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():

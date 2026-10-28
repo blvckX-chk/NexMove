@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.59.0"
+VERSION         = "3.60.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1001,8 +1001,11 @@ def _link_followup(low: str, session: dict) -> str:
     low = (low or "").strip()
     if len(low) > 60:
         return ""
-    if re.search(r"\b(comment\s+(postuler|candidater)|je\s+postule|comment\s+faire)\b", low) \
-            or low in ("postuler", "candidater"):
+    # « comment postuler À/POUR/CHEZ <autre chose> » vise une cible EXPLICITE -> on ne détourne PAS
+    # vers la cible mémorisée (laisse _free_text_to_command router avec la bonne cible).
+    _postuler_bare = bool(re.search(r"\b(comment\s+(postuler|candidater)|je\s+postule|comment\s+faire)\b", low)
+                          and not re.search(r"\b(postuler|candidater|faire)\b\s+(à|a|au|aux|pour|chez|sur|en|dans)\b", low))
+    if _postuler_bare or low in ("postuler", "candidater", "comment postuler", "comment candidater"):
         return "act:lien_postuler"
     if re.search(r"\b(mes\s+chances|quelles?\s+chances|mes\s+chance|chances|admissib|éligib|eligib|suis-je\s+pris)\b", low):
         return "act:lien_chances"
@@ -5287,7 +5290,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             return q, session
         return await _recruit_finish(session)
 
-    if etape == "CV_RECU" and detecter_reponse_positive(t):
+    if etape == "CV_RECU" and _is_clear_affirmation(t):
         session["etape"] = "PREFERENCES"
         filled = _prefill_prefs_from_cv(session)   # B1 : moins de questions grâce au CV
         # Ces champs sont des DEVINETTES issues du CV : une mention EXPLICITE de l'utilisateur
@@ -6847,8 +6850,14 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
         return
     # RE-UPLOAD DU MÊME CV (v3.59) : s'il est déjà analysé et qu'on renvoie le MÊME fichier, inutile de
     # le ré-analyser (ça brûlait un quota et relançait la boucle « donne-moi tes infos »). On le dit.
+    # QC : on exige nom NON générique + MÊME taille d'octets (sinon 2 CV différents nommés « cv.pdf »
+    # sur WhatsApp seraient confondus et le 2e, légitime, serait rejeté à tort).
     _fn_now = (filename or "").strip().lower()
-    if session.get("cv_parsed") and _fn_now and _fn_now == (session.get("last_cv_filename") or "").lower():
+    _GENERIC_FN = {"cv.pdf", "cv.jpg", "cv.jpeg", "cv.png", "image.jpg", "image.jpeg", "image.png",
+                   "document.pdf", "photo.jpg", "file.pdf", "scan.pdf", ""}
+    if (session.get("cv_parsed") and _fn_now and _fn_now not in _GENERIC_FN
+            and _fn_now == (session.get("last_cv_filename") or "").lower()
+            and len(pdf_bytes) == session.get("last_cv_size")):
         nom = _md_clean(((session.get("profil") or {}).get("identite") or {}).get("nom") or "ton profil")
         await deliver_text(session, f"✅ J'ai *déjà* ce CV analysé (pour *{nom}*) — pas besoin de le renvoyer.\n\n"
                            "👉 Tape `/cv` pour le récupérer, `/postuler <poste>` pour candidater, ou envoie un "
@@ -7043,6 +7052,7 @@ Document: {cv_text[:6000]}"""
     session["profil"] = profil
     session["cv_parsed"] = True
     session["last_cv_filename"] = (filename or "").strip().lower()   # anti re-analyse du MÊME fichier
+    session["last_cv_size"] = len(pdf_bytes) if pdf_bytes else 0      # + taille (évite les faux positifs)
     _quota_bump(session, "cv")   # analyse réussie -> décompte le quota (admin exclu)
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     _push(session, "assistant", message)
