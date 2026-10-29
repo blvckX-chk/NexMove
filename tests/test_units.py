@@ -2049,6 +2049,47 @@ def test_feedback_nl_enregistre_vote(monkeypatch):
     msg, s = _run(main.process_text_message(s, "pas pour moi"))
     assert votes == [("a", -1), ("b", -1)] and "Compris" in msg
 
+# ── v3.62 : code premium collé — plus d'activation à l'aveugle d'une liste/question ──
+def test_liste_codes_question_ne_sactive_pas_admin(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    codes = main.premium_store.create_codes("premium", 21, 3, batch="t")
+    main.premium_store.redeem(codes[0], "someone")   # un code utilisé
+    s = {"user_id": "42", "chat_id": "42", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "profil": {"identite": {"nom": "Admin"}}}
+    blob = "Dans cette liste quel code reste valide\n" + "\n".join(codes)
+    msg, s = _run(main.process_text_message(s, blob))
+    # Le routage admin NL -> /codes valides (collision /code vs /codes corrigée) : liste des codes libres.
+    assert "VALIDES" in msg.upper()
+    assert "Activation impossible" not in msg   # le bug d'origine (redeem('valides'))
+    assert codes[1] in msg   # un code resté libre apparaît
+
+def test_codes_pas_avale_par_handler_activation(monkeypatch):
+    # Collision de préfixe : « /codes valides » ne doit PAS tomber dans le handler « /code » (activation).
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    main.premium_store.create_codes("premium", 21, 2, batch="tc")
+    s = {"user_id": "42", "chat_id": "42", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "profil": {"identite": {"nom": "A"}}}
+    msg, s = _run(main.process_text_message(s, "/codes valides"))
+    assert "Activation impossible" not in msg and "VALIDES" in msg.upper()
+    # « /code CODE » (activation) marche toujours.
+    msg2, s = _run(main.process_text_message(s, "/code PRM-ZZZZZZ99"))
+    assert "Activation impossible" in msg2   # code bidon -> message d'activation (handler activation OK)
+
+def test_plusieurs_codes_non_admin_demande_un_seul(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    s = {"user_id": "u", "chat_id": "u", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "profil": {"identite": {"nom": "X"}}}
+    msg, s = _run(main.process_text_message(s, "PRM-AAAAAA11 et PRM-BBBBBB22 lequel marche ?"))
+    assert "UN SEUL" in msg and "Activation impossible" not in msg
+
+def test_un_seul_code_sactive_toujours(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", set())
+    codes = main.premium_store.create_codes("premium", 21, 1, batch="t2")
+    s = {"user_id": "z", "chat_id": "z", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "profil": {"identite": {"nom": "Z"}}}
+    msg, s = _run(main.process_text_message(s, codes[0]))
+    assert "activé" in msg.lower()   # activation directe conservée
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

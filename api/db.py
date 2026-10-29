@@ -584,6 +584,22 @@ class PremiumStore:
         return [{"code": r[0], "tier": r[1], "days": int(r[2] or 0), "status": r[3],
                  "used_by": r[4], "used_at": r[5], "created_at": r[6], "batch": r[7]} for r in rows]
 
+    def statuses(self, codes: list) -> dict:
+        """Statut de codes PRÉCIS (cross-check d'une liste collée) : {CODE: 'unused'|'used'|'unknown'}."""
+        norm = [c.strip().upper() for c in (codes or []) if c and c.strip()]
+        if not norm:
+            return {}
+        out = {c: "unknown" for c in norm}
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            qmarks = ",".join("?" * len(norm))
+            rows = con.execute(f"SELECT code,status FROM premium_codes WHERE code IN ({qmarks})", norm).fetchall()
+            for code, st in rows:
+                out[str(code).upper()] = st
+        finally:
+            con.close()
+        return out
+
 
 class CreditStore:
     """Codes de crédits FONGIBLES : chaque code = N crédits utilisables sur n'importe quelle action.
