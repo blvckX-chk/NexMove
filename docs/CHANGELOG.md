@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.63 — Reconversion pendant l'onboarding : fin des offres de l'ancien domaine
+- **Bug (capture).** CV dev web → le bot calcule et **met en cache** un aperçu d'offres (dev web) juste après le CV. L'utilisateur dit ensuite « je continue en **finance** » → à la validation, le bot **réutilisait le cache périmé** et affichait des offres *dev web* malgré « mots-clés : finance ».
+- Corrigé : le cache d'aperçu mémorise le **domaine** au moment du calcul ; si le domaine a changé (reconversion pendant l'onboarding), on **relance la recherche** sur la nouvelle cible et on **acte la reconversion** (les compétences de l'ancien domaine sont écartées de la recherche).
+
 ## v3.62 — Codes premium : collision /code vs /codes + anti-activation à l'aveugle
 - **Bug (capture admin).** « Dans cette liste quel code reste valide ? » + 20 codes → « ❌ Activation impossible : ce code n'existe pas ». Cause : le routeur admin mappait bien vers `/codes valides`, mais le handler d'activation `/code` **avalait `/codes`** (collision de préfixe) et tentait d'activer le mot « valides ». Corrigé : `/code` n'intercepte plus `/codes`.
 - **Anti-activation à l'aveugle** : coller PLUSIEURS codes (ou poser une question contenant des codes) ne déclenche plus l'activation du 1er. Pour l'admin : **cross-check** de la liste (libres / utilisés / inconnus). Pour un utilisateur : on demande *un seul* code.
