@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.61.0"
+VERSION         = "3.62.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3083,10 +3083,35 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         return await process_text_message(session, "/mobilite " + dom)
 
     # Code premium collé tel quel (sans /premium) -> activation directe (UX client sur Chariow).
+    # GARDE-FOUS (v3.62) : ne JAMAIS activer à l'aveugle si le message contient PLUSIEURS codes
+    # (ex. l'admin colle sa liste et demande « lesquels restent valides ? ») ni si c'est une QUESTION.
     if not low.startswith("/") and not session.get("sim_mode"):
-        _mprem = _PRM_CODE_RE.search(t)
-        if _mprem:
-            return await process_text_message(session, "/premium " + _mprem.group(0).upper())
+        _codes = [c.upper() for c in _PRM_CODE_RE.findall(t)]
+        _is_question = ("?" in t) or any(w in low for w in (
+            "quel", "lequel", "lesquel", "valide", "reste", "encore bon", "vérifi", "verifi",
+            "check", "statut", "liste", "regarde", "teste", "test "))
+        if len(_codes) >= 2 or (_codes and _is_question):
+            if _is_admin(session):
+                # Cross-check de la liste collée : on dit pour CHAQUE code s'il est libre / utilisé / inconnu.
+                st = premium_store.statuses(_codes)
+                libres = [c for c in _codes if st.get(c) == "unused"]
+                used = [c for c in _codes if st.get(c) == "used"]
+                inconnus = [c for c in _codes if st.get(c) == "unknown"]
+                lignes = [f"🔎 *Vérif de {len(_codes)} code(s)* · {len(libres)} libres · {len(used)} utilisés · {len(inconnus)} inconnus\n"]
+                if libres:
+                    lignes.append("✅ *Valides (libres) :*\n" + "\n".join(f"`{c}`" for c in libres[:30]))
+                if used:
+                    lignes.append("🔴 *Déjà utilisés :*\n" + "\n".join(f"`{c}`" for c in used[:15]))
+                if inconnus:
+                    lignes.append("❔ *Inconnus (hors base · peut-être d'un ancien déploiement) :*\n" + "\n".join(f"`{c}`" for c in inconnus[:15]))
+                msg = "\n\n".join(lignes) + "\n\n_Détail complet : /codes valides · /codes utilises._"
+            else:
+                msg = ("🔑 J'ai repéré plusieurs codes (ou une question). Pour activer ton abonnement, envoie "
+                       "*UN SEUL* code au format `PRM-XXXXXXXX`, ou tape `/premium TON-CODE`.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        if len(_codes) == 1:
+            return await process_text_message(session, "/premium " + _codes[0])
 
     # Un RECRUTEUR écrit directement pour déposer une offre -> on lance le dépôt guidé (payant, validé admin).
     # Détection = regex rapide, puis routeur d'intention LLM pour les formulations non prévues.
@@ -4427,7 +4452,9 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    if low.startswith("/premium") or low.startswith("/activer") or low.startswith("/code"):
+    # NB : « /code » (activation) ne doit PAS avaler « /codes » (liste admin) — collision de préfixe.
+    if (low.startswith("/premium") or low.startswith("/activer")
+            or (low.startswith("/code") and not low.startswith("/codes"))):
         parts = t.split(maxsplit=1)
         code = parts[1].strip() if len(parts) > 1 else ""
         if not code:

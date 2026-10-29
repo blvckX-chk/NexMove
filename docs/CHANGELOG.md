@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.62 — Codes premium : collision /code vs /codes + anti-activation à l'aveugle
+- **Bug (capture admin).** « Dans cette liste quel code reste valide ? » + 20 codes → « ❌ Activation impossible : ce code n'existe pas ». Cause : le routeur admin mappait bien vers `/codes valides`, mais le handler d'activation `/code` **avalait `/codes`** (collision de préfixe) et tentait d'activer le mot « valides ». Corrigé : `/code` n'intercepte plus `/codes`.
+- **Anti-activation à l'aveugle** : coller PLUSIEURS codes (ou poser une question contenant des codes) ne déclenche plus l'activation du 1er. Pour l'admin : **cross-check** de la liste (libres / utilisés / inconnus). Pour un utilisateur : on demande *un seul* code.
+- Nouveau `premium_store.statuses()` (statut de codes précis, pour vérifier une liste collée).
+- _(Audit QC : les autres préfixes proches — `/credit`·`/credits`, `/supprime`·`/supprimer`, `/annonce`·`/annonces` — sont soit des alias du même handler, soit ordonnés spécifique-d'abord : pas de collision.)_
+
 ## v3.61 — Mise à jour de CV sans casser le profil + feedback tapé
 - **Re-upload d'un CV *différent* par un utilisateur déjà onboardé** : on ne refait plus tout l'onboarding et on **conserve ses préférences de recherche** (objectif, pays, mots-clés) au lieu de les écraser par les défauts de l'analyse. Message « 🔄 CV mis à jour · préférences conservées », l'utilisateur reste ACTIF.
 - **Feedback 👍/👎 tapé** (et pas seulement cliqué) : après des offres, « utile », « ça correspond », « pas pour moi », « hors sujet », « pas intéressé » enregistrent l'avis sur toutes les offres affichées (le négatif l'emporte sur le « intéress » de « pas intéressé »). Le 👍 guide vers `/postuler`.
