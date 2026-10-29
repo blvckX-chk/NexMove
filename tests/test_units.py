@@ -2090,6 +2090,29 @@ def test_un_seul_code_sactive_toujours(monkeypatch):
     msg, s = _run(main.process_text_message(s, codes[0]))
     assert "activé" in msg.lower()   # activation directe conservée
 
+def test_reconversion_onboarding_invalide_cache_offres(monkeypatch):
+    # Bug capture : CV web dev -> aperçu offres web dev mis en cache -> user dit « finance » ->
+    # à la validation, le bot réutilisait le cache web dev. Désormais : domaine changé -> re-recherche.
+    calls = {"osint": 0, "reconv": None}
+    async def fake_osint(profil, cible="", user_id="", **k):
+        calls["osint"] += 1
+        calls["reconv"] = (profil.get("profil_plus") or {}).get("reconversion_active")
+        return {"opportunites": [{"titre": "Analyste financier", "url": "https://x/1", "score_composite": 80,
+                                  "sig": "f1", "type": "emploi"}]}
+    monkeypatch.setattr(main, "run_osint", fake_osint)
+    monkeypatch.setattr(main, "_reconv_ask_if_needed", lambda *a, **k: "")
+    async def fake_clarify(*a, **k):
+        return ""
+    monkeypatch.setattr(main, "_clarify_before_search", fake_clarify)
+    s = {"user_id": "rc", "chat_id": "rc", "historique": [], "etape": "CONFIRMATION",
+         "cv_preview_offers": [{"titre": "Dev Web Junior", "url": "https://x/old", "score_composite": 35, "sig": "w1", "type": "emploi"}],
+         "cv_preview_dom": "developpeur web, javascript",   # domaine au moment du cache (CV)
+         "profil": {"identite": {"nom": "T"}, "preferences": {"objectif": "travailler", "mots_cles": "finance"}}}
+    msg, s = _run(main.process_text_message(s, "oui"))
+    # Le cache périmé (Dev Web) n'est PAS réutilisé : on a relancé la recherche (finance) + reconversion actée.
+    assert calls["osint"] == 1 and calls["reconv"] is True
+    assert "Analyste financier" in msg and "Dev Web Junior" not in msg
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

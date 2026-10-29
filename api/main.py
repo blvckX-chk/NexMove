@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.62.0"
+VERSION         = "3.63.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -5354,6 +5354,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 opp_store.add(session.get("user_id"), o)
             if opps:
                 session["cv_preview_offers"] = opps[:6]   # réutilisées à la fin (pas de 2e recherche)
+                # On mémorise le DOMAINE au moment du calcul : si l'utilisateur change de cible pendant
+                # l'onboarding (reconversion « je continue en finance »), le cache devient périmé.
+                session["cv_preview_dom"] = str((session.get("profil", {}).get("preferences", {}) or {}).get("mots_cles") or "").strip().lower()
                 preview = ("🔎 *Déjà des offres notées pour ton profil :*\n"
                            + _render_scored_offers(opps, 3, session.get("channel", "telegram"))
                            + "\n\n_Réponds à 2-3 questions pour affiner et recevoir les meilleures chaque jour._\n\n")
@@ -5536,9 +5539,17 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             # sinon on lance une recherche maintenant. Offres affichées AVEC leur note.
             try:
                 cached = session.pop("cv_preview_offers", None)
-                if cached:
+                _now_dom = str((session.get("profil", {}).get("preferences", {}) or {}).get("mots_cles") or "").strip().lower()
+                _cached_dom = session.pop("cv_preview_dom", "")
+                # On ne réutilise le cache QUE si le domaine n'a pas changé depuis (sinon : reconversion
+                # pendant l'onboarding -> on relance la recherche sur la NOUVELLE cible, pas l'ancienne).
+                if cached and _now_dom == _cached_dom:
                     top = cached[:3]
                 else:
+                    # Domaine changé APRÈS un aperçu déjà calculé = reconversion pendant l'onboarding :
+                    # on l'acte pour que la recherche écarte les compétences de l'ancien domaine (CV).
+                    if cached and _now_dom and _now_dom != _cached_dom:
+                        (session.setdefault("profil", {}).setdefault("profil_plus", {}))["reconversion_active"] = True
                     res = await run_osint(session.get("profil", {}) or {}, "", session.get("user_id"), tier=_user_tier(session), channel=session.get("channel","telegram"), session=session)
                     top = res.get("opportunites", [])[:3]
                     for o in res.get("opportunites", []):
