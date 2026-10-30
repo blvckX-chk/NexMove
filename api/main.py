@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.72.0"
+VERSION         = "3.73.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6060,6 +6060,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     # serait capté comme l'intention /canada).
     edited = _try_profil_edit(session, t)
     if edited:
+        # Cohérence continue : si l'édition touche l'objectif, on ré-évalue (corrige/flag) silencieusement.
+        if "objectif" in low.split(":")[0]:
+            session.pop("objectif_clarify_done", None)
+            try:
+                _reconcile_objectif(session)
+            except Exception as e:
+                logger.warning(f"[coherence] edit: {e}")
         _push(session, "user", t); _push(session, "assistant", edited); session["derniere_activite"] = now
         return edited, session
 
@@ -6079,6 +6086,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         session.pop("reconv_ack", None); session["clarify_done"] = True
         (profil.get("profil_plus") or profil.setdefault("profil_plus", {})).pop("reconversion_active", None)
         session["profil"] = profil
+        # Cohérence CONTINUE (v3.73) : nouvelle cible -> on ré-évalue objectif↔aspiration (corrige/flag),
+        # et on ré-autorise une clarification si ce nouveau but est ambigu.
+        session.pop("objectif_clarify_done", None)
+        try:
+            _reconcile_objectif(session)
+        except Exception as e:
+            logger.warning(f"[coherence] switch: {e}")
         _push(session, "user", t)
         ack = f"👍 Ok, je recentre ta recherche sur *{_md_clean(dom)}*."
         _rq = _reconv_ask_if_needed(session, f"/mobilite {dom}")

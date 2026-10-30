@@ -2377,6 +2377,18 @@ def test_life_constraints_dans_le_contexte():
     ctx = main._conversation_context(s)
     assert "Contraintes" in ctx and ("budget" in ctx or "Cotonou" in ctx)
 
+def test_coherence_continue_sur_edition_objectif():
+    # v3.73 : éditer l'objectif post-onboarding ré-évalue la cohérence (ne tourne plus qu'à l'onboarding).
+    s = {"user_id": "cc", "chat_id": "cc", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "objectif_clarify_done": True,
+         "profil": {"identite": {"nom": "T"},
+                    "preferences": {"objectif": "travailler", "mots_cles": "finance"},
+                    "profil_plus": {"aspiration": "je cherche un emploi de comptable, décrocher un poste"}}}
+    # L'utilisateur édite vers « étudier » alors que tout indique un emploi -> corrigé vers travailler.
+    msg, s = _run(main.process_text_message(s, "objectif: étudier"))
+    assert s["profil"]["preferences"]["objectif"] == "travailler"   # ré-corrigé par la cohérence continue
+    assert not s.get("objectif_clarify_done")   # ré-autorisé
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
