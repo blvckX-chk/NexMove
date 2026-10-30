@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.70.0"
+VERSION         = "3.71.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3069,6 +3069,10 @@ def _conversation_context(session: dict) -> str:
     if _urg:
         lignes.append(f"- ⏰ URGENCE exprimée ({_urg.get('detail','')}) : va DROIT à l'action concrète suivante, "
                       "sans explorer longuement ; privilégie ce qui est faisable dans le délai.")
+    # État émotionnel (#9) : adapter le TON (un découragé a besoin d'un cap, pas d'un mur).
+    _mood = _mood_active(session)
+    if _mood.get("state") and _mood["state"] in _MOOD_TONE:
+        lignes.append(f"- 💬 ÉTAT : la personne semble *{_mood['state']}* → {_MOOD_TONE[_mood['state']]}")
     tier = session.get("premium_tier")
     if tier and tier in _PREMIUM_TIERS:
         lignes.append(f"- Abonnement : {tier}")
@@ -3189,6 +3193,48 @@ def _urgence_active(session: dict) -> dict:
     u = session.get("urgence") or {}
     if u and (time.time() - (u.get("at", 0) or 0)) < 7200:
         return u
+    return {}
+
+# ÉTAT ÉMOTIONNEL (v3.71 · #9) — adapter le TON : un découragé a besoin d'un cap, pas d'un mur ;
+# un méfiant de transparence ; un anxieux d'être rassuré. Capté déterministe, directive douce.
+_EL = r"['’\s]?"   # élision tolérante : « j'ai » OU « j ai » OU « jai »
+_MOOD_RE = [
+    ("découragé", re.compile(r"\b(j" + _EL + r"y\s+arriverai\s+jamais|j" + _EL + r"arrive\s+pas|je\s+(suis\s+)?perdu|"
+                             r"je\s+d[ée]sesp[èe]re|j" + _EL + r"en\s+peux\s+plus|c" + _EL + r"est\s+foutu|d[ée]motiv|"
+                             r"d[ée]courag|[çc]a\s+sert\s+[àa]\s+rien|je\s+(gal[èe]re|rame)|aucun\s+espoir|"
+                             r"je\s+(vais\s+)?abandonner|marre\s+de\s+chercher|j" + _EL + r"ai\s+tout\s+essay[ée])\b", re.I)),
+    ("anxieux", re.compile(r"\b(j" + _EL + r"ai\s+peur\b|je\s+(suis\s+)?stress|angoiss|je\s+(suis\s+)?inquiet|"
+                           r"je\s+panique|j" + _EL + r"angoisse|m" + _EL + r"angoisse|je\s+flippe)\b", re.I)),
+    ("méfiant", re.compile(r"\b(c" + _EL + r"est\s+(une\s+)?arnaque|j" + _EL + r"ai\s+pas\s+confiance|c" + _EL + r"est\s+(vraiment\s+)?fiable|"
+                           r"c" + _EL + r"est\s+(du\s+)?s[ée]rieux|vous\s+[êe]tes\s+s[ée]rieux|c" + _EL + r"est\s+(pas\s+)?du\s+faux|"
+                           r"je\s+me\s+m[ée]fie|prouvez|c" + _EL + r"est\s+r[ée]el)\b", re.I)),
+    ("frustré", re.compile(r"\b([çc]a\s+(marche|fonctionne)\s+pas|ras\s+le\s+bol|j" + _EL + r"en\s+ai\s+marre|"
+                           r"[çc]a\s+m" + _EL + r"[ée]nerve|c" + _EL + r"est\s+(nul|p[ée]nible|lourd)|toujours\s+(les?\s+)?m[êe]mes?\s+(soucis|probl[èe]mes))\b", re.I)),
+]
+_MOOD_TONE = {
+    "découragé": "ton ENCOURAGEANT et humain : rassure, rappelle UN de ses points forts, et donne UN SEUL petit pas faisable maintenant (pas de liste). Ne minimise pas ce qu'il ressent.",
+    "anxieux": "ton RASSURANT : dédramatise, cadre simplement, découpe en une étape claire. Pas de jargon anxiogène.",
+    "méfiant": "ton TRANSPARENT et factuel : pas de survente, dis ce que tu peux/ne peux pas, propose de vérifier sur des sources officielles. Pas de promesses.",
+    "frustré": "ton POSÉ qui reconnaît le souci d'abord, PUIS va droit à la solution concrète. Pas de défensive.",
+}
+
+def _capture_mood(session: dict, t: str) -> bool:
+    """Capte un état émotionnel EXPLICITE (découragé/anxieux/méfiant/frustré) et le mémorise (transitoire)."""
+    low = (t or "").lower()
+    if not low or len(low) < 6:
+        return False
+    for state, rx in _MOOD_RE:
+        if rx.search(low):
+            session["humeur"] = {"state": state, "at": time.time()}
+            logger.info(f"[humeur] {state} capté pour {session.get('user_id')}")
+            return True
+    return False
+
+def _mood_active(session: dict) -> dict:
+    """Humeur encore pertinente (exprimée il y a < 1h), sinon {}."""
+    h = session.get("humeur") or {}
+    if h and (time.time() - (h.get("at", 0) or 0)) < 3600:
+        return h
     return {}
 
 def _capture_user_prefs(session: dict, t: str) -> bool:
@@ -5966,6 +6012,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     try:
         _capture_user_prefs(session, t)
         _capture_urgency(session, t)
+        _capture_mood(session, t)
     except Exception as e:
         logger.warning(f"[prefs] {e}")
 
