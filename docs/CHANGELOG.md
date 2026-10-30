@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.73 — Cohérence objectif CONTINUE (pas seulement à l'onboarding)
+- La réconciliation objectif↔aspiration (v3.67) ne tournait qu'à la fin de l'onboarding. Désormais elle se **relance aussi** quand l'objectif change plus tard : **changement de cible** en conversation (« je veux aller en finance ») ou **édition** (« objectif: … »).
+- Chaque changement ré-évalue la cohérence (corrige une contradiction nette, sinon re-signale l'ambiguïté) et **ré-autorise une clarification** si le nouveau but est ambigu. Le modèle de compréhension s'applique en continu, plus seulement au démarrage.
+
 ## v3.72 — POUR QUI : contraintes de vie captées (#3)
 - Les contraintes réelles changent tout un conseil (un budget serré, un problème de visa, l'impossibilité de déménager…). Capture déterministe dans `profil["contraintes"]` : **budget** (« pas d'argent », « j'ai pas les moyens », « gratuit seulement »), **visa/papiers**, **mobilité/famille** (« je ne peux pas déménager », « j'ai des enfants »), **disponibilité** (« disponible immédiatement », « seulement le week-end »).
 - Remontées dans le contexte (« Contraintes : … ») pour que le conseiller en tienne compte au lieu de proposer l'impossible. Pas de faux positif.
