@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.69 — Urgence / échéance captée et prise en compte (#2)
+- Une **deadline change tout**. Capture déterministe des signaux d'urgence (« c'est urgent », « au plus vite », « il me reste peu de temps ») et d'échéance (« la bourse ferme dans 3 jours », « deadline demain »).
+- Mémorisé dans `session["urgence"]` (valable 2 h) et **injecté dans le contexte** : « ⏰ URGENCE exprimée → va DROIT à l'action, privilégie ce qui tient dans le délai ». Le conseiller arrête d'explorer longuement et donne la prochaine étape concrète.
+- Pas de faux positif (« je cherche *tranquillement* un stage » ne déclenche rien).
+
 ## v3.68 — Clarification de l'ambigu : une bonne question avant de répondre (#8)
 - Quand l'objectif est **ambigu** (métier visé = emploi OU études ? — détecté en v3.67), le bot **pose UNE question nette** avant de lancer la recherche, au lieu de deviner : « Pour *devenir analyste financier*, tu cherches un *emploi* dans ce domaine ou à *reprendre des études* ? » (+ boutons 💼 emploi / 🎓 études / 🎓 bourse).
 - Réponse acceptée **cliquée OU tapée** (« emploi », « plutôt des études »…) → fixe l'objectif, lève l'ambiguïté, **reprend automatiquement** l'action initiale. Posée **une seule fois**, jamais insistante.
