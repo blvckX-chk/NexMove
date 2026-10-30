@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.68 — Clarification de l'ambigu : une bonne question avant de répondre (#8)
+- Quand l'objectif est **ambigu** (métier visé = emploi OU études ? — détecté en v3.67), le bot **pose UNE question nette** avant de lancer la recherche, au lieu de deviner : « Pour *devenir analyste financier*, tu cherches un *emploi* dans ce domaine ou à *reprendre des études* ? » (+ boutons 💼 emploi / 🎓 études / 🎓 bourse).
+- Réponse acceptée **cliquée OU tapée** (« emploi », « plutôt des études »…) → fixe l'objectif, lève l'ambiguïté, **reprend automatiquement** l'action initiale. Posée **une seule fois**, jamais insistante.
+- Se greffe sur les mécanismes de clarification existants (reconversion, info cruciale manquante) et passe **en premier** car le plus précis.
+
 ## v3.67 — Cohérence objectif ↔ aspiration (#10)
 - **Bug (capture).** « Objectif : études » alors que la personne visait « devenir analyste de données financières » (un métier). Le bot enregistrait sans vérifier la cohérence.
 - **Détecteur `_objectif_coherence`** : confronte l'objectif enregistré aux signaux réels (aspiration, résumé, mots-clés). Trois états :

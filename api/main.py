@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.67.0"
+VERSION         = "3.68.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -908,8 +908,8 @@ def _feedback_nudge(session: dict) -> str:
         return ""
     if session.get("etape") in ("PREFERENCES", "PREF_TYPE_EMPLOI", "CONFIRMATION", "CVBUILD", "RECRUIT"):
         return ""
-    if any(session.get(f) for f in ("reconv_pending", "clarify_pending", "awaiting_domain",
-                                    "awaiting_delete_confirm", "bug_mode")):
+    if any(session.get(f) for f in ("reconv_pending", "clarify_pending", "objectif_clarify_pending",
+                                    "awaiting_domain", "awaiting_delete_confirm", "bug_mode")):
         return ""
     n = int(session.get("_interactions", 0))
     asked = int(session.get("_fb_asked", 0))
@@ -1952,6 +1952,23 @@ def _reconv_ask_if_needed(session: dict, resume_cmd: str):
 # Sûr : une seule fois par session, repli = on cherche quand même si le modèle n'aide pas.
 _CLARIFY_FIELDS = {"pays_cibles", "nationalite", "financement", "niveau", "type_emploi",
                    "certifs_langue", "langues_opportunite", "mots_cles"}
+
+def _objectif_clarify_if_needed(session: dict, resume_cmd: str):
+    """#8 — Clarification DÉTERMINISTE : si l'objectif est ambigu (métier aspiré, emploi OU études ?),
+    on pose UNE question nette AVANT de répondre, au lieu de deviner. Prépare la reprise après réponse."""
+    amb = session.get("objectif_ambigu") or {}
+    if not amb or session.get("objectif_clarify_done"):
+        return None
+    profil = session.get("profil") or {}
+    but = ((profil.get("profil_plus") or {}).get("aspiration") or "ton objectif").strip()[:60]
+    session["objectif_clarify_pending"] = True
+    session["objectif_clarify_resume"] = resume_cmd
+    session["objectif_clarify_done"] = True   # une seule fois
+    session["_kb_options"] = [("💼 Un emploi", "obj:travailler"), ("🎓 Des études", "obj:étudier"),
+                              ("🎓 Une bourse", "obj:bourse")]
+    return (f"🧭 Pour *{_md_clean(but)}*, tu cherches plutôt :\n"
+            "• 💼 un *emploi* dans ce domaine, ou\n• 🎓 à *reprendre des études* (ou une *bourse*) pour y arriver ?\n\n"
+            "_Réponds « emploi » ou « études » — ça m'évite de te proposer à côté._")
 
 async def _clarify_before_search(session: dict, resume_cmd: str):
     """Renvoie UNE question de clarification si une info cruciale manque (sinon None).
@@ -3222,7 +3239,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # question en attente (confirmation de suppression, reconversion, clarification, domaine), il a
     # changé d'avis -> on annule proprement l'attente (sauf la poursuite directe /supprimer confirmer).
     if low.startswith("/") and not low.startswith("/supprimer confirmer"):
-        for _flag in ("awaiting_delete_confirm", "reconv_pending", "clarify_pending", "awaiting_domain", "doc_correct_pending"):
+        for _flag in ("awaiting_delete_confirm", "reconv_pending", "clarify_pending", "objectif_clarify_pending", "awaiting_domain", "doc_correct_pending"):
             if session.get(_flag):
                 session[_flag] = False
 
@@ -3284,6 +3301,27 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         return (lead + "\n\n" + (res_msg or "")).strip(), session
 
     # On attendait une réponse à une question de CLARIFICATION -> on la mémorise et on relance la recherche.
+    # #8 — réponse à la clarification d'objectif (emploi / études / bourse), en langage libre.
+    if session.get("objectif_clarify_pending") and not low.startswith("/") and len(t.strip()) >= 2:
+        session["objectif_clarify_pending"] = False
+        prefs = session.setdefault("profil", {}).setdefault("preferences", {})
+        if any(k in low for k in ("bourse", "scholarship", "financement")):
+            prefs["objectif"] = "bourse"
+        elif any(k in low for k in ("étud", "etud", "étudier", "formation", "master", "licence", "diplôme", "diplome", "école", "ecole", "université", "universite")):
+            prefs["objectif"] = "étudier"
+        elif any(k in low for k in ("emploi", "travail", "travailler", "job", "poste", "boulot", "bosser", "métier", "metier", "salaire")):
+            prefs["objectif"] = "travailler"
+        else:
+            # réponse peu claire -> on garde l'ambiguïté levée mais on ne force pas un mauvais objectif
+            prefs["objectif"] = prefs.get("objectif") or "tous"
+        session["profil"]["preferences"] = prefs
+        session.pop("objectif_ambigu", None)
+        resume = session.pop("objectif_clarify_resume", "") or "/veille"
+        _push(session, "user", t)
+        _ack = f"👍 Noté : *{ {'travailler': 'emploi', 'étudier': 'études', 'bourse': 'bourse'}.get(prefs['objectif'], prefs['objectif']) }*.\n\n"
+        _msg, session = await process_text_message(session, resume)
+        return (_ack + (_msg or "")).strip(), session
+
     if session.get("clarify_pending") and not low.startswith("/") and len(t.strip()) >= 2:
         session["clarify_pending"] = False
         champ = str(session.pop("clarify_champ", "") or "")
@@ -5755,7 +5793,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             # moment décisif. Reconversion détectée (CV ≠ cible) -> on demande bases/zéro ; sinon
             # une info vraiment cruciale manquante -> une seule question. La recherche se relance
             # toute seule après la réponse (reconv_resume / clarify_resume = "/veille").
-            _cq = _reconv_ask_if_needed(session, "/veille") or await _clarify_before_search(session, "/veille")
+            _cq = (_objectif_clarify_if_needed(session, "/veille")
+                   or _reconv_ask_if_needed(session, "/veille") or await _clarify_before_search(session, "/veille"))
             if _cq:
                 code = session.get("recovery_code")
                 msg = "🎉 *Profil validé !*\n\n" + _cq
@@ -6837,8 +6876,8 @@ async def handle_action(session, data, callback_id=None):
         return session
     if callback_id:
         await answer_callback(callback_id)
-    # Confirmation / choix d'onboarding cliquables : on rejoue la réponse comme si elle était tapée
-    if data.startswith(("onb:", "pref:")):
+    # Confirmation / choix d'onboarding / clarification d'objectif cliquables : on rejoue comme si tapé.
+    if data.startswith(("onb:", "pref:", "obj:")):
         val = data.split(":", 1)[1]
         txt = "/start" if val == "reset" else val
         msg, session = await process_text_message(session, txt)

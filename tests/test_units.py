@@ -2256,6 +2256,43 @@ def test_reconcile_memorise_ambiguite():
     s["cv_parsed"] = True
     assert "OBJECTIF À CLARIFIER" in main._conversation_context(s)
 
+# ── v3.68 : clarification de l'objectif ambigu (#8) ──
+def test_objectif_clarify_pose_la_question():
+    s = {"user_id": "q", "objectif_ambigu": {"suggere": "travailler", "raison": "un métier est visé"},
+         "profil": {"profil_plus": {"aspiration": "devenir analyste de données financières"}}}
+    q = main._objectif_clarify_if_needed(s, "/veille")
+    assert q and "emploi" in q.lower() and "études" in q.lower()
+    assert s.get("objectif_clarify_pending") is True
+
+def test_objectif_clarify_reponse_emploi(monkeypatch):
+    async def fake_pt(session, txt):
+        return "RESULTAT VEILLE", session
+    # On intercepte la reprise /veille pour isoler la logique de clarification.
+    s = {"user_id": "q2", "chat_id": "q2", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "objectif_clarify_pending": True, "objectif_clarify_resume": "/veille",
+         "objectif_ambigu": {"raison": "x"},
+         "profil": {"identite": {"nom": "T"}, "preferences": {"objectif": "étudier"}, "profil_plus": {}}}
+    # Réponse « emploi » -> objectif=travailler, ambiguïté levée, reprise lancée.
+    import api.main as m
+    orig = m.process_text_message
+    async def patched(session, txt):
+        if txt == "/veille":
+            return "RESULTAT VEILLE", session
+        return await orig(session, txt)
+    monkeypatch.setattr(m, "process_text_message", patched)
+    msg, s = _run(orig(s, "je veux un emploi"))
+    assert s["profil"]["preferences"]["objectif"] == "travailler"
+    assert not s.get("objectif_ambigu") and not s.get("objectif_clarify_pending")
+    assert "emploi" in msg.lower() and "RESULTAT VEILLE" in msg
+
+def test_objectif_clarify_reponse_etudes():
+    s = {"user_id": "q3", "chat_id": "q3", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "objectif_clarify_pending": True, "objectif_clarify_resume": "/status",
+         "objectif_ambigu": {"raison": "x"},
+         "profil": {"identite": {"nom": "T"}, "preferences": {"objectif": "travailler"}, "profil_plus": {}}}
+    msg, s = _run(main.process_text_message(s, "plutôt des études"))
+    assert s["profil"]["preferences"]["objectif"] == "étudier"
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
