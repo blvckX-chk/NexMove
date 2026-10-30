@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.67 — Cohérence objectif ↔ aspiration (#10)
+- **Bug (capture).** « Objectif : études » alors que la personne visait « devenir analyste de données financières » (un métier). Le bot enregistrait sans vérifier la cohérence.
+- **Détecteur `_objectif_coherence`** : confronte l'objectif enregistré aux signaux réels (aspiration, résumé, mots-clés). Trois états :
+  - **corrige** (sûr) : un emploi (ou des études) est *explicitement* cherché mais l'objectif dit l'inverse → **correction silencieuse** (« je cherche un emploi de comptable » + objectif études → travailler).
+  - **ambigu** : un métier est *aspiré* sans dire comment (« devenir analyste financier ») → **on ne suppose pas**, on mémorise pour clarifier (prépare #8).
+  - **ok** : cohérent (« faire un master » → études, « trouver un poste » → travailler).
+- Appliqué à la fin de l'onboarding ; l'ambiguïté est signalée dans le contexte (« ⚠️ OBJECTIF À CLARIFIER ») pour que le conseiller ne tranche pas à l'aveugle.
+
 ## v3.66 — Maîtrise du contexte : « comment il le veut » capté et respecté
 - Le bot savait déjà beaucoup (nom, objectif, pays, forces, axes, savoir-être, motivation, aspiration…). Il manquait le **« comment »** : les préférences de FORME que la personne exprime.
 - **Capture déterministe** (`_capture_user_prefs`, sans coût LLM) sur chaque message : **style de CV** préféré (ATS/graphique), **langue des documents** (FR/EN), **ton** voulu (concis), **contrainte non négociable** (« je ne peux pas déménager », « je reste à Cotonou »).

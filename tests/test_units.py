@@ -2222,6 +2222,40 @@ def test_creercv_respecte_style_prefere(monkeypatch):
     _run(main.process_text_message(s, "/creercv"))
     assert captured.get("style") == "graphic"   # le style préféré est respecté
 
+# ── v3.67 : cohérence objectif ↔ aspiration (#10) ──
+@_pytest.mark.parametrize("profil,state,suggere", [
+    ({"preferences": {"objectif": "étudier", "mots_cles": "finance"},
+      "profil_plus": {"aspiration": "devenir analyste de données financières"}}, "ambigu", "travailler"),
+    ({"preferences": {"objectif": "étudier"},
+      "profil_plus": {"aspiration": "je cherche un emploi de comptable"}}, "corrige", "travailler"),
+    ({"preferences": {"objectif": "travailler"},
+      "profil_plus": {"aspiration": "reprendre mes études, obtenir un diplôme à l'université"}}, "corrige", "étudier"),
+    ({"preferences": {"objectif": "travailler", "mots_cles": "informatique"},
+      "profil_plus": {"aspiration": "trouver un poste de développeur"}}, "ok", ""),
+    ({"preferences": {"objectif": "étudier"},
+      "profil_plus": {"aspiration": "faire un master puis un doctorat en biologie"}}, "ok", ""),
+])
+def test_objectif_coherence(profil, state, suggere):
+    r = main._objectif_coherence(profil)
+    assert r["state"] == state and (r["suggere"] == suggere or state == "ok")
+
+def test_reconcile_corrige_silencieusement():
+    s = {"user_id": "c", "profil": {"preferences": {"objectif": "étudier"},
+                                    "profil_plus": {"aspiration": "je cherche un emploi de comptable, décrocher un poste"}}}
+    main._reconcile_objectif(s)
+    assert s["profil"]["preferences"]["objectif"] == "travailler"   # corrigé
+    assert not s.get("objectif_ambigu")
+
+def test_reconcile_memorise_ambiguite():
+    s = {"user_id": "c2", "profil": {"preferences": {"objectif": "étudier", "mots_cles": "finance"},
+                                     "profil_plus": {"aspiration": "devenir analyste de données financières"}}}
+    main._reconcile_objectif(s)
+    assert s["profil"]["preferences"]["objectif"] == "étudier"   # PAS corrigé (ambigu)
+    assert s.get("objectif_ambigu") and "métier" in s["objectif_ambigu"]["raison"]
+    # Et le contexte conversationnel signale l'ambiguïté.
+    s["cv_parsed"] = True
+    assert "OBJECTIF À CLARIFIER" in main._conversation_context(s)
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

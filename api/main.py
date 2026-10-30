@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.66.0"
+VERSION         = "3.67.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1659,6 +1659,92 @@ _OBJ_REMOTE = ("télétravail", "teletravail", "télé-travail", "remote", "à d
 _OBJ_TRAVAIL = ("emploi", "travail", "job", "poste", "boulot", "embauche", "cdd", "cdi",
                 "recrut", "stage", "alternance", "métier", "metier")
 
+# Cohérence objectif ↔ aspiration (v3.67). On distingue un but PROFESSIONNEL (trouver un emploi/poste)
+# d'un but ACADÉMIQUE (études/diplôme/bourse). « devenir <métier> » est un but PROFESSIONNEL, pas scolaire.
+_WORK_VERBS = re.compile(r"\b(devenir|être|etre|exercer|bosser|travailler|décrocher|decrocher|trouver|"
+                         r"obtenir|occuper|viser)\s+(un\s+|une\s+|le\s+|la\s+|comme\s+|en\s+tant\s+que\s+|"
+                         r"mon\s+|ma\s+)?(emploi|poste|job|boulot|travail|m[ée]tier|carri[èe]re|cdi|cdd)\b", re.I)
+_JOB_TITLES = re.compile(r"\b(analyste|d[ée]veloppeur|d[ée]veloppeuse|ing[ée]nieur|comptable|technicien|"
+                         r"charg[ée]|assistant|manager|gestionnaire|consultant|commercial|vendeu|caissi|"
+                         r"infirmi|m[ée]decin|avocat|juriste|architecte|designer|graphiste|r[ée]dacteur|"
+                         r"enseignant|professeur|secr[ée]taire|logisticien|data\s+analyst|data\s+scientist|"
+                         r"chef\s+de\s+projet|product\s+owner|administrateur)\b", re.I)
+_STUDY_SIGNALS = re.compile(r"\b([ée]tud\w*|master|licence|doctorat|phd|dipl[ôo]me|universit\w*|"
+                            r"bourse|fellowship|campus\s*france|me\s+former|poursuivre\s+mes\s+[ée]tudes|"
+                            r"reprendre\s+(des\s+|mes\s+)?[ée]tudes|[ée]cole|facult[ée]|cursus|parcoursup)\b", re.I)
+
+# « devenir/exercer/viser + <métier> » = but PROFESSIONNEL fort (poids 2).
+_BECOME_JOB = re.compile(r"\b(devenir|être|etre|exercer|viser|me\s+lancer\s+comme|faire\s+carri[èe]re\s+(comme|en))\s+"
+                         r"(un\s+|une\s+|le\s+|la\s+|comme\s+)?(\w+\s+){0,2}?(" + _JOB_TITLES.pattern.strip("\\b") + r")", re.I)
+
+def _work_vs_study(text: str) -> tuple[int, int]:
+    """Compte les signaux PRO vs ACADÉMIQUES dans un texte. Retourne (work, study)."""
+    low = (text or "").lower()
+    if not low:
+        return 0, 0
+    work = len(_WORK_VERBS.findall(low)) + len(_JOB_TITLES.findall(low)) + 2 * len(_BECOME_JOB.findall(low))
+    work += sum(1 for k in ("emploi", "poste", "recrut", "embauche", "cdi", "cdd") if k in low)
+    study = len(_STUDY_SIGNALS.findall(low))
+    return work, study
+
+def _objectif_coherence(profil: dict) -> dict:
+    """Confronte l'objectif ENREGISTRÉ aux signaux réels (aspiration, résumé, mots-clés, objectif en clair).
+    Retourne {state: 'ok'|'corrige'|'ambigu', suggere: '', raison: ''}.
+    - 'corrige' : l'objectif stocké contredit nettement les signaux -> on propose la correction.
+    - 'ambigu'  : signaux pro ET académiques comparables (ex. « devenir analyste financier » = emploi OU études)
+                  -> à clarifier (#8), surtout si l'objectif stocké est un simple « étudier » peu sûr."""
+    prefs = (profil.get("preferences") or {})
+    obj = str(prefs.get("objectif") or "").strip().lower()
+    # Texte-signal : ce que la personne VEUT. On n'inclut l'objectif en clair QUE s'il n'est pas déjà
+    # un label canonique (étudier/travailler/…) — sinon il polluerait le comptage (circulaire).
+    pp = profil.get("profil_plus") or {}
+    _CANON = ("étudier", "etudier", "travailler", "bourse", "télétravail", "teletravail", "tous", "")
+    _obj_sig = prefs.get("objectif", "") if obj not in _CANON else ""
+    blob = " ".join(str(x) for x in (pp.get("aspiration", ""), _obj_sig,
+                                     profil.get("resume_profil", ""), prefs.get("mots_cles", "")))
+    low_blob = blob.lower()
+    # Emploi EXPLICITEMENT recherché (sûr à corriger) vs métier ASPIRÉ (« devenir X » — peut passer par les études).
+    work_explicit = sum(1 for k in ("emploi", "poste", "recrut", "embauche", "cdi", "cdd") if k in low_blob) \
+        + len(_WORK_VERBS.findall(low_blob))
+    become_job = len(_BECOME_JOB.findall(low_blob)) + (len(_JOB_TITLES.findall(low_blob)) if not work_explicit else 0)
+    study = len(_STUDY_SIGNALS.findall(low_blob))
+    is_study_obj = obj in ("étudier", "etudier", "bourse") or any(k in obj for k in _OBJ_ETUDE)
+    is_work_obj = obj in ("travailler",) or any(k in obj for k in _OBJ_TRAVAIL)
+    # (1) Contradiction NETTE et sûre -> on corrige (emploi/études explicitement cherché, zéro signal inverse).
+    if is_study_obj and work_explicit >= 1 and study == 0:
+        return {"state": "corrige", "suggere": "travailler",
+                "raison": "un emploi est explicitement recherché, pas des études"}
+    if is_work_obj and study >= 2 and work_explicit == 0 and become_job == 0:
+        return {"state": "corrige", "suggere": "étudier",
+                "raison": "le but porte sur un diplôme/des études, pas un emploi"}
+    # (2) Métier ASPIRÉ sans dire comment (« devenir analyste financier ») + objectif=études -> AMBIGU (#8 demande).
+    if is_study_obj and become_job >= 1 and study == 0:
+        return {"state": "ambigu", "suggere": "travailler",
+                "raison": "un métier est visé — emploi dans ce domaine, ou études pour y arriver ?"}
+    # (3) Signaux pro ET académiques comparables -> AMBIGU.
+    if (work_explicit + become_job) >= 1 and study >= 1 and abs((work_explicit + become_job) - study) <= 1:
+        return {"state": "ambigu", "suggere": "", "raison": "but réalisable par l'emploi OU par les études"}
+    return {"state": "ok", "suggere": "", "raison": ""}
+
+def _reconcile_objectif(session: dict) -> dict:
+    """Applique la cohérence objectif↔aspiration : corrige SILENCIEUSEMENT les contradictions nettes
+    (emploi/études explicitement cherché) et MÉMORISE l'ambiguïté (à clarifier par #8). Idempotent."""
+    profil = session.get("profil") or {}
+    assess = _objectif_coherence(profil)
+    if assess["state"] == "corrige" and assess["suggere"]:
+        prefs = profil.setdefault("preferences", {})
+        if prefs.get("objectif") != assess["suggere"]:
+            logger.info(f"[coherence] objectif {prefs.get('objectif')!r} -> {assess['suggere']!r} "
+                        f"({assess['raison']}) pour {session.get('user_id')}")
+            prefs["objectif"] = assess["suggere"]
+            session["profil"] = profil
+        session.pop("objectif_ambigu", None)
+    elif assess["state"] == "ambigu":
+        session["objectif_ambigu"] = {"suggere": assess["suggere"], "raison": assess["raison"]}
+    else:
+        session.pop("objectif_ambigu", None)
+    return assess
+
 def _normalize_objectif(t: str) -> tuple[str, str]:
     """Extrait un OBJECTIF canonique + un éventuel DOMAINE d'une réponse libre, au lieu de stocker
     la phrase entière (ex. « je cherche un emploi dans l'informatique » -> ('travailler', 'informatique')).
@@ -2938,6 +3024,11 @@ def _conversation_context(session: dict) -> str:
     if _pref_lines:
         lignes.append("- COMMENT il/elle veut (À RESPECTER) :")
         lignes += ["  " + p for p in _pref_lines]
+    # Cohérence objectif (#10) : si le but est ambigu (emploi OU études), le signaler pour lever le doute.
+    _amb = session.get("objectif_ambigu") or {}
+    if _amb.get("raison"):
+        lignes.append(f"- ⚠️ OBJECTIF À CLARIFIER : {_amb['raison']} "
+                      "(ne suppose pas ; demande emploi ou études si ça compte pour la réponse).")
     tier = session.get("premium_tier")
     if tier and tier in _PREMIUM_TIERS:
         lignes.append(f"- Abonnement : {tier}")
@@ -5635,6 +5726,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         if _is_clear_affirmation(t):
             session["etape"] = "ACTIF"; session["onboarding_complete"] = True
+            # Cohérence objectif↔aspiration (#10) : corrige une contradiction nette, sinon note l'ambiguïté.
+            try:
+                _reconcile_objectif(session)
+            except Exception as e:
+                logger.warning(f"[coherence] {e}")
             # Persistance du profil par identifiant : code de récupération stable (inter-canaux).
             try:
                 session["recovery_code"] = profile_store.save(session.get("user_id"), session)
