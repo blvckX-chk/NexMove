@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.71.0"
+VERSION         = "3.72.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3237,6 +3237,45 @@ def _mood_active(session: dict) -> dict:
         return h
     return {}
 
+# POUR QUI (#3 · v3.72) — contraintes de VIE qui changent les recommandations (budget, papiers,
+# mobilité/famille, disponibilité). Captées déterministes, stockées dans profil["contraintes"].
+_LIFE_RE = [
+    ("budget", re.compile(r"\b(pas\s+(d['’\s]?)argent|sans\s+(le\s+)?sou|budget\s+(serré|limité|r[ée]duit|faible)|"
+                          r"peux\s+pas\s+payer|(je\s+n['’\s]?ai|j['’\s]?ai)\s+pas\s+(les?\s+)?moyens?|petit\s+budget|"
+                          r"(bourse|financement)\s+(obligatoire|indispensable|n[ée]cessaire)|gratuit\s+seulement|"
+                          r"uniquement\s+(du\s+)?gratuit|c['’\s]?est\s+trop\s+cher)\b", re.I)),
+    ("visa", re.compile(r"\b(probl[èe]me\s+de\s+(visa|papiers)|pas\s+de\s+(passeport|visa|papiers)|"
+                        r"sans\s+papiers|titre\s+de\s+s[ée]jour|r[ée]gularis|je\s+suis\s+sans-papiers|"
+                        r"refus\s+de\s+visa|visa\s+refusé)\b", re.I)),
+    ("mobilité", re.compile(r"\b(je\s+(ne\s+)?(peux|veux)\s+pas\s+(d[ée]m[ée]nager|quitter|partir|bouger)|"
+                            r"j['’\s]?ai\s+(une\s+famille|des\s+enfants|un\s+enfant)|je\s+dois\s+rester|"
+                            r"je\s+reste\s+(à|a|dans|au)\s+\w+|pas\s+de\s+d[ée]m[ée]nagement|"
+                            r"je\s+ne\s+peux\s+pas\s+voyager|attaché\s+à\s+ma\s+ville)\b", re.I)),
+    ("disponibilité", re.compile(r"\b(disponible\s+(imm[ée]diatement|tout\s+de\s+suite|maintenant)|"
+                                 r"je\s+travaille\s+d[ée]jà|seulement\s+(le\s+soir|la\s+nuit|le\s+week-?end|les?\s+week-?ends?)|"
+                                 r"(le\s+soir|la\s+nuit|le\s+week-?end)\s+(uniquement|seulement)|"
+                                 r"temps\s+partiel\s+(seulement|uniquement)|pas\s+avant\s+\w+)\b", re.I)),
+]
+
+def _capture_life_constraints(session: dict, t: str) -> bool:
+    """Capte des contraintes de VIE explicites (budget/visa/mobilité/disponibilité) -> profil['contraintes']."""
+    low = (t or "").lower()
+    if not low or len(low) < 6:
+        return False
+    profil = session.setdefault("profil", {})
+    contr = profil.setdefault("contraintes", {})
+    changed = False
+    for key, rx in _LIFE_RE:
+        m = rx.search(low)
+        if m and contr.get(key) != m.group(0)[:50]:
+            contr[key] = m.group(0)[:50]
+            changed = True
+    if changed:
+        profil["contraintes"] = contr
+        session["profil"] = profil
+        logger.info(f"[contraintes] {session.get('user_id')} -> { {k: contr[k] for k, _ in _LIFE_RE if contr.get(k)} }")
+    return changed
+
 def _capture_user_prefs(session: dict, t: str) -> bool:
     """Capte les préférences EXPLICITES de forme (comment la personne veut qu'on lui réponde / livre).
     Déterministe, sans coût. Stocke dans profil_plus. Retourne True si quelque chose a été capté."""
@@ -6013,6 +6052,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _capture_user_prefs(session, t)
         _capture_urgency(session, t)
         _capture_mood(session, t)
+        _capture_life_constraints(session, t)
     except Exception as e:
         logger.warning(f"[prefs] {e}")
 
