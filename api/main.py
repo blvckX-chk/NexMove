@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.65.0"
+VERSION         = "3.66.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2456,14 +2456,17 @@ async def _cvbuild_start(session: dict, force_scratch: bool = False) -> tuple[st
     # On génère directement depuis le profil existant et on propose de continuer / recommencer.
     if not force_scratch and _profile_is_usable(session):
         nom = _md_clean(((session.get("profil") or {}).get("identite") or {}).get("nom") or "ton profil")
-        ok = await _deliver_cv(session, "ats")
+        # « COMMENT il le veut » : on respecte le style de CV préféré s'il a été exprimé.
+        _style = ((session.get("profil") or {}).get("profil_plus") or {}).get("style_cv") or "ats"
+        _lbl = "graphique" if _style == "graphic" else "ATS"
+        ok = await _deliver_cv(session, _style)
         if ok:
-            session["_kb_options"] = [("🎨 Version graphique", "act:cv_graphique"),
-                                      ("✏️ Repartir de zéro", "act:cv_scratch"),
+            _autre = ("📄 Version *ATS*", "act:cv_ats") if _style == "graphic" else ("🎨 Version graphique", "act:cv_graphique")
+            session["_kb_options"] = [_autre, ("✏️ Repartir de zéro", "act:cv_scratch"),
                                       ("🎯 Postuler maintenant", "act:postuler_help")]
-            msg = (f"✅ J'ai déjà analysé ton CV — voici ton *CV ATS* généré pour *{nom}* (pas besoin de tout "
-                   "retaper 🙂).\n\n🎨 Tu veux une *version graphique* ? · ✏️ repartir de *zéro* ? · ou "
-                   "*postuler* à une offre (`/postuler <poste>`) ?")
+            msg = (f"✅ J'ai déjà analysé ton CV — voici ton *CV {_lbl}* généré pour *{nom}* (pas besoin de tout "
+                   "retaper 🙂).\n\n👉 Autre format, repartir de *zéro*, ou *postuler* à une offre "
+                   "(`/postuler <poste>`) ?")
             _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
             return msg, session
         # Si la génération échoue, on bascule proprement sur le questionnaire.
@@ -2928,6 +2931,13 @@ def _conversation_context(session: dict) -> str:
     for k, lab in _PP_LABELS.items():
         if pp.get(k):
             lignes.append(f"- {lab} : {pp[k]}")
+    # COMMENT la personne veut qu'on lui réponde / livre (préférences de forme EXPLICITES) : à RESPECTER.
+    _COMMENT = {"style_cv": "Style de CV préféré", "langue_doc": "Langue des documents voulue",
+                "ton": "Ton de réponse voulu", "contrainte_dure": "Contrainte NON négociable"}
+    _pref_lines = [f"- {lab} : {pp[k]}" for k, lab in _COMMENT.items() if pp.get(k)]
+    if _pref_lines:
+        lignes.append("- COMMENT il/elle veut (À RESPECTER) :")
+        lignes += ["  " + p for p in _pref_lines]
     tier = session.get("premium_tier")
     if tier and tier in _PREMIUM_TIERS:
         lignes.append(f"- Abonnement : {tier}")
@@ -2999,6 +3009,47 @@ _PROF_CUES = ("je veux", "j'aimerais", "j'aimerai", "mon rêve", "mon but", "mon
               "budget", "je suis motiv", "je dois", "contrainte", "à long terme", "a long terme",
               "plus tard", "idéalement", "idealement", "je cherche à", "passionn", "j'aime",
               "mon projet", "je souhaite", "je vise", "pour moi")
+
+# « COMMENT il le veut » (v3.66) : préférences EXPLICITES de forme/communication, captées de façon
+# DÉTERMINISTE (pas de LLM) et RÉUTILISÉES pour adapter les réponses et les livrables à la personne.
+_PREF_STYLE_CV_GRAPH = re.compile(r"\b(cv\s+graphique|version\s+graphique|cv\s+(joli|coloré|colore|design|visuel)|"
+                                  r"je\s+pr[ée]f[èe]re\s+(le\s+|un\s+)?graphique)\b", re.I)
+_PREF_STYLE_CV_ATS = re.compile(r"\b(cv\s+ats|version\s+ats|format\s+ats|je\s+pr[ée]f[èe]re\s+(l'|un\s+)?ats)\b", re.I)
+_PREF_LANG_EN = re.compile(r"\b(en\s+anglais|in\s+english|version\s+anglaise|documents?\s+en\s+anglais|cv\s+en\s+anglais)\b", re.I)
+_PREF_LANG_FR = re.compile(r"\b(en\s+fran[çc]ais|version\s+fran[çc]aise|documents?\s+en\s+fran[çc]ais)\b", re.I)
+_PREF_CONCIS = re.compile(r"\b(sois\s+(bref|concis|court)|r[ée]ponses?\s+courtes?|va\s+(droit\s+)?(à|a)\s+l'essentiel|"
+                          r"droit\s+au\s+but|pas\s+(de\s+)?blabla|fais\s+court)\b", re.I)
+_PREF_CONTR = re.compile(r"\b(je\s+ne\s+peux\s+pas\s+d[ée]m[ée]nager|pas\s+de\s+d[ée]m[ée]nagement|je\s+reste\s+(à|a)\s+\w+|"
+                         r"je\s+ne\s+veux\s+pas\s+(partir|bouger|quitter)|uniquement\s+(en\s+)?t[ée]l[ée]travail|"
+                         r"seulement\s+(du\s+)?t[ée]l[ée]travail|je\s+dois\s+rester)\b", re.I)
+
+def _capture_user_prefs(session: dict, t: str) -> bool:
+    """Capte les préférences EXPLICITES de forme (comment la personne veut qu'on lui réponde / livre).
+    Déterministe, sans coût. Stocke dans profil_plus. Retourne True si quelque chose a été capté."""
+    low = (t or "").lower()
+    if not low:
+        return False
+    pp = session.setdefault("profil", {}).setdefault("profil_plus", {})
+    changed = False
+    if _PREF_STYLE_CV_ATS.search(low) and pp.get("style_cv") != "ats":
+        pp["style_cv"] = "ats"; changed = True
+    elif _PREF_STYLE_CV_GRAPH.search(low) and pp.get("style_cv") != "graphic":
+        pp["style_cv"] = "graphic"; changed = True
+    if _PREF_LANG_EN.search(low) and pp.get("langue_doc") != "anglais":
+        pp["langue_doc"] = "anglais"; changed = True
+    elif _PREF_LANG_FR.search(low) and pp.get("langue_doc") != "français":
+        pp["langue_doc"] = "français"; changed = True
+    if _PREF_CONCIS.search(low) and pp.get("ton") != "concis":
+        pp["ton"] = "concis"; changed = True
+    if _PREF_CONTR.search(low):
+        _c = t.strip()[:80]
+        if pp.get("contrainte_dure") != _c:
+            pp["contrainte_dure"] = _c; changed = True
+    if changed:
+        session["profil"]["profil_plus"] = pp
+        logger.info(f"[prefs] préférence de forme captée pour {session.get('user_id')}: "
+                    f"{ {k: pp.get(k) for k in ('style_cv','langue_doc','ton','contrainte_dure') if pp.get(k)} }")
+    return changed
 
 async def _enrich_profile(session: dict, t: str) -> None:
     """Profilage PROGRESSIF : capte, au fil des conversations (hors onboarding), ce que l'utilisateur
@@ -5714,6 +5765,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         msg = await _preonboarding_reply(session, t)
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
+
+    # « COMMENT il le veut » : on capte les préférences de forme explicites (style CV, langue des docs,
+    # ton, contrainte dure) sur CHAQUE message onboardé, avant tout routage (déterministe, sans coût).
+    try:
+        _capture_user_prefs(session, t)
+    except Exception as e:
+        logger.warning(f"[prefs] {e}")
 
     # Onboardé : correction rapide du profil "champ: valeur" AVANT tout routage (sinon "pays: canada"
     # serait capté comme l'intention /canada).
