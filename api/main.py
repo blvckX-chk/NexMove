@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.64.0"
+VERSION         = "3.65.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1040,6 +1040,78 @@ def _refers_to_prior_list(low: str, session: dict) -> bool:
     has_ctx = bool((session.get("last_portail") or {}).get("exemples")) or bool(session.get("last_offers"))
     return has_ctx and bool(_REFER_PRIOR_RE.search(low or ""))
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TABLE D'INTENTIONS (source de vérité unique) — routage NL DÉTERMINISTE des commandes
+# critiques, pour ne plus dépendre du LLM (passage systématique v3.65). Chaque entrée :
+#   name, trigger (re), cmd, takes_target (bool), lead (re à retirer pour extraire la cible), exclude (re)
+# Ordre = priorité : le PLUS SPÉCIFIQUE d'abord (simulation avant entretien, chances avant postuler…).
+# Les tests (matrice test_nl_intents) verrouillent positifs ET négatifs.
+# ─────────────────────────────────────────────────────────────────────────────
+_PREP = r"(?:aux|au|pour|chez|sur|dans|des|du|[àa]|en|de|l[ea']?s?)"   # multi-car d'abord (sinon « au » -> « u »)
+_ENTR = r"l['’\s]\s*entretien|entretien"   # « l'entretien », « l entretien » ou « entretien »
+_NL_INTENTS = [
+    # Simulation d'entretien (AVANT /entretien : « entretien blanc » = simulation)
+    ("simulation",
+     re.compile(r"\b(simulation|entretien\s+blanc|simule\w*\s+(un\s+)?entretien|simuler\s+(un\s+)?entretien|"
+                r"entra[îi]ne?[ -]?moi\s+(" + _PREP + r"\s+)?(" + _ENTR + r"))", re.I),
+     "/simulation", False, None, None),
+    # Préparation d'entretien (conseils) — distinct de la simulation
+    ("entretien",
+     re.compile(r"(pr[ée]pare\w*[ -]?(moi\s+)?(" + _PREP + r"\s+)?(" + _ENTR + r")|conseils?\s+(" + _PREP + r"\s+)?(" + _ENTR + r")|"
+                r"pr[ée]paration\s+(" + _PREP + r"\s+)?(" + _ENTR + r")|r[ée]ussir\s+(mon\s+)?entretien|coach\w*\s+entretien)", re.I),
+     "/entretien", True, re.compile(r".*?entretien\s*", re.I), None),
+    # Mes candidatures / suivi
+    ("mescandidatures",
+     re.compile(r"\b(mes\s+candidatures?|mon\s+suivi|mes\s+suivis|o[ùu]\s+en\s+(sont|est)\s+(mes\s+candidatures?|ma\s+candidature)|"
+                r"ce\s+que\s+j['’]ai\s+postul\w*|mon\s+pipeline|mes\s+postulations|suivre\s+mes\s+candidatures?)\b", re.I),
+     "/mescandidatures", False, None, None),
+    # Mes chances / admissibilité
+    ("chances",
+     re.compile(r"\b(mes\s+chances?|quelles?\s+(sont\s+)?(mes\s+)?chances?|ai[ -]?je\s+(une|mes|des)?\s*chances?|"
+                r"suis[ -]?je\s+admissible|admissibilit[ée]|mes\s+chances?\s+d['’]admission|"
+                r"est[ -]?ce\s+que\s+je\s+(peux\s+l['’]avoir|serai\w*\s+pris\w*|ai\s+une\s+chance))\b", re.I),
+     "/chances", True, re.compile(r".*?(chances?|admissible|admissibilit[ée])\s*(d['’]admission)?\s*" + _PREP + r"?\s*", re.I), None),
+    # Compatibilité poste/compétences
+    ("compatibilite",
+     re.compile(r"\b(compatibilit[ée]|mon\s+score\s+(pour|sur|avec)|est[ -]?ce\s+que\s+je\s+corresponds?\s+" + _PREP + r"?\s*(poste|l['’]offre)|"
+                r"suis[ -]?je\s+fait\w*\s+pour|je\s+match\w*\s+(avec\s+)?(le\s+)?poste)\b", re.I),
+     "/compatibilite", True, re.compile(r".*?(compatibilit[ée]|score|corresponds?|match\w*)\s*" + _PREP + r"?\s*", re.I), None),
+    # Dossier (projet d'études / candidature)
+    ("dossier",
+     re.compile(r"\b(mon\s+dossier|dossier\s+(complet|de\s+candidature|d['’][ée]tudes?)|pr[ée]pare\w*\s+(mon\s+)?dossier|"
+                r"monte\w*\s+(un\s+)?dossier|constitue\w*\s+(un\s+)?dossier|monter\s+mon\s+dossier)\b", re.I),
+     "/dossier", True, re.compile(r".*?dossier\s*(complet|de\s+candidature|d['’][ée]tudes?)?\s*" + _PREP + r"?\s*", re.I), None),
+    # Tarifs / abonnement / paiement
+    ("offres",
+     re.compile(r"\b(tarifs?|les\s+prix|combien\s+[çc]a\s+co[ûu]te|c['’]est\s+combien|abonnements?|les\s+formules?|"
+                r"premium\s+combien|passer\s+(en\s+|au\s+)?premium|je\s+veux\s+payer|souscrire|m['’]abonner)\b", re.I),
+     "/offres", False, None, None),
+    # Postuler (générer CV + lettre pour une cible) — LARGE, donc EN DERNIER.
+    # Exclu : « comment postuler » (déjà géré) et les recherches (« cherche/trouve des offres »).
+    ("postuler",
+     re.compile(r"\b(je\s+veux\s+postuler|postule[rz]?|postuler|candidate[rz]?|candidater|"
+                r"pr[ée]pare\w*\s+ma\s+candidature|g[ée]n[èe]re\w*\s+(mon|ma|un|une)\s+(cv\s+et\s+(la\s+)?lettre|lettre|candidature)|"
+                r"fais[ -]?moi\s+(un\s+)?cv\s+et\s+(une\s+)?lettre)\b", re.I),
+     "/postuler", True,
+     re.compile(r".*?(je\s+veux\s+postuler|postule[rz]?|postuler|candidate[rz]?|candidater|ma\s+candidature)\s*" + _PREP + r"?\s*", re.I),
+     re.compile(r"\bcomment\b|\bcherch\w+\b|\btrouve\w*\b|\bdes\s+offres?\b|\bune\s+offre\b", re.I)),
+]
+
+def _nl_intent_route(low: str, t: str) -> str:
+    """Route une intention critique en commande (+ argument), via la table _NL_INTENTS."""
+    for _name, trig, cmd, takes_target, lead, exclude in _NL_INTENTS:
+        if exclude and exclude.search(low):
+            continue
+        if not trig.search(low):
+            continue
+        if not takes_target:
+            return cmd
+        cible = re.sub(lead, "", t, count=1).strip(" ?.:!,") if lead else ""
+        # Nettoie « je veux / pour moi / stp » résiduels en tête de la cible.
+        cible = re.sub(r"^(je\s+veux|j['’]aimerais|j['’]voudrais|je\s+souhaite|pour\s+moi|moi|stp|svp)\s+", "", cible, flags=re.I).strip()
+        return (cmd + " " + cible).strip()
+    return ""
+
 def _free_text_to_command(low: str, t: str) -> str:
     """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
     if any(k in low for k in ("comment postuler", "comment candidater", "comment je postule",
@@ -1047,6 +1119,10 @@ def _free_text_to_command(low: str, t: str) -> str:
         cible = re.sub(r".*?(comment\s+(postuler|candidater|je\s+postule|envoyer\s+ma\s+candidature|faire\s+la\s+candidature|déposer\s+ma\s+candidature))\s*(à|a|au|aux|pour|chez|sur|en)?\s*",
                        "", t, flags=re.I).strip(" ?.")
         return "/commentpostuler " + cible
+    # Intentions critiques (table unique, source de vérité) — AVANT le reste.
+    _ir = _nl_intent_route(low, t)
+    if _ir:
+        return _ir
     # Créer / refaire son CV — routage DÉTERMINISTE (ne pas dépendre du LLM, qui ratait « Créercv »).
     # « améliorer/retravailler mon CV » tombe aussi ici : _cvbuild_start génère depuis le profil s'il existe.
     _nolow = low.translate(str.maketrans("àâäéèêëïîôöùûüç", "aaaeeeeiioouuuc")).replace(" ", "")

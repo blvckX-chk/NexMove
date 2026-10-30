@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.65 — Passage systématique : routage NL des 8 intentions critiques
+- **Fin du whack-a-mole.** Au lieu de câbler une intention à chaque capture, **table unique** (`_NL_INTENTS`, source de vérité) qui route en langage naturel les 8 commandes les plus utilisées : **postuler, chances, mes candidatures, dossier, tarifs/offres, simulation, entretien, compatibilité** — avec extraction de la cible (« postuler à Orange » → `/postuler Orange`).
+- **Matrice de tests** : 36 cas (positifs *et* négatifs) verrouillent le comportement — ex. « comment postuler » reste `/commentpostuler`, « je cherche un emploi » reste `/mobilite`, « entretien blanc » = `/simulation` (pas `/entretien`), « génère mon cv » = `/creercv` (pas `/postuler`).
+- Priorité au plus spécifique (simulation avant entretien, chances avant postuler) ; exclusions anti-conflit (postuler n'avale pas les recherches).
+
 ## v3.64 — « Supprimer mon profil » en langage naturel
 - **Bug (capture).** « je veux supprimer mon profil » → le bot **affichait** le profil (« Pour corriger… ») au lieu de lancer la suppression ; et « supprimer » seul → le LLM demandait « supprimer quoi ? » sans retenir la réponse.
 - Corrigé : routage **déterministe** des intentions de suppression (« supprimer / effacer / purger … profil / compte / données / tout / mon cv », ou « supprimer » seul) vers `/supprimer`, qui demande la confirmation (OUI). « mon profil » seul continue d'**afficher** le profil.

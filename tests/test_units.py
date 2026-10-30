@@ -2128,6 +2128,68 @@ def test_supprimer_profil_demande_confirmation():
     msg, s = _run(main.process_text_message(s, "je veux supprimer mon profil"))
     assert s.get("awaiting_delete_confirm") is True and ("confirm" in msg.lower() or "OUI" in msg)
 
+# ── v3.65 : passage systématique du routage NL des 8 intentions critiques ──
+import pytest as _pytest
+
+@_pytest.mark.parametrize("msg,expected", [
+    # POSTULER (générer CV+lettre)
+    ("je veux postuler à Orange", "/postuler"),
+    ("postule chez Adecco", "/postuler"),
+    ("candidate à cette offre", "/postuler"),
+    ("génère mon cv et la lettre pour data analyst", "/postuler"),
+    ("prépare ma candidature pour ce poste", "/postuler"),
+    # CHANCES
+    ("mes chances pour la bourse DAAD", "/chances"),
+    ("suis-je admissible au master", "/chances"),
+    ("ai-je une chance pour Eiffel", "/chances"),
+    ("quelles sont mes chances", "/chances"),
+    # MES CANDIDATURES
+    ("mes candidatures", "/mescandidatures"),
+    ("mon suivi", "/mescandidatures"),
+    ("où en sont mes candidatures", "/mescandidatures"),
+    ("ce que j'ai postulé", "/mescandidatures"),
+    # DOSSIER
+    ("prépare mon dossier pour Eiffel", "/dossier"),
+    ("monter un dossier de candidature", "/dossier"),
+    ("mon dossier complet", "/dossier"),
+    # OFFRES / TARIFS
+    ("les tarifs", "/offres"),
+    ("combien ça coûte", "/offres"),
+    ("je veux passer premium", "/offres"),
+    ("c'est combien l'abonnement", "/offres"),
+    # SIMULATION
+    ("simulation", "/simulation"),
+    ("entretien blanc", "/simulation"),
+    ("entraîne-moi à l entretien", "/simulation"),
+    ("simule un entretien", "/simulation"),
+    # ENTRETIEN (prépa)
+    ("prépare-moi à l entretien", "/entretien"),
+    ("des conseils pour l entretien", "/entretien"),
+    ("réussir mon entretien", "/entretien"),
+    # COMPATIBILITÉ
+    ("ma compatibilité pour le poste", "/compatibilite"),
+    ("mon score pour ce poste", "/compatibilite"),
+])
+def test_nl_intents_positifs(msg, expected):
+    got = main._free_text_to_command(msg.lower(), msg)
+    assert got.split()[0] == expected, f"{msg!r} -> {got!r}"
+
+@_pytest.mark.parametrize("msg,must_not_be", [
+    ("comment postuler à Orange", "/postuler"),     # -> /commentpostuler
+    ("je cherche un emploi", "/postuler"),           # -> /mobilite (recherche)
+    ("trouve des bourses en informatique", "/postuler"),
+    ("bonjour ça va", "/postuler"),
+    ("mon profil", "/supprimer"),
+    ("entretien blanc", "/entretien"),               # -> /simulation (pas /entretien)
+])
+def test_nl_intents_negatifs(msg, must_not_be):
+    got = main._free_text_to_command(msg.lower(), msg)
+    assert (got.split()[0] if got else "") != must_not_be, f"{msg!r} -> {got!r}"
+
+def test_nl_intents_extraction_cible():
+    assert main._free_text_to_command("je veux postuler à orange", "je veux postuler à Orange") == "/postuler Orange"
+    assert main._free_text_to_command("mes chances pour la bourse daad", "mes chances pour la bourse DAAD") == "/chances la bourse DAAD"
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
