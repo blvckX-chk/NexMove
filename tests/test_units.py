@@ -2312,6 +2312,23 @@ def test_urgence_dans_le_contexte():
     s["urgence"]["at"] = _t.time() - 10000
     assert "URGENCE" not in main._conversation_context(s)
 
+# ── v3.70 : périmètre — LA prochaine étape (#6) ──
+@_pytest.mark.parametrize("session,cmd", [
+    ({}, "/creercv"),                                                                 # pas de CV
+    ({"cv_parsed": True, "onboarding_complete": True, "profil": {}}, "/veille"),       # profil prêt, rien cherché
+    ({"cv_parsed": True, "onboarding_complete": True, "last_offers": [{"sig": "x"}], "profil": {}}, "/postuler"),
+    ({"cv_parsed": True, "onboarding_complete": True, "_docpack": {"cible": "X"}, "profil": {}}, "/mescandidatures"),
+    ({"cv_parsed": True, "onboarding_complete": True, "focus": {"cible": "Bourse X", "done": ["analyse"]}, "profil": {}}, "/chances"),
+])
+def test_next_best_action(session, cmd):
+    assert main._next_best_action(session)[1] == cmd
+
+def test_prochaine_etape_dans_le_contexte():
+    s = {"cv_parsed": True, "onboarding_complete": True, "last_offers": [{"sig": "x"}],
+         "profil": {"identite": {"nom": "A"}, "preferences": {"objectif": "travailler"}}}
+    ctx = main._conversation_context(s)
+    assert "PROCHAINE ÉTAPE LA PLUS UTILE" in ctx and "/postuler" in ctx
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
