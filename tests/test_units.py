@@ -2389,6 +2389,28 @@ def test_coherence_continue_sur_edition_objectif():
     assert s["profil"]["preferences"]["objectif"] == "travailler"   # ré-corrigé par la cohérence continue
     assert not s.get("objectif_clarify_done")   # ré-autorisé
 
+# ── v3.74 : urgence -> tri par échéance proche (#2 de la 2e passe) ──
+def test_deadline_days_left():
+    from datetime import date, timedelta
+    today = date(2026, 10, 30)
+    assert main._deadline_days_left("avant le 10/11/2026", today) == 11
+    assert main._deadline_days_left("2026-11-05", today) == 6
+    assert main._deadline_days_left("15/01/2024", today) is None       # passée
+    assert main._deadline_days_left("rolling admissions", today) is None
+    assert main._deadline_days_left("offre dev web", today) is None     # pas de date
+
+def test_rank_urgent_fait_remonter_deadline_proche():
+    from datetime import date, timedelta
+    soon = (date.today() + timedelta(days=5)).strftime("%d/%m/%Y")
+    opps = [
+        {"titre": "A", "score_composite": 90, "deadline": "aucune"},
+        {"titre": "B", "score_composite": 70, "deadline": soon},        # échéance dans 5 j
+        {"titre": "C", "score_composite": 80, "deadline": "01/06/2027"},
+    ]
+    ranked = [o["titre"] for o in main._rank_urgent(opps)]
+    assert ranked[0] == "B"                 # la deadline proche passe devant
+    assert ranked[1:] == ["A", "C"]         # le reste garde l'ordre par score
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

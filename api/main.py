@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.73.0"
+VERSION         = "3.74.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2156,6 +2156,46 @@ def _deadline_is_past(text, today):
     if years and max(years) < today.year:   # toutes les années citées sont révolues
         return True
     return False
+
+def _deadline_days_left(text, today):
+    """Jours restants avant la deadline (>=0), ou None si non datable / pas de deadline / passée.
+    Réutilise la même analyse de dates que _deadline_is_past (ISO, JJ/MM/AAAA, « 15 janvier 2026 »)."""
+    t = str(text or "").lower().strip()
+    if not t or any(k in t for k in ("rolling", "permanent", "continu", "toute l'année", "ouvert")):
+        return None
+    d = None
+    m = re.search(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b", t)
+    if m:
+        try: d = datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).date()
+        except Exception: d = None
+    if d is None:
+        m = re.search(r"\b(\d{1,2})[/.](\d{1,2})[/.](20\d{2})\b", t)
+        if m:
+            try: d = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+            except Exception: d = None
+    if d is None:
+        for mm in re.finditer(r"(?:(\d{1,2})\s+)?([a-zéûôà]+)\s+(20\d{2})", t):
+            mois = _FR_MONTHS.get(mm.group(2))
+            if mois:
+                try:
+                    jour = int(mm.group(1)) if mm.group(1) else 28
+                    d = datetime(int(mm.group(3)), mois, min(jour, 28)).date(); break
+                except Exception:
+                    continue
+    if d is None:
+        return None
+    n = (d - today).days
+    return n if n >= 0 else None
+
+def _rank_urgent(opps: list) -> list:
+    """Reclasse pour l'URGENCE : les opportunités à deadline PROCHE (datable, 0-30 j) d'abord,
+    puis par score ; le reste garde l'ordre par score. Les non-datables ne sont pas pénalisées entre elles."""
+    today = datetime.now(timezone.utc).date()
+    def _key(o):
+        dl = _deadline_days_left(f"{o.get('deadline','')} {o.get('titre','')}", today)
+        proche = 0 if (dl is not None and dl <= 30) else 1
+        return (proche, -(o.get("score_composite", 0) or 0), dl if dl is not None else 9999)
+    return sorted(opps or [], key=_key)
 
 def _type_label(typ):
     tp = str(typ or "").lower()
@@ -9653,6 +9693,10 @@ JSON: {{"opportunites":[{{"index":0,"type":"emploi|bourse|fellowship|formation",
             if prev is None or _url_specificity(o.get("url", "")) > _url_specificity(prev.get("url", "")):
                 best_by_dom[dom] = o
         clean = sorted(best_by_dom.values(), key=lambda o: o.get("score_composite", 0), reverse=True)
+        # URGENCE (v3.74) : si la personne a exprimé une urgence/échéance, on fait REMONTER les
+        # opportunités à deadline PROCHE (datable, 0-30 j) sans casser l'ordre par score pour le reste.
+        if session is not None and _urgence_active(session):
+            clean = _rank_urgent(clean)
         result["opportunites"] = clean
         footer = "🌐 _Sources web réelles · vérifie l'éligibilité et la deadline sur chaque lien._"
     else:

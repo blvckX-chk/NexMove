@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.74 — L'urgence change aussi le TRI des offres (pas que le ton)
+- En v3.69 l'urgence adaptait le ton. Désormais, quand une urgence/échéance est active, la recherche **fait remonter les opportunités à deadline PROCHE** (datable, 0-30 j) en tête, sans casser l'ordre par score pour le reste.
+- `_deadline_days_left` (jours restants, réutilise l'analyse de dates ISO / JJ-MM-AAAA / « 15 janvier 2026 ») + `_rank_urgent` (reclassement). Les offres non datables ne sont pas pénalisées entre elles.
+- Boucle bouclée : un signal capté (urgence) agit désormais sur le **ton** ET sur le **résultat**.
+
 ## v3.73 — Cohérence objectif CONTINUE (pas seulement à l'onboarding)
 - La réconciliation objectif↔aspiration (v3.67) ne tournait qu'à la fin de l'onboarding. Désormais elle se **relance aussi** quand l'objectif change plus tard : **changement de cible** en conversation (« je veux aller en finance ») ou **édition** (« objectif: … »).
 - Chaque changement ré-évalue la cohérence (corrige une contradiction nette, sinon re-signale l'ambiguïté) et **ré-autorise une clarification** si le nouveau but est ambigu. Le modèle de compréhension s'applique en continu, plus seulement au démarrage.
