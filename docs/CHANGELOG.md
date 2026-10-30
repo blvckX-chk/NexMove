@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.64 — « Supprimer mon profil » en langage naturel
+- **Bug (capture).** « je veux supprimer mon profil » → le bot **affichait** le profil (« Pour corriger… ») au lieu de lancer la suppression ; et « supprimer » seul → le LLM demandait « supprimer quoi ? » sans retenir la réponse.
+- Corrigé : routage **déterministe** des intentions de suppression (« supprimer / effacer / purger … profil / compte / données / tout / mon cv », ou « supprimer » seul) vers `/supprimer`, qui demande la confirmation (OUI). « mon profil » seul continue d'**afficher** le profil.
+
 ## v3.63 — Reconversion pendant l'onboarding : fin des offres de l'ancien domaine
 - **Bug (capture).** CV dev web → le bot calcule et **met en cache** un aperçu d'offres (dev web) juste après le CV. L'utilisateur dit ensuite « je continue en **finance** » → à la validation, le bot **réutilisait le cache périmé** et affichait des offres *dev web* malgré « mots-clés : finance ».
 - Corrigé : le cache d'aperçu mémorise le **domaine** au moment du calcul ; si le domaine a changé (reconversion pendant l'onboarding), on **relance la recherche** sur la nouvelle cible et on **acte la reconversion** (les compétences de l'ancien domaine sont écartées de la recherche).
