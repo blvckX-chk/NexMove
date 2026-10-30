@@ -2113,6 +2113,21 @@ def test_reconversion_onboarding_invalide_cache_offres(monkeypatch):
     assert calls["osint"] == 1 and calls["reconv"] is True
     assert "Analyste financier" in msg and "Dev Web Junior" not in msg
 
+def test_supprimer_profil_langage_naturel():
+    # Routage déterministe : « je veux supprimer mon profil » -> /supprimer (demande confirmation),
+    # au lieu d'afficher le profil ou de demander « supprimer quoi ? ».
+    assert main._free_text_to_command("je veux supprimer mon profil", "x") == "/supprimer"
+    assert main._free_text_to_command("supprimer", "supprimer") == "/supprimer"
+    assert main._free_text_to_command("efface mes données", "x") == "/supprimer"
+    # « mon profil » seul -> on NE supprime pas (affichage).
+    assert main._free_text_to_command("mon profil", "mon profil") != "/supprimer"
+
+def test_supprimer_profil_demande_confirmation():
+    s = {"user_id": "d", "chat_id": "d", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "profil": {"identite": {"nom": "Aicha"}, "preferences": {"objectif": "travailler"}}}
+    msg, s = _run(main.process_text_message(s, "je veux supprimer mon profil"))
+    assert s.get("awaiting_delete_confirm") is True and ("confirm" in msg.lower() or "OUI" in msg)
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
