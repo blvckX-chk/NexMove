@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.71 — État émotionnel : adapter le ton (#9)
+- « Quelqu'un qui dit *j'y arriverai jamais* n'a pas besoin de 10 offres mais d'un cap. » Le bot détecte désormais l'état et **adapte son ton**.
+- **`_capture_mood`** (déterministe) capte 4 états : **découragé**, **anxieux**, **méfiant**, **frustré** (élisions tolérantes : « j'ai » ou « j ai »). Mémorisé 1 h.
+- Injecté dans le contexte avec une **directive de ton** : découragé → encourageant + un petit pas ; anxieux → rassurant ; méfiant → transparent, pas de survente ; frustré → reconnaître puis solution. Pas de faux positif (« je cherche un stage » ne déclenche rien).
+- Clôt la première passe du **modèle de compréhension** (#4 comment, #10 cohérence, #8 clarification, #2 urgence, #6 périmètre, #9 émotionnel).
+
 ## v3.70 — Périmètre : LA prochaine étape, pas un mur d'options (#6)
 - Le bot proposait parfois 4 options d'un coup. Désormais il donne **UNE direction claire** selon où en est la personne dans son parcours.
 - **`_next_best_action`** (déterministe, entonnoir) : pas de CV → `/creercv` ; profil prêt sans recherche → `/veille` ; offres montrées → `/postuler` ; docs générés → `/mescandidatures` ; cible active → l'étape du funnel (chances → docs → postuler → suivi).

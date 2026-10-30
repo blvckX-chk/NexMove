@@ -2329,6 +2329,31 @@ def test_prochaine_etape_dans_le_contexte():
     ctx = main._conversation_context(s)
     assert "PROCHAINE ÉTAPE LA PLUS UTILE" in ctx and "/postuler" in ctx
 
+# ── v3.71 : état émotionnel — adapter le ton (#9) ──
+@_pytest.mark.parametrize("msg,state", [
+    ("j'y arriverai jamais, je galère", "découragé"),
+    ("j'ai peur de me tromper", "anxieux"),
+    ("c'est une arnaque votre truc ?", "méfiant"),
+    ("ça marche pas, ras le bol", "frustré"),
+])
+def test_capture_mood(msg, state):
+    s = {}
+    assert main._capture_mood(s, msg) and s["humeur"]["state"] == state
+
+def test_capture_mood_pas_de_faux_positif():
+    assert not main._capture_mood({}, "je cherche un stage en finance")
+    assert not main._capture_mood({}, "super, merci beaucoup !")
+
+def test_humeur_dans_le_contexte():
+    import time as _t
+    s = {"profil": {"identite": {"nom": "A"}, "preferences": {"objectif": "travailler"}},
+         "cv_parsed": True, "humeur": {"state": "découragé", "at": _t.time()}}
+    ctx = main._conversation_context(s)
+    assert "découragé" in ctx and "ENCOURAGEANT" in ctx
+    # Humeur périmée (>1h) -> plus affichée.
+    s["humeur"]["at"] = _t.time() - 5000
+    assert "découragé" not in main._conversation_context(s)
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
