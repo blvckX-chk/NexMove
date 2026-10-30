@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.68.0"
+VERSION         = "3.69.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3046,6 +3046,11 @@ def _conversation_context(session: dict) -> str:
     if _amb.get("raison"):
         lignes.append(f"- ⚠️ OBJECTIF À CLARIFIER : {_amb['raison']} "
                       "(ne suppose pas ; demande emploi ou études si ça compte pour la réponse).")
+    # Urgence (#2) : une échéance proche -> aller DROIT à l'action, prioriser ce qui tient dans le délai.
+    _urg = _urgence_active(session)
+    if _urg:
+        lignes.append(f"- ⏰ URGENCE exprimée ({_urg.get('detail','')}) : va DROIT à l'action concrète suivante, "
+                      "sans explorer longuement ; privilégie ce qui est faisable dans le délai.")
     tier = session.get("premium_tier")
     if tier and tier in _PREMIUM_TIERS:
         lignes.append(f"- Abonnement : {tier}")
@@ -3130,6 +3135,37 @@ _PREF_CONCIS = re.compile(r"\b(sois\s+(bref|concis|court)|r[ée]ponses?\s+courte
 _PREF_CONTR = re.compile(r"\b(je\s+ne\s+peux\s+pas\s+d[ée]m[ée]nager|pas\s+de\s+d[ée]m[ée]nagement|je\s+reste\s+(à|a)\s+\w+|"
                          r"je\s+ne\s+veux\s+pas\s+(partir|bouger|quitter)|uniquement\s+(en\s+)?t[ée]l[ée]travail|"
                          r"seulement\s+(du\s+)?t[ée]l[ée]travail|je\s+dois\s+rester)\b", re.I)
+
+# URGENCE / DEADLINE (v3.69) — une échéance change TOUT (on va à l'action, on priorise). Capté déterministe.
+_URGENT_RE = re.compile(r"\b(urgent|urgence|au\s+plus\s+vite|rapidement|le\s+plus\s+t[ôo]t|"
+                        r"tr[èe]s\s+pressé|je\s+suis\s+pressé|d[éè]s\s+que\s+possible|asap|"
+                        r"je\s+n['’]ai\s+plus\s+(beaucoup\s+)?de\s+temps|il\s+me\s+reste\s+peu\s+de\s+temps)\b", re.I)
+_DEADLINE_RE = re.compile(r"\b(deadline|[ée]ch[ée]ance|date\s+limite|avant\s+(le\s+)?\w+|"
+                          r"(ferme|clôture|cloture|expire|se\s+termine)\s+(dans|le|demain|bient[ôo]t)|"
+                          r"dans\s+\d+\s*(jours?|semaines?|h|heures?)|d['’]ici\s+\w+|demain|ce\s+soir|cette\s+semaine)\b", re.I)
+
+def _capture_urgency(session: dict, t: str) -> bool:
+    """Capte un signal d'urgence/deadline EXPLICITE et le mémorise (session['urgence']).
+    Sert à adapter la réponse : aller droit à l'action, prioriser les échéances proches."""
+    low = (t or "").lower()
+    if not low:
+        return False
+    urgent = bool(_URGENT_RE.search(low))
+    dl = _DEADLINE_RE.search(low)
+    if not urgent and not dl:
+        return False
+    session["urgence"] = {"level": "haute" if urgent else "deadline",
+                          "detail": (dl.group(0) if dl else "exprimée")[:40],
+                          "at": time.time()}
+    logger.info(f"[urgence] captée pour {session.get('user_id')}: {session['urgence']}")
+    return True
+
+def _urgence_active(session: dict) -> dict:
+    """Urgence encore pertinente (exprimée il y a < 2h) sinon {}."""
+    u = session.get("urgence") or {}
+    if u and (time.time() - (u.get("at", 0) or 0)) < 7200:
+        return u
+    return {}
 
 def _capture_user_prefs(session: dict, t: str) -> bool:
     """Capte les préférences EXPLICITES de forme (comment la personne veut qu'on lui réponde / livre).
@@ -5901,10 +5937,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
-    # « COMMENT il le veut » : on capte les préférences de forme explicites (style CV, langue des docs,
-    # ton, contrainte dure) sur CHAQUE message onboardé, avant tout routage (déterministe, sans coût).
+    # « COMMENT il le veut » + URGENCE : préférences de forme + signal d'échéance, captés sur CHAQUE
+    # message onboardé, avant tout routage (déterministe, sans coût).
     try:
         _capture_user_prefs(session, t)
+        _capture_urgency(session, t)
     except Exception as e:
         logger.warning(f"[prefs] {e}")
 

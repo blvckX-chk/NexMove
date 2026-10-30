@@ -2293,6 +2293,25 @@ def test_objectif_clarify_reponse_etudes():
     msg, s = _run(main.process_text_message(s, "plutôt des études"))
     assert s["profil"]["preferences"]["objectif"] == "étudier"
 
+# ── v3.69 : urgence / deadline (#2) ──
+def test_capture_urgency():
+    s = {}
+    assert main._capture_urgency(s, "c'est urgent, aide-moi vite") and s["urgence"]["level"] == "haute"
+    s2 = {}
+    assert main._capture_urgency(s2, "la bourse ferme dans 3 jours") and s2["urgence"]["level"] == "deadline"
+    # Pas de faux positif.
+    assert not main._capture_urgency({}, "je cherche tranquillement un stage")
+
+def test_urgence_dans_le_contexte():
+    import time as _t
+    s = {"profil": {"identite": {"nom": "A"}, "preferences": {"objectif": "travailler"}},
+         "cv_parsed": True, "urgence": {"level": "deadline", "detail": "dans 3 jours", "at": _t.time()}}
+    ctx = main._conversation_context(s)
+    assert "URGENCE" in ctx and "DROIT à l'action" in ctx
+    # Urgence périmée (>2h) -> plus affichée.
+    s["urgence"]["at"] = _t.time() - 10000
+    assert "URGENCE" not in main._conversation_context(s)
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
