@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.70 — Périmètre : LA prochaine étape, pas un mur d'options (#6)
+- Le bot proposait parfois 4 options d'un coup. Désormais il donne **UNE direction claire** selon où en est la personne dans son parcours.
+- **`_next_best_action`** (déterministe, entonnoir) : pas de CV → `/creercv` ; profil prêt sans recherche → `/veille` ; offres montrées → `/postuler` ; docs générés → `/mescandidatures` ; cible active → l'étape du funnel (chances → docs → postuler → suivi).
+- Injecté dans le contexte (« PROCHAINE ÉTAPE LA PLUS UTILE (propose CELLE-CI, une seule) ») et le prompt conseiller renforcé : **une seule action, au bon niveau, pas un menu**.
+
 ## v3.69 — Urgence / échéance captée et prise en compte (#2)
 - Une **deadline change tout**. Capture déterministe des signaux d'urgence (« c'est urgent », « au plus vite », « il me reste peu de temps ») et d'échéance (« la bourse ferme dans 3 jours », « deadline demain »).
 - Mémorisé dans `session["urgence"]` (valable 2 h) et **injecté dans le contexte** : « ⏰ URGENCE exprimée → va DROIT à l'action, privilégie ce qui tient dans le délai ». Le conseiller arrête d'explorer longuement et donne la prochaine étape concrète.

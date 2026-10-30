@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.69.0"
+VERSION         = "3.70.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2929,6 +2929,24 @@ def _focus_next(session: dict) -> tuple[str, str]:
     missing = next((st for st in _FOCUS_STEPS if st not in done), None)
     return _FOCUS_NEXT_ACTION.get(missing, ("", ""))
 
+def _next_best_action(session: dict) -> tuple[str, str]:
+    """#6 — LA meilleure étape suivante selon où en est la personne dans son parcours (entonnoir),
+    pour donner UNE direction claire au lieu d'un mur d'options. (libellé, commande) ; ('','') si rien."""
+    # 1) Objectif en cours (une cible précise travaillée) : étape du funnel de CETTE cible (le plus spécifique).
+    lbl, cmd = _focus_next(session)
+    if lbl:
+        return (lbl, cmd)
+    # 2) Sinon, on raisonne sur l'étape GLOBALE du parcours.
+    if not session.get("cv_parsed"):
+        return ("m'envoyer ton CV (ou taper /creercv si tu n'en as pas)", "/creercv")
+    if session.get("_docpack"):                       # des docs viennent d'être générés
+        return ("ajouter cette candidature à ton suivi", "/mescandidatures")
+    if session.get("last_offers"):                    # des offres ont été montrées, pas encore de candidature
+        return ("préparer ta candidature (CV + lettre) pour une de ces offres", "/postuler")
+    if session.get("onboarding_complete"):            # profil prêt, aucune recherche encore
+        return ("trouver des offres adaptées à ton profil", "/veille")
+    return ("", "")
+
 # ── #2 Mémoire qui compose : un journal durable du parcours de l'utilisateur AVEC le bot
 #    (offres déjà vues pour ne pas les répéter d'une session à l'autre + événements clés),
 #    stocké dans profil["memoire"], injecté dans le contexte, et utilisé par la recherche. ──
@@ -3088,6 +3106,12 @@ def _conversation_context(session: dict) -> str:
         if lbl:
             ligne += f" → PROCHAINE ÉTAPE proposée : {lbl} ({cmd})"
         lignes.append(ligne)
+    else:
+        # #6 — Pas de cible active : on donne quand même LA prochaine étape du parcours (direction claire,
+        # pas un mur). Le conseiller doit terminer sur CETTE action unique, pas sur une liste.
+        _nlbl, _ncmd = _next_best_action(session)
+        if _nlbl:
+            lignes.append(f"- PROCHAINE ÉTAPE LA PLUS UTILE (propose CELLE-CI, une seule) : {_nlbl} ({_ncmd})")
     # Mémoire qui compose : ce que l'utilisateur a DÉJÀ fait avec le bot (pour rebondir dessus,
     # ne pas répéter, et donner une continuité d'une session à l'autre).
     _evb = _mem_events_block(session)
@@ -6069,7 +6093,7 @@ L'utilisateur écrit librement. Deux cas :
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
 RÈGLE CLÉ : dès qu'il demande de TROUVER/CHERCHER des opportunités, bourses, offres, emplois, stages ou programmes → renvoie TOUJOURS action="mobilite" (recherche sur sources web RÉELLES) avec son argument. Ne liste JAMAIS d'opportunités toi-même dans "message".
 COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
-REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Raisonne comme un conseiller d'orientation : appuie tes conseils sur ses POINTS FORTS, ses AXES à renforcer, son SAVOIR-ÊTRE et ses CONTRAINTES quand ils sont connus (réponse logique et personnalisée). Avance : propose l'action concrète suivante. Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
+REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Raisonne comme un conseiller d'orientation : appuie tes conseils sur ses POINTS FORTS, ses AXES à renforcer, son SAVOIR-ÊTRE et ses CONTRAINTES quand ils sont connus (réponse logique et personnalisée). Avance : propose UNE SEULE action concrète suivante — la PROCHAINE ÉTAPE LA PLUS UTILE indiquée dans CE QUE TU SAIS (pas un menu, pas une liste de 4 options ; au bon niveau pour là où il en est). Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
 MULTI-ÉTAPES : si la demande contient DEUX besoins enchaînés (ex. « cherche X ET dis-moi mes chances », « trouve une bourse PUIS prépare mon dossier »), renseigne aussi "then" avec la 2e action (sinon laisse "then" vide). Max 2 actions.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"action":"","argument":""}},"message":"<réponse si pas d'action>"}}"""
     try:
