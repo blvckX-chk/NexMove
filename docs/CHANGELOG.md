@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.66 — Maîtrise du contexte : « comment il le veut » capté et respecté
+- Le bot savait déjà beaucoup (nom, objectif, pays, forces, axes, savoir-être, motivation, aspiration…). Il manquait le **« comment »** : les préférences de FORME que la personne exprime.
+- **Capture déterministe** (`_capture_user_prefs`, sans coût LLM) sur chaque message : **style de CV** préféré (ATS/graphique), **langue des documents** (FR/EN), **ton** voulu (concis), **contrainte non négociable** (« je ne peux pas déménager », « je reste à Cotonou »).
+- **Réutilisation** : ces préférences sont injectées dans le contexte conversationnel sous « COMMENT il/elle veut (À RESPECTER) », et `/creercv` **génère directement dans le style préféré** (graphique si demandé, au lieu d'ATS par défaut). `/postuler` reste ATS (meilleur pour les robots de tri).
+- Base d'une maîtrise du contexte plus fine (prochaine étape : cohérence objectif/aspiration).
+
 ## v3.65 — Passage systématique : routage NL des 8 intentions critiques
 - **Fin du whack-a-mole.** Au lieu de câbler une intention à chaque capture, **table unique** (`_NL_INTENTS`, source de vérité) qui route en langage naturel les 8 commandes les plus utilisées : **postuler, chances, mes candidatures, dossier, tarifs/offres, simulation, entretien, compatibilité** — avec extraction de la cible (« postuler à Orange » → `/postuler Orange`).
 - **Matrice de tests** : 36 cas (positifs *et* négatifs) verrouillent le comportement — ex. « comment postuler » reste `/commentpostuler`, « je cherche un emploi » reste `/mobilite`, « entretien blanc » = `/simulation` (pas `/entretien`), « génère mon cv » = `/creercv` (pas `/postuler`).

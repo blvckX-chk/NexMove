@@ -2190,6 +2190,38 @@ def test_nl_intents_extraction_cible():
     assert main._free_text_to_command("je veux postuler à orange", "je veux postuler à Orange") == "/postuler Orange"
     assert main._free_text_to_command("mes chances pour la bourse daad", "mes chances pour la bourse DAAD") == "/chances la bourse DAAD"
 
+# ── v3.66 : « comment il le veut » — préférences de forme captées et utilisées ──
+def test_capture_prefs_forme():
+    s = {"profil": {}}
+    assert main._capture_user_prefs(s, "je préfère un cv graphique")
+    assert s["profil"]["profil_plus"]["style_cv"] == "graphic"
+    assert main._capture_user_prefs(s, "en anglais stp")
+    assert s["profil"]["profil_plus"]["langue_doc"] == "anglais"
+    assert main._capture_user_prefs(s, "sois bref dans tes réponses")
+    assert s["profil"]["profil_plus"]["ton"] == "concis"
+    assert main._capture_user_prefs(s, "je ne peux pas déménager")
+    assert "déménager" in s["profil"]["profil_plus"]["contrainte_dure"]
+    # Rien d'explicite -> rien capté.
+    assert not main._capture_user_prefs(s, "ok merci")
+
+def test_prefs_dans_le_contexte():
+    s = {"profil": {"identite": {"nom": "Aicha"}, "preferences": {"objectif": "travailler"},
+                    "profil_plus": {"style_cv": "graphic", "langue_doc": "anglais", "contrainte_dure": "je reste à Cotonou"}},
+         "cv_parsed": True}
+    ctx = main._conversation_context(s)
+    assert "COMMENT il/elle veut" in ctx and "graphic" in ctx and "anglais" in ctx and "Cotonou" in ctx
+
+def test_creercv_respecte_style_prefere(monkeypatch):
+    captured = {}
+    async def fake_deliver_cv(session, style="ats", template=None):
+        captured["style"] = style; return True
+    monkeypatch.setattr(main, "_deliver_cv", fake_deliver_cv)
+    s = {"user_id": "p", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "profil": {"identite": {"nom": "Aicha"}, "competences": {"techniques": ["Couture"]},
+                                       "profil_plus": {"style_cv": "graphic"}}}
+    _run(main.process_text_message(s, "/creercv"))
+    assert captured.get("style") == "graphic"   # le style préféré est respecté
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
