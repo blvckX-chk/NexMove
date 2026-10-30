@@ -2,6 +2,10 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.72 — POUR QUI : contraintes de vie captées (#3)
+- Les contraintes réelles changent tout un conseil (un budget serré, un problème de visa, l'impossibilité de déménager…). Capture déterministe dans `profil["contraintes"]` : **budget** (« pas d'argent », « j'ai pas les moyens », « gratuit seulement »), **visa/papiers**, **mobilité/famille** (« je ne peux pas déménager », « j'ai des enfants »), **disponibilité** (« disponible immédiatement », « seulement le week-end »).
+- Remontées dans le contexte (« Contraintes : … ») pour que le conseiller en tienne compte au lieu de proposer l'impossible. Pas de faux positif.
+
 ## v3.71 — État émotionnel : adapter le ton (#9)
 - « Quelqu'un qui dit *j'y arriverai jamais* n'a pas besoin de 10 offres mais d'un cap. » Le bot détecte désormais l'état et **adapte son ton**.
 - **`_capture_mood`** (déterministe) capte 4 états : **découragé**, **anxieux**, **méfiant**, **frustré** (élisions tolérantes : « j'ai » ou « j ai »). Mémorisé 1 h.

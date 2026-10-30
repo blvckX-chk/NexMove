@@ -2354,6 +2354,29 @@ def test_humeur_dans_le_contexte():
     s["humeur"]["at"] = _t.time() - 5000
     assert "découragé" not in main._conversation_context(s)
 
+# ── v3.72 : contraintes de vie (POUR QUI · #3) ──
+@_pytest.mark.parametrize("msg,key", [
+    ("je n'ai pas d'argent pour les frais", "budget"),
+    ("j'ai pas les moyens", "budget"),
+    ("problème de visa pour la France", "visa"),
+    ("je ne peux pas déménager, j'ai une famille", "mobilité"),
+    ("disponible immédiatement", "disponibilité"),
+])
+def test_capture_life_constraints(msg, key):
+    s = {}
+    assert main._capture_life_constraints(s, msg)
+    assert key in s["profil"]["contraintes"]
+
+def test_life_constraints_pas_de_faux_positif():
+    assert not main._capture_life_constraints({}, "je cherche un emploi en finance")
+    assert not main._capture_life_constraints({}, "bonjour, comment ça va")
+
+def test_life_constraints_dans_le_contexte():
+    s = {"cv_parsed": True, "profil": {"identite": {"nom": "A"}, "preferences": {"objectif": "travailler"},
+                                       "contraintes": {"budget": "pas d'argent", "mobilité": "je dois rester à Cotonou"}}}
+    ctx = main._conversation_context(s)
+    assert "Contraintes" in ctx and ("budget" in ctx or "Cotonou" in ctx)
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
