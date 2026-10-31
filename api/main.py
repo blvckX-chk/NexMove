@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.74.0"
+VERSION         = "3.75.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1369,9 +1369,29 @@ def _is_recruiter_intent(t: str) -> bool:
 # ── Routeur de commandes ADMIN en langage naturel (compte admin uniquement) ──
 # Permet à l'admin de piloter sans slash : « stats », « les annonces », « valide 3 »,
 # « diffuser bonjour à tous », « codes valides »…  Déterministe, zéro coût LLM.
+def _codes_followup(low: str) -> str:
+    """Suivi admin sur une liste de codes DÉJÀ vérifiée : « renvoie les valides », « ceux qui restent »,
+    « les utilisés »… Renvoie 'valides' | 'utilises' | '' . Déterministe (le LLM inventerait des codes)."""
+    low = (low or "").strip()
+    if len(low) > 60:
+        return ""
+    _verbe = bool(re.search(r"\b(renvoie|renvoi|redonne|remontre|montre|affiche|donne|liste|ressors|lesquels|"
+                            r"ceux|celles|les)\b", low))
+    if not _verbe:
+        return ""
+    if re.search(r"\b(utilis[ée]s?|consomm[ée]s?|pris|épuis[ée]s?|epuis[ée]s?)\b", low):
+        return "utilises"
+    if re.search(r"\b(valides?|libres?|rest\w+|dispo\w*|encore\s+bons?|bons?|non\s+utilis[ée]s?)\b", low):
+        return "valides"
+    return ""
+
 def _admin_nl_route(low: str, t: str):
     tl = (low or "").strip()
     if not tl or tl.startswith("/"):
+        return None
+    # Si le message CONTIENT des codes collés (>=2), on NE route PAS ici : le cross-check dédié
+    # (plus précis, porte sur CES codes) s'en charge. Évite « /codes utilises » sur le store entier.
+    if len(_PRM_CODE_RE.findall(t)) >= 2:
         return None
     # Stats / tableau de bord
     if tl in ("stats", "statistiques", "statistique", "dashboard", "tableau de bord", "traction",
@@ -3410,6 +3430,22 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # Réservé au compte admin, hors flux guidés (pour qu'il puisse aussi tester les parcours candidats).
     if (_is_admin(session) and not low.startswith("/") and not session.get("sim_mode")
             and not session.get("cvbuild_step") and not session.get("recruit_step")):
+        # Suivi DÉTERMINISTE sur la dernière liste de codes vérifiée (« renvoie les valides »,
+        # « ceux utilisés »…) : on filtre CETTE liste via la base — JAMAIS le LLM (qui inventerait).
+        _cf = _codes_followup(low)
+        if _cf and session.get("last_codes"):
+            _codes = session["last_codes"]
+            st = premium_store.statuses(_codes)
+            want = "unused" if _cf == "valides" else "used"
+            sub = [c for c in _codes if st.get(c) == want]
+            if sub:
+                titre = "✅ *Valides (libres)*" if _cf == "valides" else "🔴 *Déjà utilisés*"
+                msg = (f"{titre} parmi tes {len(_codes)} codes ({len(sub)}) :\n"
+                       + "\n".join(f"`{c}`" for c in sub[:40]))
+            else:
+                msg = f"Aucun code *{_cf}* dans ta liste de {len(_codes)} codes."
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
         _acmd = _admin_nl_route(low, t)
         if _acmd:
             _push(session, "user", t)
@@ -3553,7 +3589,8 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
                     lignes.append("🔴 *Déjà utilisés :*\n" + "\n".join(f"`{c}`" for c in used[:15]))
                 if inconnus:
                     lignes.append("❔ *Inconnus (hors base · peut-être d'un ancien déploiement) :*\n" + "\n".join(f"`{c}`" for c in inconnus[:15]))
-                msg = "\n\n".join(lignes) + "\n\n_Détail complet : /codes valides · /codes utilises._"
+                msg = "\n\n".join(lignes) + "\n\n_Dis « renvoie les valides » ou « ceux utilisés » pour la sous-liste._"
+                session["last_codes"] = _codes   # mémorisé : les suivis porteront sur CETTE liste
             else:
                 msg = ("🔑 J'ai repéré plusieurs codes (ou une question). Pour activer ton abonnement, envoie "
                        "*UN SEUL* code au format `PRM-XXXXXXXX`, ou tape `/premium TON-CODE`.")

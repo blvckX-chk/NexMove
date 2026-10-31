@@ -2411,6 +2411,29 @@ def test_rank_urgent_fait_remonter_deadline_proche():
     assert ranked[0] == "B"                 # la deadline proche passe devant
     assert ranked[1:] == ["A", "C"]         # le reste garde l'ordre par score
 
+# ── v3.75 : suivi déterministe des codes (fin de l'hallucination) ──
+def test_codes_followup_detecteur():
+    assert main._codes_followup("renvoie moi ceux valide") == "valides"
+    assert main._codes_followup("ceux qui restent") == "valides"
+    assert main._codes_followup("les utilisés") == "utilises"
+    assert main._codes_followup("bonjour ça va") == ""
+
+def test_suivi_codes_sur_liste_collee(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"42"})
+    codes = main.premium_store.create_codes("premium", 21, 4, batch="sv")
+    main.premium_store.redeem(codes[0], "someone")   # 1 utilisé, 3 libres
+    s = {"user_id": "42", "chat_id": "42", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "profil": {"identite": {"nom": "Admin"}}}
+    # 1) L'admin colle la liste + question -> cross-check + mémorisation.
+    blob = "lesquels sont valides ?\n" + "\n".join(codes)
+    msg, s = _run(main.process_text_message(s, blob))
+    assert "Vérif" in msg and s.get("last_codes") == codes
+    # 2) « Renvoie moi ceux valide » -> sous-liste RÉELLE (pas d'invention), sur la liste collée.
+    msg2, s = _run(main.process_text_message(s, "renvoie moi ceux valide"))
+    assert codes[1] in msg2 and codes[0] not in msg2   # les 3 libres, pas l'utilisé
+    # jamais de proposition CV à l'admin (on teste la phrase, pas les lettres « CV » d'un code aléatoire).
+    assert "creercv" not in msg2.lower() and "envoie ton cv" not in msg2.lower()
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
