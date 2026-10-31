@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.75 — Codes premium : fin de l'hallucination sur les suivis (admin)
+- **Bug (capture admin).** « Renvoie moi ceux valide » → le bot **inventait** une liste de codes (dont un déjà utilisé et un tronqué) et proposait un CV à l'admin. Cause : ce suivi partait sur le LLM.
+- Corrigé :
+  - `_admin_nl_route` ne détourne plus un message **contenant des codes collés** (≥2) → le **cross-check** précis (sur TES codes) s'applique, plus les totaux du store.
+  - La liste collée est **mémorisée** (`last_codes`). Les suivis « renvoie les valides », « ceux qui restent », « les utilisés » sont routés **déterministes** : ils filtrent CETTE liste via la base — **jamais le LLM** (qui inventerait des codes).
+  - L'admin ne reçoit plus de proposition « envoie ton CV ».
+
 ## v3.74 — L'urgence change aussi le TRI des offres (pas que le ton)
 - En v3.69 l'urgence adaptait le ton. Désormais, quand une urgence/échéance est active, la recherche **fait remonter les opportunités à deadline PROCHE** (datable, 0-30 j) en tête, sans casser l'ordre par score pour le reste.
 - `_deadline_days_left` (jours restants, réutilise l'analyse de dates ISO / JJ-MM-AAAA / « 15 janvier 2026 ») + `_rank_urgent` (reclassement). Les offres non datables ne sont pas pénalisées entre elles.
