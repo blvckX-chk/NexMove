@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.75.0"
+VERSION         = "3.76.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3065,6 +3065,28 @@ def _strip_cv_request(message: str) -> str:
     out = " ".join(kept).strip()
     return out or ("Je pars de ton CV déjà analysé. Dis-moi la cible (poste/bourse) et je te prépare "
                    "un CV adapté + une lettre via /postuler.")
+
+# Garde-fou anti-hallucination sur la sortie CONVERSATIONNELLE du conseiller (v3.76). Le LLM ne doit
+# JAMAIS produire de faits vérifiables en chat : URL, code premium/crédit (les vrais viennent de la
+# recherche web / de la base). On les retire déterministiquement, même si le prompt est ignoré.
+_URL_IN_MSG = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
+_CODE_IN_MSG = re.compile(r"\b(?:PRM|CRD|NEX)-[A-Z0-9]{3,}\b", re.I)
+
+def _sanitize_advisor_msg(message: str) -> str:
+    """Retire d'une réponse de conversation les faits que le LLM aurait inventés (URL, codes).
+    Renvoie le message nettoyé (jamais vide : repli neutre si tout saute)."""
+    msg = message or ""
+    if not msg:
+        return msg
+    had = bool(_URL_IN_MSG.search(msg) or _CODE_IN_MSG.search(msg))
+    if not had:
+        return msg
+    # URL inventée -> on invite à coller le lien (grounding) ; code inventé -> on renvoie vers la commande.
+    msg = _URL_IN_MSG.sub("(colle-moi le lien, je l'analyse)", msg)
+    msg = _CODE_IN_MSG.sub("(ton code)", msg)
+    msg = re.sub(r"\s{2,}", " ", msg).strip()
+    logger.info(f"[anti-hallu] fait inventé retiré d'une réponse conversationnelle")
+    return msg or "Dis-moi ce que tu cherches (offres, école, logement, entretien, dossier…) et je t'oriente."
 
 def _conversation_context(session: dict) -> str:
     """Mémoire compacte et LISIBLE pour le routeur conversationnel : ce que le bot SAIT déjà
@@ -6302,6 +6324,8 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
     # Garde-fou déterministe : si le CV est DÉJÀ analysé, on ne laisse jamais le conseiller le redemander.
     if session.get("cv_parsed") and _ASK_CV_RE.search(message):
         message = _strip_cv_request(message)
+    # Garde-fou anti-hallucination : jamais d'URL ni de code INVENTÉS dans une réponse de conversation.
+    message = _sanitize_advisor_msg(message)
     if not _raw_msg:   # ni action ni réponse du LLM -> message pas compris : on le journalise.
         _log_miss(session, t, "nlu_fallback")
     _push(session, "user", t); _push(session, "assistant", message)

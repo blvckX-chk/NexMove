@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.76 — Garde-fou anti-hallucination sur les réponses conversationnelles
+- Réponse à « mieux séparer ce qui va au LLM de ce qui est déterministe » : on **enforce** la frontière au lieu de seulement la demander dans le prompt (que le LLM ignore parfois).
+- `_sanitize_advisor_msg` : dans une réponse de **conversation**, on retire déterministiquement les **faits que le LLM ne doit pas inventer** — **URLs** (remplacées par « colle-moi le lien, je l'analyse ») et **codes** PRM/CRD/NEX (→ « ton code »). Les vrais liens viennent de la recherche web / de l'analyse de lien ; les vrais codes de la base.
+- N'affecte PAS les sorties de commandes (les vraies offres gardent leurs liens). Les `/commandes` et noms de portails connus (DAAD, Campus France) sont conservés.
+
 ## v3.75 — Codes premium : fin de l'hallucination sur les suivis (admin)
 - **Bug (capture admin).** « Renvoie moi ceux valide » → le bot **inventait** une liste de codes (dont un déjà utilisé et un tronqué) et proposait un CV à l'admin. Cause : ce suivi partait sur le LLM.
 - Corrigé :
