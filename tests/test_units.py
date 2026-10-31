@@ -2434,6 +2434,27 @@ def test_suivi_codes_sur_liste_collee(monkeypatch):
     # jamais de proposition CV à l'admin (on teste la phrase, pas les lettres « CV » d'un code aléatoire).
     assert "creercv" not in msg2.lower() and "envoie ton cv" not in msg2.lower()
 
+# ── v3.76 : garde-fou anti-hallucination sur la réponse conversationnelle ──
+def test_sanitize_advisor_retire_url_et_code():
+    assert "http" not in main._sanitize_advisor_msg("Va sur https://bourse-inventee.com pour postuler")
+    assert "PRM-" not in main._sanitize_advisor_msg("Active avec PRM-ABC123 maintenant")
+    # Les commandes slash et les noms de portails connus sont conservés.
+    assert "/postuler" in main._sanitize_advisor_msg("Tape /postuler pour ton CV")
+    assert "DAAD" in main._sanitize_advisor_msg("Regarde la bourse DAAD, un portail sérieux")
+    # Message propre -> inchangé.
+    assert main._sanitize_advisor_msg("Dis-moi ton objectif") == "Dis-moi ton objectif"
+
+def test_advisor_hallucination_bloquee_end_to_end(monkeypatch):
+    # Même si le LLM invente une URL dans sa réponse, elle ne part PAS à l'utilisateur.
+    async def fake_groq(system, user, **k):
+        return {"action": "", "argument": "", "then": {"action": "", "argument": ""},
+                "message": "Je te recommande https://super-bourse-inventee.com, candidate vite !"}
+    monkeypatch.setattr(main, "call_groq", fake_groq)
+    s = {"user_id": "h", "chat_id": "h", "historique": [], "onboarding_complete": True, "etape": "ACTIF",
+         "cv_parsed": True, "profil": {"identite": {"nom": "T"}, "preferences": {"objectif": "travailler"}}}
+    msg, s = _run(main.process_text_message(s, "tu me recommandes quoi pour avancer ?"))
+    assert "http" not in msg and "inventee" not in msg
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")
