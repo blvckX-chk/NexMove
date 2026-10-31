@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.77 — /commentpostuler : plus d'adresse e-mail inventée
+- Risque réel : le LLM pouvait **inventer l'adresse du destinataire** → candidature envoyée dans le vide.
+- Désormais le destinataire n'est affiché **que s'il est ANCRÉ** (`_grounded_emails`) : présent dans l'offre analysée, dans ce que l'utilisateur a fourni, ou l'e-mail du candidat. Sinon : « *à trouver sur l'annonce / le site officiel (je n'invente pas d'adresse)* ».
+- Le corps de l'e-mail est aussi nettoyé (`_strip_invented_emails`) : toute adresse non ancrée → « [adresse à vérifier sur l'annonce] ». L'e-mail du candidat (sa signature) est conservé.
+
 ## v3.76 — Garde-fou anti-hallucination sur les réponses conversationnelles
 - Réponse à « mieux séparer ce qui va au LLM de ce qui est déterministe » : on **enforce** la frontière au lieu de seulement la demander dans le prompt (que le LLM ignore parfois).
 - `_sanitize_advisor_msg` : dans une réponse de **conversation**, on retire déterministiquement les **faits que le LLM ne doit pas inventer** — **URLs** (remplacées par « colle-moi le lien, je l'analyse ») et **codes** PRM/CRD/NEX (→ « ton code »). Les vrais liens viennent de la recherche web / de l'analyse de lien ; les vrais codes de la base.
