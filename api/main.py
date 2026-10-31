@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.76.0"
+VERSION         = "3.77.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -3072,6 +3072,24 @@ def _strip_cv_request(message: str) -> str:
 _URL_IN_MSG = re.compile(r"\b(?:https?://|www\.)\S+", re.I)
 _CODE_IN_MSG = re.compile(r"\b(?:PRM|CRD|NEX)-[A-Z0-9]{3,}\b", re.I)
 
+_EMAIL_RE = re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b")
+
+def _grounded_emails(session: dict, cible: str) -> set:
+    """Ensemble des e-mails ANCRÉS (réels) : celui du candidat + ceux présents dans l'offre analysée
+    ou dans ce que l'utilisateur a fourni. Tout e-mail hors de cet ensemble est présumé INVENTÉ."""
+    ident = (session.get("profil", {}) or {}).get("identite", {}) or {}
+    oc = session.get("offer_ctx") or {}
+    blob = " ".join(str(x) for x in (cible, ident.get("email", ""), oc.get("titre", ""),
+                                     oc.get("organisation", ""), " ".join(oc.get("criteres") or []),
+                                     session.get("last_link_cible", "")))
+    return {e.lower() for e in _EMAIL_RE.findall(blob)}
+
+def _strip_invented_emails(text: str, allowed: set) -> str:
+    """Retire d'un texte les e-mails qui ne sont PAS dans l'ensemble ancré (anti-adresse inventée)."""
+    if not text:
+        return text
+    return _EMAIL_RE.sub(lambda m: m.group(0) if m.group(0).lower() in allowed else "[adresse à vérifier sur l'annonce]", text)
+
 def _sanitize_advisor_msg(message: str) -> str:
     """Retire d'une réponse de conversation les faits que le LLM aurait inventés (URL, codes).
     Renvoie le message nettoyé (jamais vide : repli neutre si tout saute)."""
@@ -5416,13 +5434,20 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                     mode_lbl = {"email": "📧 Candidature par e-mail", "formulaire": "📝 Formulaire en ligne",
                                 "plateforme": "🌐 Plateforme de recrutement"}.get(mode, "✉️ Candidature")
                     msg = f"🧭 *Comment postuler · {_md_clean(cible)[:60]}*\n{mode_lbl}\n"
+                    # ANTI-E-MAIL INVENTÉ (v3.77) : on n'affiche un destinataire que s'il est ANCRÉ
+                    # (offre analysée / fourni). Sinon le LLM l'a deviné -> on guide vers le contact officiel.
+                    _allowed = _grounded_emails(session, cible)
                     dest = str(r.get("destinataire", "") or "").strip()
-                    if dest:
+                    _dest_mail = _EMAIL_RE.search(dest)
+                    if _dest_mail and _dest_mail.group(0).lower() in _allowed:
                         msg += f"\n📧 *Destinataire :* {dest}"
+                    elif _dest_mail:   # adresse non vérifiée -> on ne la donne PAS (anti-envoi dans le vide)
+                        msg += ("\n📧 *Destinataire :* à trouver sur l'annonce / le site officiel "
+                                "_(je n'invente pas d'adresse)_.")
                     objet = str(r.get("objet", "") or "").strip()
                     if objet:
                         msg += f"\n\n✉️ *Objet (à copier) :*\n`{objet}`"
-                    message = str(r.get("message", "") or "").strip()
+                    message = _strip_invented_emails(str(r.get("message", "") or "").strip(), _allowed)
                     if message:
                         msg += f"\n\n📝 *Message (à copier-coller) :*\n{message}"
                     champs = [c for c in (r.get("champs") or []) if isinstance(c, str) and c.strip()]

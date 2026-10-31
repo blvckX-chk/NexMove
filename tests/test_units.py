@@ -1285,7 +1285,21 @@ def test_comment_postuler(monkeypatch):
          "etape": "ACTIF", "profil": {"identite": {"nom": "Awa", "email": "a@x.co"}}}
     msg, s = _run(main.process_text_message(s, "/commentpostuler Analyste SOC chez Orange"))
     assert "Comment postuler" in msg and "Candidature SOC" in msg
-    assert "rh@x.co" in msg and "/postuler" in msg
+    # v3.77 : l'e-mail rh@x.co n'est PAS ancré (inventé par le LLM) -> pas affiché, on guide vers l'annonce.
+    assert "rh@x.co" not in msg and "l'annonce" in msg and "/postuler" in msg
+
+def test_commentpostuler_email_ancre_affiche(monkeypatch):
+    # Si l'adresse est VRAIMENT dans l'offre analysée -> on l'affiche (elle est ancrée).
+    async def fake(system, prompt, **kw):
+        return {"mode": "email", "destinataire": "jobs@acme.bj", "objet": "Candidature",
+                "message": "Bonjour, je candidate...", "etapes": ["x"], "conseil": "y"}
+    monkeypatch.setattr(main, "call_groq", fake)
+    s = {"user_id": "cp2", "chat_id": "1", "historique": [], "onboarding_complete": True,
+         "premium_tier": "premium", "premium_until": "2099-01-01T00:00:00+00:00", "etape": "ACTIF",
+         "offer_ctx": {"titre": "Dev ACME", "organisation": "ACME", "criteres": ["Contact : jobs@acme.bj"]},
+         "profil": {"identite": {"nom": "Awa", "email": "a@x.co"}}}
+    msg, s = _run(main.process_text_message(s, "/commentpostuler Dev ACME"))
+    assert "jobs@acme.bj" in msg   # ancré -> affiché
 
 def test_postuler_alerte_coordonnees_incompletes(monkeypatch):
     # v3.55 : coordonnées manquantes -> avertissement « Coordonnées incomplètes » (non bloquant, docs envoyés).
