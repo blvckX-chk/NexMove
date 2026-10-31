@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.78 — Tchavi : le bon modèle au bon niveau (fast / smart / quality)
+- Jusqu'ici les 3 tiers Tchavi tournaient tous sur `gpt-4o-mini` (un défaut « qui marche », pas optimal pour la rédaction). On peut maintenant mettre **un modèle différent par niveau** :
+  - `TCHAVI_MODEL_FAST` → conversation/routage (petit, rapide, pas cher)
+  - `TCHAVI_MODEL` → raisonnement/sélection d'offres (intermédiaire)
+  - `TCHAVI_GENERATE_MODEL` → **rédaction CV/lettre/projet** (le livrable montré) → **le plus costaud**
+- `.env.example` recommande un **modèle fort sur GENERATE** (ex. gpt-4o) tout en gardant un mini sur FAST — meilleure qualité des documents sans payer le premium sur le routage. Aucun changement de code requis pour en profiter : c'est de la config.
+
 ## v3.77 — /commentpostuler : plus d'adresse e-mail inventée
 - Risque réel : le LLM pouvait **inventer l'adresse du destinataire** → candidature envoyée dans le vide.
 - Désormais le destinataire n'est affiché **que s'il est ANCRÉ** (`_grounded_emails`) : présent dans l'offre analysée, dans ce que l'utilisateur a fourni, ou l'e-mail du candidat. Sinon : « *à trouver sur l'annonce / le site officiel (je n'invente pas d'adresse)* ».
