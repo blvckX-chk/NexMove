@@ -40,6 +40,19 @@ def test_llm_providers_bien_formes():
     # ordre = priorité de bascule : gratuits d'abord, payants en dernier recours (openrouter puis tchavi)
     assert names == ["cerebras", "groq", "gemini", "openrouter", "tchavi"]
 
+def test_tchavi_3_niveaux_de_modeles(monkeypatch):
+    # Les 3 tiers Tchavi sont configurables séparément : fast / smart (model) / quality (generate).
+    monkeypatch.setattr(llm, "TCHAVI_MODEL_FAST", "mini-fast")
+    monkeypatch.setattr(llm, "TCHAVI_MODEL", "mid-smart")
+    monkeypatch.setattr(llm, "TCHAVI_GENERATE_MODEL", "big-quality")
+    # Le provider principal : fast -> model_fast, smart -> model (indépendants).
+    tch = {"name": "tchavi", "model": llm.TCHAVI_MODEL, "model_fast": llm.TCHAVI_MODEL_FAST}
+    model_fast = tch.get("model_fast", tch["model"])
+    model_smart = tch["model"]
+    assert model_fast == "mini-fast" and model_smart == "mid-smart"
+    # Et le lead "quality" doit viser le modèle de rédaction, distinct.
+    assert llm.TCHAVI_GENERATE_MODEL == "big-quality"
+
 def test_llm_fallback_status_contient_429():
     # 429 et 5xx transitoires -> bascule vers le fournisseur suivant
     assert 429 in llm._LLM_FALLBACK_STATUS

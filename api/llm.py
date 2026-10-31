@@ -27,8 +27,15 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 # la clé n'est pas fournie. Vérifie l'URL exacte dans ton tableau de bord Tchavi (section Clés API / doc).
 TCHAVI_API_KEY  = os.getenv("TCHAVI_API_KEY", "")
 TCHAVI_BASE_URL = os.getenv("TCHAVI_BASE_URL", "https://tchavi.com/api/v1").rstrip("/")
-TCHAVI_MODEL          = os.getenv("TCHAVI_MODEL", "gpt-4o-mini")            # raisonnement/smart
-TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)   # rédaction CV/lettre (quality)
+# 3 NIVEAUX de modèles Tchavi (le bon modèle pour la bonne tâche — pas tout sur le mini) :
+#  - FAST    : routage/conversation (gros volume) -> petit modèle rapide & bon marché
+#  - SMART   : raisonnement, sélection d'offres, anti-invention -> modèle intermédiaire
+#  - QUALITY : rédaction CV/lettre/projet (le LIVRABLE montré) -> le modèle le PLUS costaud
+# Par défaut, SMART retombe sur le mini et QUALITY/FAST retombent sur SMART : configure-les dans .env
+# pour mettre un modèle fort sur la rédaction sans payer le premium sur le routage.
+TCHAVI_MODEL          = os.getenv("TCHAVI_MODEL", "gpt-4o-mini")              # tier smart (raisonnement)
+TCHAVI_MODEL_FAST     = os.getenv("TCHAVI_MODEL_FAST", TCHAVI_MODEL)          # tier fast (conversation)
+TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)      # tier quality (rédaction)
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_MODEL_FAST     = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
@@ -79,7 +86,7 @@ _LLM_PROVIDERS = [
     # mais sur le tier "quality" il passe en 1er (voir call_groq), et on peut le préférer pour le "smart"
     # via SMART_LEAD_PROVIDER=tchavi.
     {"name": "tchavi", "url": f"{TCHAVI_BASE_URL}/chat/completions",
-     "key": TCHAVI_API_KEY, "model": TCHAVI_MODEL, "model_fast": TCHAVI_MODEL,
+     "key": TCHAVI_API_KEY, "model": TCHAVI_MODEL, "model_fast": TCHAVI_MODEL_FAST,
      "api": "openai", "max_ctx": 120000},
 ]
 _LLM_FALLBACK_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
