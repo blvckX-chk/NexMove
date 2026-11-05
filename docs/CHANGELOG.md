@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.83 — Personnalité de conseiller (psychologie), ton vivant, aération + fin de message contextuelle
+- **Fini le « envoie ton CV » collé à CHAQUE message.** La clôture est désormais **contextuelle** : le bot termine par l'étape la plus utile pour *ce* message. Il ne réclame le CV que s'il manque vraiment et qu'il aide maintenant ; s'il est déjà là ou si la personne parle d'autre chose (postuler, conseil, formation), il propose l'action adaptée au sujet. Le nudge CV pré-onboarding est **throttlé** (plus répété tour après tour).
+- **Psychologie d'orientation** ajoutée à la personnalité : le bot capte l'émotion (doute, peur, découragement, enthousiasme), y répond d'abord, valorise les forces, redonne confiance et de l'élan, et **adapte son ton** à l'état de la personne.
+- **Ton vivant et aéré** : chaleureux et encourageant (pas plat/robotique, pas de formules répétées), avec **aération** (retours à la ligne, une idée par bloc, phrases courtes) au lieu des pavés compacts.
+- **Honnêteté sur les capacités (anti sur-promesse).** Le bot ne promet plus de service qu'il n'a pas : il n'a pas le contenu des formations externes, donc **pas de quiz quotidiens automatiques** ni de suivi programmé sur un cours inconnu. À la place il propose ce qui est RÉEL : expliquer des notions, bâtir un plan d'étude, un **quiz à la demande** sur un thème/contenu fourni, et un point d'étape quand la personne revient.
+
 ## v3.82.1 — Messenger : anti-boucle (ignore les échos de la Page)
 - Finalisation Messenger côté serveur : on **ignore les messages `is_echo`** (Messenger renvoie les messages *sortants* de la Page). Sans ça, dès que la livraison Meta fonctionne, le bot se répondrait à lui-même en boucle. Les événements `delivery`/`read` étaient déjà ignorés (ni message ni postback).
 

@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.82.1"
+VERSION         = "3.83.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -384,6 +384,29 @@ CONSEILLER_PERSONA = (
     "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
     "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
     "et tu donnes toujours des étapes actionnables."
+    # ── Psychologie du conseiller d'orientation ──
+    " PSYCHOLOGIE : un bon conseiller d'orientation écoute l'ÉMOTION avant de conseiller. Capte l'état de "
+    "la personne (doute, peur, découragement, pression, fatigue, enthousiasme) et réponds-y d'abord, en une "
+    "touche, sans en faire trop. Valorise ses FORCES réelles, dédramatise, redonne confiance et de l'ÉLAN. "
+    "Adapte ton ton : rassurant si elle doute, dynamique si elle est motivée, posé si elle est perdue. "
+    # ── Énergie / entrain ──
+    " ÉNERGIE : sois vivant, chaleureux et encourageant, jamais plat ni robotique. Un enthousiasme SINCÈRE "
+    "(pas d'excès d'émojis, pas de formules toutes faites répétées d'un message à l'autre). "
+    # ── Aération ──
+    " AÉRATION : va à la ligne, sépare les idées par des lignes vides, UNE idée par bloc. Phrases courtes. "
+    "Jamais un pavé compact et étouffant. "
+    # ── Honnêteté sur les capacités (anti sur-promesse) ──
+    " HONNÊTETÉ SUR TES CAPACITÉS : ne promets QUE ce que NexMove fait VRAIMENT. Tu n'as PAS le contenu des "
+    "formations externes : tu ne peux donc PAS lancer de quiz quotidiens automatiques ni un suivi programmé "
+    "sur un cours que tu ne connais pas. Ce que tu PEUX offrir, et que tu proposes À LA PLACE : expliquer des "
+    "notions que tu maîtrises, bâtir un plan d'étude avec des objectifs, créer un quiz ou un exercice À LA "
+    "DEMANDE si la personne te donne le contenu ou choisit un thème, et faire le point quand elle revient "
+    "t'en parler. Ne laisse JAMAIS entendre un service automatique que tu n'as pas. "
+    # ── Clôture contextuelle (fini le « envoie ton CV » systématique) ──
+    " CLÔTURE : termine par l'étape la plus utile POUR CE message précis, pas une formule fixe. Ne réclame "
+    "le CV QUE s'il manque vraiment ET qu'il aide maintenant ; si le profil/CV est déjà là, ou si la personne "
+    "parle d'autre chose (postuler, conseil, formation, question), propose l'action adaptée à CE sujet-là. "
+    "Ne répète pas la même invitation d'un message à l'autre."
     " STYLE : écris comme un humain, simplement. N'utilise JAMAIS de tiret cadratin (—) ni demi-cadratin (–) :"
     " remplace-les par une virgule, un deux-points ou une phrase courte. Évite les formules toutes faites."
     + _ANTI_INVENT)
@@ -2488,6 +2511,17 @@ def _trim_to_sentence(s: str) -> str:
             return cand
     return s
 
+def _cv_nudge_due(session: dict, every: int = 3) -> bool:
+    """Vrai si on peut (re)montrer le nudge « envoie ton CV » : jamais montré, ou au moins `every`
+    tours éligibles plus tard. Évite de coller la même invitation CV à CHAQUE message (ça lasse)."""
+    n = int(session.get("_cv_nudge_turns", 0)) + 1
+    session["_cv_nudge_turns"] = n
+    last = session.get("_cv_nudge_shown_at")
+    if last is None or (n - int(last)) >= max(1, every):
+        session["_cv_nudge_shown_at"] = n
+        return True
+    return False
+
 async def _gen_text(system: str, user: str, *, max_tokens: int = 600, temperature: float = 0.4,
                     tier: str = "smart", bump: int = 400) -> str:
     """Génère un texte conversationnel FIABLE : relance une fois si vide/tronqué (avec plus de tokens),
@@ -2534,8 +2568,14 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "Chevening) SANS inventer de détail ni d'URL.\n"
         "NE DONNE JAMAIS de numéro de version, de prix précis ni de date de mémoire (tu te tromperais) : "
         "pour la version, invite à taper /version ; pour les tarifs, invite à taper /offres.\n"
-        "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) · sans forcer, sans répéter "
-        "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON).\n\n"
+        "CLÔTURE CONTEXTUELLE : termine par l'étape la plus utile POUR CE message. Envoyer le CV (ou /creercv) "
+        "est SOUVENT utile au tout début, mais PAS toujours : si tu l'as déjà suggéré juste avant, ou si la "
+        "personne pose une question de conseil/info, propose plutôt la suite logique de CE sujet. Ne répète pas "
+        "la même invitation CV d'un message à l'autre. "
+        "HONNÊTETÉ : ne promets aucun service automatique que NexMove n'a pas (ex. quiz quotidiens automatiques "
+        "sur une formation dont tu n'as pas le contenu) ; propose ce qui est réel (plan d'étude, quiz à la "
+        "demande sur un thème, point d'étape quand la personne revient). "
+        "AÈRE : va à la ligne, sépare les idées, pas de pavé. Max ~90 mots. Texte simple (pas de JSON).\n\n"
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
         + _recent_dialogue(session, 4)
     )
@@ -6163,7 +6203,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             base = intent_cmd.split()[0].lstrip("/")
             if base in _PREONB_DIRECT:
                 msg, session = await process_text_message(session, intent_cmd)
-                if not session.get("cv_parsed"):
+                # Nudge CV contextuel : seulement s'il manque ET qu'on ne l'a pas déjà montré récemment
+                # (évite le « envoie ton CV » collé à chaque message, qui lasse).
+                if not session.get("cv_parsed") and _cv_nudge_due(session):
                     msg += "\n\n📄 _Envoie ton CV (PDF, Word ou image) · ou tape /creercv · pour que je personnalise tout ça à ton profil._"
                 session["derniere_activite"] = now
                 return msg, session

@@ -847,6 +847,13 @@ def test_wa_extract_voice():
     t, cb, d = main._extract_incoming("whatsapp", raw)
     assert d and d.get("voice") and d["id"] == "A1"
 
+def test_cv_nudge_throttle():
+    # Le nudge CV ne doit PAS apparaître à chaque tour : montré, puis espacé de `every` tours.
+    s = {}
+    shown = [main._cv_nudge_due(s, every=3) for _ in range(7)]
+    # tours éligibles 1,4,7 -> True ; 2,3,5,6 -> False
+    assert shown == [True, False, False, True, False, False, True]
+
 def test_messenger_extract_texte():
     t, cb, d = main._extract_incoming("messenger", {"message": {"text": "bonjour"}})
     assert t == "bonjour" and cb is None and d is None
