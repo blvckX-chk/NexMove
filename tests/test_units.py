@@ -847,6 +847,15 @@ def test_wa_extract_voice():
     t, cb, d = main._extract_incoming("whatsapp", raw)
     assert d and d.get("voice") and d["id"] == "A1"
 
+def test_messenger_extract_texte():
+    t, cb, d = main._extract_incoming("messenger", {"message": {"text": "bonjour"}})
+    assert t == "bonjour" and cb is None and d is None
+
+def test_messenger_ignore_echo():
+    # Message SORTANT de la Page renvoyé par Messenger (is_echo) -> ignoré (anti-boucle).
+    t, cb, d = main._extract_incoming("messenger", {"message": {"is_echo": True, "text": "réponse du bot"}})
+    assert t is None and cb is None and d is None
+
 
 # ------------------ Parrainage : commande + attribution via /start ------------------
 def test_cmd_parrainage_affiche_code():

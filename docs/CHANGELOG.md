@@ -2,6 +2,9 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.82.1 — Messenger : anti-boucle (ignore les échos de la Page)
+- Finalisation Messenger côté serveur : on **ignore les messages `is_echo`** (Messenger renvoie les messages *sortants* de la Page). Sans ça, dès que la livraison Meta fonctionne, le bot se répondrait à lui-même en boucle. Les événements `delivery`/`read` étaient déjà ignorés (ni message ni postback).
+
 ## v3.82 — Profil par consensus multi-modèles (panel+juge / vote) + confiance par champ
 - La **définition du profil** (CV uploadé *et* questionnaire sans CV) passe désormais par un **consensus de plusieurs modèles**, car un profil se construit rarement — on peut se payer la qualité sans risquer les 429 du quotidien.
   - **Abonnés** : *panel + juge* — 2-3 modèles extraient en parallèle, un modèle « juge » fusionne en **un profil fidèle** (union des listes, majorité sur les conflits, **zéro invention**).

@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.82.0"
+VERSION         = "3.82.1"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -7823,6 +7823,10 @@ def _extract_incoming(channel, raw):
             text = "__wa_unsupported__"   # message poli renvoyé plus bas
     elif channel == "messenger":
         pb = raw.get("postback"); msg = raw.get("message")
+        # Écho : Messenger renvoie les messages SORTANTS de la Page (is_echo). On les ignore,
+        # sinon le bot se répondrait à lui-même en boucle. (delivery/read n'ont ni message ni postback.)
+        if msg and msg.get("is_echo"):
+            return None, None, None
         if pb:
             callback = pb.get("payload")
         elif msg:
