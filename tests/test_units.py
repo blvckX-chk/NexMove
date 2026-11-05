@@ -2469,6 +2469,28 @@ def test_advisor_hallucination_bloquee_end_to_end(monkeypatch):
     msg, s = _run(main.process_text_message(s, "tu me recommandes quoi pour avancer ?"))
     assert "http" not in msg and "inventee" not in msg
 
+# ── v3.79 : analyse d'image à la demande (vision générale) ──
+def test_wants_image_analysis():
+    assert main._wants_image_analysis("analyse cette capture")
+    assert main._wants_image_analysis("regarde cette conversation et comprends le contexte")
+    assert main._wants_image_analysis("que vois-tu sur l'image")
+    assert not main._wants_image_analysis("voici mon cv")
+    assert not main._wants_image_analysis("mon cv en pièce jointe")
+
+def test_image_analysee_a_la_demande(monkeypatch):
+    sent = {}
+    async def cap(session, text, **k):
+        sent["msg"] = text; return True
+    async def fake_vision(img, mime="image/jpeg", question=""):
+        return "La capture montre une conversation sur les ressources humaines ; voici le contexte."
+    monkeypatch.setattr(main, "deliver_text", cap)
+    monkeypatch.setattr(main, "analyze_image_question", fake_vision)
+    monkeypatch.setattr(main, "_quota_check", lambda *a, **k: (True, 0))
+    s = {"user_id": "img", "chat_id": "1", "profil": {}}
+    # Une image (entête PNG) + légende « analyse cette capture » -> vision, PAS « pas un CV ».
+    _run(main.process_cv(s, b"\x89PNG\r\n\x1a\n" + b"x" * 50, filename="capture.png", caption="analyse cette capture et comprends le contexte"))
+    assert "ressources humaines" in sent.get("msg", "") and "cv" not in sent.get("msg", "").lower()
+
 # ── Diffusion admin ciblée (v2.77) ──
 def test_parse_broadcast_args():
     filters, msg, send, tous = main._parse_broadcast_args("pays:canada tier:premium envoyer Bonjour à tous")

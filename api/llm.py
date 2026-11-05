@@ -353,6 +353,46 @@ async def analyze_screenshot_vision(img_bytes: bytes, mime: str = "image/jpeg", 
         return ""
 
 
+async def analyze_image_question(img_bytes: bytes, mime: str = "image/jpeg", question: str = "") -> str:
+    """Analyse GÉNÉRALE d'une image/capture à la demande : lit ce qu'il y a dessus (conversation,
+    annonce, document, écran…) et répond à la QUESTION de l'utilisateur. Neutre (pas « guidage
+    plateforme »). Renvoie '' si indisponible. N'exige PAS PIL (octets envoyés directement)."""
+    if not GEMINI_API_KEY:
+        return ""
+    system = (
+        "Tu es NexMove, assistant mobilité/emploi pour des francophones d'Afrique de l'Ouest. "
+        "On te donne une IMAGE (souvent une capture d'écran : conversation, annonce, document, e-mail…) "
+        "et une QUESTION. Lis attentivement le contenu de l'image, RÉSUME le contexte utile en 1-2 phrases, "
+        "puis RÉPONDS précisément à la question en t'appuyant sur ce que montre l'image. Français, tutoiement, "
+        "concret, sans blabla. Ne DÉCRIS pas inutilement toute l'image : va à ce qui sert la question. "
+        "Si l'image est illisible, dis-le simplement. Pas de JSON, pas de Markdown lourd."
+    )
+    if question:
+        system += f"\n\nQUESTION : {question[:400]}"
+    payload = {
+        "contents": [{"parts": [
+            {"text": system},
+            {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
+        ]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 900},
+    }
+    for model in (GEMINI_VISION_MODEL, GEMINI_MODEL):
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+            r = await http().post(url, json=payload, timeout=45.0)
+            if r.status_code != 200:
+                logger.warning(f"[img-q] {model} {r.status_code}: {r.text[:150]}")
+                continue
+            cands = r.json().get("candidates") or []
+            if cands:
+                txt = "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", [])).strip()
+                if txt:
+                    return txt
+        except Exception as e:
+            logger.warning(f"[img-q] {model} {e}")
+    return ""
+
+
 async def extract_text_vision(img_bytes: bytes, mime: str = "image/jpeg") -> str:
     """Transcrit TOUT le texte visible d'une image (affiche/annonce stylisée, flyer, bannière…)
     via la vision — là où l'OCR classique (tesseract) échoue sur les visuels graphiques.

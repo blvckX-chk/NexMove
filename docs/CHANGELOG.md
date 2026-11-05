@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.79 — Analyser une image/capture à la demande (vision générale)
+- **Bug (capture).** On envoie une capture d'écran (une conversation) avec « analyse-la pour le contexte » → le bot la traitait comme un CV et répondait « il ne ressemble pas à un cv ». Message confus.
+- Désormais : si la **légende demande d'analyser l'image** (« analyse cette capture », « regarde cette conversation », « comprends le contexte », « que vois-tu », « explique cette image »…), le bot **lit l'image par vision et répond à la question** (`analyze_image_question`), au lieu de la refuser comme CV.
+- Fonction vision **générale** (neutre), distincte du « guidage plateforme » : résume le contexte utile puis répond précisément. Quota « guide » (admin illimité).
+
 ## v3.78 — Tchavi : le bon modèle au bon niveau (fast / smart / quality)
 - Jusqu'ici les 3 tiers Tchavi tournaient tous sur `gpt-4o-mini` (un défaut « qui marche », pas optimal pour la rédaction). On peut maintenant mettre **un modèle différent par niveau** :
   - `TCHAVI_MODEL_FAST` → conversation/routage (petit, rapide, pas cher)
