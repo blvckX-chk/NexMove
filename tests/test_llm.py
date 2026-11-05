@@ -79,6 +79,31 @@ def test_llm_fallback_status_contient_429():
     for code in (500, 502, 503, 504):
         assert code in llm._LLM_FALLBACK_STATUS
 
+def test_tier_gating_premium_filtre_pour_gratuit(monkeypatch):
+    # Compte gratuit : les fournisseurs PREMIUM (tchavi/openrouter + variantes -gen) sont retirés.
+    assert llm._PREMIUM_PROVIDER_NAMES == {"tchavi", "openrouter", "tchavi-gen", "openrouter-gen"}
+    # Par défaut (admin / appels internes) : premium autorisé.
+    assert llm._premium_allowed() is True
+    # Gratuit : on coupe le premium.
+    llm.set_allow_premium(False)
+    assert llm._premium_allowed() is False
+    # Les noms premium doivent bien exister parmi les providers configurés (sinon le filtre est inutile).
+    noms = {p["name"] for p in llm._LLM_PROVIDERS}
+    assert {"tchavi", "openrouter"}.issubset(noms)
+    # Payant/admin : premium réautorisé.
+    llm.set_allow_premium(True)
+    assert llm._premium_allowed() is True
+
+def test_tier_gating_vision_tchavi_bloquee_pour_gratuit(monkeypatch):
+    import asyncio
+    # Même avec une clé Tchavi, un compte gratuit ne passe PAS par la vision premium (repli Gemini).
+    monkeypatch.setattr(llm, "TCHAVI_API_KEY", "fake-key")
+    monkeypatch.setattr(llm, "TCHAVI_VISION_MODEL", "gpt-4o")
+    llm.set_allow_premium(False)
+    out = asyncio.run(llm._vision_tchavi(b"x", "image/png", "q"))
+    assert out == ""   # bloqué -> chaîne retombe sur Gemini gratuit
+    llm.set_allow_premium(True)  # reset pour les autres tests
+
 def test_embeddings_available_sans_cle():
     # Sans GEMINI_API_KEY, on doit retomber en lexical (False)
     llm.GEMINI_API_KEY = ""   # patch local

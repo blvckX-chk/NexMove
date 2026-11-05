@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.80.0"
+VERSION         = "3.81.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -301,7 +301,7 @@ class MobilityRequest(BaseModel):
     contraintes: dict = Field(default={})
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
-from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
+from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision, set_allow_premium,
                  analyze_screenshot_vision, analyze_image_question, extract_text_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY, TCHAVI_API_KEY)  # noqa: F401
@@ -3455,6 +3455,8 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
     profil = session.get("profil", {}) or {}   # disponible pour TOUS les handlers (évite UnboundLocalError)
+    # Gating modèles par TIER : premium (Tchavi) pour admin/payant, modèles gratuits pour les gratuits.
+    set_allow_premium(_user_tier(session) != "free")
 
     # Bug en attente de capture : un message TEXTE qui n'est pas un /bug annule l'attente
     # (évite qu'un CV envoyé ensuite parte par erreur comme capture de bug).
@@ -7427,6 +7429,7 @@ async def _process_bug_screenshot(session, data, filename, caption=""):
 
 async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
     uid = session.get("user_id")
+    set_allow_premium(_user_tier(session) != "free")   # premium (Tchavi) seulement pour admin/payant
     # Signalement de bug : une capture arrive après /bug (mode armé) ou avec une légende « bug ».
     _cap_low = (caption or "").strip().lower()
     if session.get("bug_mode") or _cap_low.startswith(("/bug", "/probleme", "/problème", "/signaler", "bug")):

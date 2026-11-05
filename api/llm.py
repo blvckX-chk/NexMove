@@ -6,7 +6,7 @@ Extrait de main.py (PR-B du refactor). Comportement STRICTEMENT identique :
 - même analyse vision Gemini pour les CV en image
 """
 from __future__ import annotations
-import os, json, hashlib, base64, asyncio, math, logging
+import os, json, hashlib, base64, asyncio, math, logging, contextvars
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -39,6 +39,22 @@ TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)      # 
 # Modèle VISION via Tchavi (lecture d'images/captures). DOIT supporter la vision (gpt-4o, claude, gemini…).
 # Défaut = le modèle quality. Repli automatique sur Gemini si vide/échec -> jamais de panne.
 TCHAVI_VISION_MODEL   = os.getenv("TCHAVI_VISION_MODEL", TCHAVI_GENERATE_MODEL)
+
+# Gating par TIER : même LOGIQUE pour tous, mais les modèles PREMIUM (Tchavi/OpenRouter) sont réservés
+# à l'admin et aux abonnés payants. Les comptes gratuits gardent tout le système mais sur modèles gratuits.
+# Réglé par requête via set_allow_premium() ; défaut True (appels internes/admin).
+_PREMIUM_PROVIDER_NAMES = {"tchavi", "openrouter", "tchavi-gen", "openrouter-gen"}
+_ALLOW_PREMIUM = contextvars.ContextVar("allow_premium", default=True)
+
+def set_allow_premium(allowed: bool) -> None:
+    """À appeler au début du traitement d'un message : True pour admin/payant, False pour gratuit."""
+    _ALLOW_PREMIUM.set(bool(allowed))
+
+def _premium_allowed() -> bool:
+    try:
+        return _ALLOW_PREMIUM.get()
+    except Exception:
+        return True
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_MODEL_FAST     = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
@@ -172,6 +188,9 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
         # On met le fournisseur préféré en tête pour le conversationnel (meilleur contexte/anti-invention),
         # sans casser la chaîne de repli (tri stable : les autres gardent leur ordre).
         providers = sorted(_LLM_PROVIDERS, key=lambda p: p["name"] != SMART_LEAD_PROVIDER)
+    # Compte gratuit : on retire les fournisseurs PREMIUM (même logique, modèles gratuits).
+    if not _premium_allowed():
+        providers = [p for p in providers if p["name"] not in _PREMIUM_PROVIDER_NAMES]
     for prov in providers:
         if not prov["key"]:
             continue
@@ -370,8 +389,9 @@ _VISION_SYSTEM = (
 )
 
 async def _vision_tchavi(img_bytes: bytes, mime: str, question: str) -> str:
-    """Analyse d'image via Tchavi (format OpenAI image_url). '' si pas de clé / modèle sans vision / échec."""
-    if not (TCHAVI_API_KEY and TCHAVI_VISION_MODEL):
+    """Analyse d'image via Tchavi (format OpenAI image_url). '' si pas de clé / modèle sans vision / échec
+    / compte gratuit (les comptes gratuits passent par la vision gratuite Gemini)."""
+    if not (TCHAVI_API_KEY and TCHAVI_VISION_MODEL) or not _premium_allowed():
         return ""
     data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode()}"
     payload = {"model": TCHAVI_VISION_MODEL,

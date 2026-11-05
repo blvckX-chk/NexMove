@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.81 — Modèles par tier : premium pour admin/payant, gratuit pour les comptes gratuits
+- **Même système pour tous, modèles différents selon le tier.** La logique (analyse, routage, anti-invention, contexte…) est identique pour tout le monde. Seuls les **modèles premium** (Tchavi / OpenRouter payants) sont réservés à l'**admin et aux abonnés payants** ; les **comptes gratuits gardent tout le système** mais sur les **modèles gratuits** (Cerebras → Groq → Gemini).
+- Mise en œuvre : `set_allow_premium(tier != "free")` appelé au début de `process_text_message` et `process_cv` ; dans `call_groq`, les fournisseurs premium sont retirés de la chaîne de repli pour un compte gratuit, et la **vision Tchavi** est désactivée pour le gratuit (repli automatique sur la vision Gemini). Aucune panne : la chaîne gratuite reste complète.
+- Zéro coût premium accidentel sur les comptes gratuits, qualité maximale pour l'admin et les packs payants.
+
 ## v3.80 — Analyse d'image via Tchavi (premium) + prompt structuré
 - L'analyse d'image (v3.79) passait par Gemini direct. Désormais elle route **par Tchavi EN PREMIER** (modèle premium, `TCHAVI_VISION_MODEL`, défaut = le modèle quality), avec **repli automatique sur Gemini** si le modèle ne gère pas la vision ou échoue → jamais de panne.
 - **Prompt structuré et présentable** : la réponse suit toujours *Contexte* (ce que montre l'image) → *Réponse* (précise, ancrée sur le visible) → *Et après* (action suivante si utile). Anti-invention : si une info n'est pas visible, le bot le dit.
