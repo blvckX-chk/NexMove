@@ -7880,6 +7880,9 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
     session["chat_id"] = chat_id
     if username and username != "utilisateur":
         session["username"] = username
+    # Gating modèles par TIER posé au point d'entrée UNIQUE du routeur : couvre vocal, CV, image,
+    # callbacks et texte, ainsi que tout handler ajouté plus tard (anti-fuite premium « fail-open »).
+    set_allow_premium(_user_tier(session) != "free")
     text, callback, doc = _extract_incoming(channel, raw)
     # Message vocal : on télécharge, on transcrit (Gemini), et on traite comme du texte.
     if doc and doc.get("voice"):
