@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.82 — Profil par consensus multi-modèles (panel+juge / vote) + confiance par champ
+- La **définition du profil** (CV uploadé *et* questionnaire sans CV) passe désormais par un **consensus de plusieurs modèles**, car un profil se construit rarement — on peut se payer la qualité sans risquer les 429 du quotidien.
+  - **Abonnés** : *panel + juge* — 2-3 modèles extraient en parallèle, un modèle « juge » fusionne en **un profil fidèle** (union des listes, majorité sur les conflits, **zéro invention**).
+  - **Gratuits** : *vote de cohérence* — même extraction sur plusieurs **modèles gratuits**, on garde les champs qui font consensus (base = la version la plus complète, majorité sur les scalaires, union dédupliquée sur les listes).
+- **Confiance/provenance gardée par champ** dans `profil["_meta"]` (méthode, taux d'accord, modèles utilisés) → base pour redemander plus tard les champs incertains.
+- **Idempotence (« garder »)** : empreinte de la source (`source_hash`). Même CV renvoyé → on **garde** le profil, pas de ré-extraction (ni coût, ni latence).
+- Repli propre : < 2 modèles dispos ou juge en échec → extraction standard / vote → **jamais de panne**. Respecte le gating tier (premium filtré pour le gratuit).
+- QC : gating tier posé aussi au **point d'entrée unique du routeur** (`_route_incoming`) → tous les chemins (vocal, CV, image, texte) et tout handler futur couverts (anti fuite premium « fail-open »).
+
 ## v3.81 — Modèles par tier : premium pour admin/payant, gratuit pour les comptes gratuits
 - **Même système pour tous, modèles différents selon le tier.** La logique (analyse, routage, anti-invention, contexte…) est identique pour tout le monde. Seuls les **modèles premium** (Tchavi / OpenRouter payants) sont réservés à l'**admin et aux abonnés payants** ; les **comptes gratuits gardent tout le système** mais sur les **modèles gratuits** (Cerebras → Groq → Gemini).
 - Mise en œuvre : `set_allow_premium(tier != "free")` appelé au début de `process_text_message` et `process_cv` ; dans `call_groq`, les fournisseurs premium sont retirés de la chaîne de repli pour un compte gratuit, et la **vision Tchavi** est désactivée pour le gratuit (repli automatique sur la vision Gemini). Aucune panne : la chaîne gratuite reste complète.

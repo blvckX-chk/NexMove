@@ -2029,12 +2029,12 @@ def test_reupload_cv_different_preserve_preferences(monkeypatch):
     monkeypatch.setattr(main, "deliver_text", cap)
     monkeypatch.setattr(main, "_quota_or_credit", lambda *a, **k: (True, False, 5))
     monkeypatch.setattr(main, "extract_text_pdf", lambda *a, **k: "Ketsia Mensah, styliste modéliste, licence en mode, compétences couture, coupe, montage et moulage sur mannequin, expérience en atelier.")
-    # On patche l'appel LLM de structuration via call_groq (retourne le profil).
-    async def fake_groq(system, user, **k):
+    # On patche la structuration du profil (désormais via le consensus multi-modèles).
+    async def fake_consensus(system, user, **k):
         return {"est_cv": True, "identite": {"nom": "Ketsia Mensah"},
                 "formation": [{"diplome": "Licence mode"}], "competences": {"techniques": ["Couture"]},
                 "preferences": {"objectif": "etudier"}, "bilan": {"forces": ["Créativité"]}}
-    monkeypatch.setattr(main, "call_groq", fake_groq)
+    monkeypatch.setattr(main, "build_profile_consensus", fake_consensus)
     s = {"user_id": "up1", "chat_id": "1", "onboarding_complete": True, "etape": "ACTIF", "cv_parsed": True,
          "historique": [], "profil": {"identite": {"nom": "Ketsia"},
                                        "preferences": {"objectif": "travailler", "mots_cles": "stylisme"}}}

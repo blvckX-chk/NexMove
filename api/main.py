@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.81.0"
+VERSION         = "3.82.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -302,6 +302,7 @@ class MobilityRequest(BaseModel):
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
 from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision, set_allow_premium,
+                 build_profile_consensus, profile_source_hash,
                  analyze_screenshot_vision, analyze_image_question, extract_text_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY, TCHAVI_API_KEY)  # noqa: F401
@@ -2656,8 +2657,9 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
                   '"experience":[{"poste":"","organisation":"","type":"","duree":"","missions":[]}],'
                   '"competences":{"techniques":[],"outils":[],"soft_skills":[]},'
                   '"bilan":{"forces":["..."],"axes":["..."],"pistes":["..."]},"niveau_global":"junior|mid|senior","resume_profil":""}')
-        profil = await call_groq(system, f"Infos utilisateur :\n{raw}\n\nSchéma JSON attendu : {schema}",
-                                 temperature=0.2, max_tokens=1500)
+        profil = await build_profile_consensus(
+            system, f"Infos utilisateur :\n{raw}\n\nSchéma JSON attendu : {schema}",
+            source_text=raw, temperature=0.2, max_tokens=1500)
     except Exception as e:
         logger.error(f"[cvbuild] structuration: {e}")
     if not isinstance(profil, dict) or not (profil.get("identite") or {}).get("nom"):
@@ -7614,12 +7616,22 @@ Document: {cv_text[:6000]}"""
     if profil_from_vision:
         profil = profil_from_vision   # analyse vision directe (image) : pas de deuxième appel LLM
     else:
-        try:
-            profil = await call_groq(system, prompt, temperature=0.1, max_tokens=3500)
-        except Exception as e:
-            logger.error(f"[cv] analyse LLM échouée: {e}")
-            await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute · je m'en occupe dès que possible.")
-            return
+        # Idempotence : même CV renvoyé -> on ne relance pas le consensus (on garde le profil).
+        _src_hash = profile_source_hash(cv_text[:6000])
+        _prev = session.get("profil") or {}
+        _prev_ok = bool((_prev.get("identite") or {}).get("nom") or _prev.get("formation") or _prev.get("experience"))
+        if (_prev.get("_meta") or {}).get("source_hash") == _src_hash and _prev_ok:
+            logger.info("[cv] source identique -> profil gardé (pas de ré-extraction)")
+            profil = _prev
+        else:
+            try:
+                # Consensus multi-modèles pour la DÉFINITION du profil (panel+juge payant / vote gratuit).
+                profil = await build_profile_consensus(system, prompt, source_text=cv_text[:6000],
+                                                       temperature=0.1, max_tokens=3500)
+            except Exception as e:
+                logger.error(f"[cv] analyse LLM échouée: {e}")
+                await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute · je m'en occupe dès que possible.")
+                return
     if not isinstance(profil, dict) or not profil:
         await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
         return
