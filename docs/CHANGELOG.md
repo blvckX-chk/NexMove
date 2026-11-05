@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.80 — Analyse d'image via Tchavi (premium) + prompt structuré
+- L'analyse d'image (v3.79) passait par Gemini direct. Désormais elle route **par Tchavi EN PREMIER** (modèle premium, `TCHAVI_VISION_MODEL`, défaut = le modèle quality), avec **repli automatique sur Gemini** si le modèle ne gère pas la vision ou échoue → jamais de panne.
+- **Prompt structuré et présentable** : la réponse suit toujours *Contexte* (ce que montre l'image) → *Réponse* (précise, ancrée sur le visible) → *Et après* (action suivante si utile). Anti-invention : si une info n'est pas visible, le bot le dit.
+- `.env` : `TCHAVI_VISION_MODEL` (doit supporter la vision : gpt-4o, claude, gemini…).
+
 ## v3.79 — Analyser une image/capture à la demande (vision générale)
 - **Bug (capture).** On envoie une capture d'écran (une conversation) avec « analyse-la pour le contexte » → le bot la traitait comme un CV et répondait « il ne ressemble pas à un cv ». Message confus.
 - Désormais : si la **légende demande d'analyser l'image** (« analyse cette capture », « regarde cette conversation », « comprends le contexte », « que vois-tu », « explique cette image »…), le bot **lit l'image par vision et répond à la question** (`analyze_image_question`), au lieu de la refuser comme CV.

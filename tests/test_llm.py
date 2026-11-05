@@ -40,6 +40,26 @@ def test_llm_providers_bien_formes():
     # ordre = priorité de bascule : gratuits d'abord, payants en dernier recours (openrouter puis tchavi)
     assert names == ["cerebras", "groq", "gemini", "openrouter", "tchavi"]
 
+def test_vision_route_tchavi_dabord_puis_gemini(monkeypatch):
+    import asyncio
+    calls = []
+    async def fake_tchavi(img, mime, q):
+        calls.append("tchavi"); return "ANALYSE TCHAVI"
+    async def fake_gemini(img, mime, q):
+        calls.append("gemini"); return "ANALYSE GEMINI"
+    monkeypatch.setattr(llm, "_vision_tchavi", fake_tchavi)
+    monkeypatch.setattr(llm, "_vision_gemini", fake_gemini)
+    # Tchavi répond -> on l'utilise, Gemini pas appelé.
+    out = asyncio.run(llm.analyze_image_question(b"x", "image/png", "q"))
+    assert out == "ANALYSE TCHAVI" and calls == ["tchavi"]
+    # Tchavi vide (modèle sans vision / pas de clé) -> repli Gemini.
+    calls.clear()
+    async def empty_tchavi(img, mime, q):
+        calls.append("tchavi"); return ""
+    monkeypatch.setattr(llm, "_vision_tchavi", empty_tchavi)
+    out2 = asyncio.run(llm.analyze_image_question(b"x", "image/png", "q"))
+    assert out2 == "ANALYSE GEMINI" and calls == ["tchavi", "gemini"]
+
 def test_tchavi_3_niveaux_de_modeles(monkeypatch):
     # Les 3 tiers Tchavi sont configurables séparément : fast / smart (model) / quality (generate).
     monkeypatch.setattr(llm, "TCHAVI_MODEL_FAST", "mini-fast")
