@@ -36,6 +36,9 @@ TCHAVI_BASE_URL = os.getenv("TCHAVI_BASE_URL", "https://tchavi.com/api/v1").rstr
 TCHAVI_MODEL          = os.getenv("TCHAVI_MODEL", "gpt-4o-mini")              # tier smart (raisonnement)
 TCHAVI_MODEL_FAST     = os.getenv("TCHAVI_MODEL_FAST", TCHAVI_MODEL)          # tier fast (conversation)
 TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)      # tier quality (rédaction)
+# Modèle VISION via Tchavi (lecture d'images/captures). DOIT supporter la vision (gpt-4o, claude, gemini…).
+# Défaut = le modèle quality. Repli automatique sur Gemini si vide/échec -> jamais de panne.
+TCHAVI_VISION_MODEL   = os.getenv("TCHAVI_VISION_MODEL", TCHAVI_GENERATE_MODEL)
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_MODEL_FAST     = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
@@ -353,35 +356,57 @@ async def analyze_screenshot_vision(img_bytes: bytes, mime: str = "image/jpeg", 
         return ""
 
 
-async def analyze_image_question(img_bytes: bytes, mime: str = "image/jpeg", question: str = "") -> str:
-    """Analyse GÉNÉRALE d'une image/capture à la demande : lit ce qu'il y a dessus (conversation,
-    annonce, document, écran…) et répond à la QUESTION de l'utilisateur. Neutre (pas « guidage
-    plateforme »). Renvoie '' si indisponible. N'exige PAS PIL (octets envoyés directement)."""
+# Prompt VISION structuré : lit l'image et répond de façon PRÉSENTABLE (contexte -> réponse -> suite).
+_VISION_SYSTEM = (
+    "Tu es NexMove, assistant mobilité/emploi pour des francophones d'Afrique de l'Ouest. "
+    "On te donne une IMAGE (souvent une capture : conversation, annonce, document, e-mail, écran…) et une "
+    "QUESTION. Lis attentivement l'image, puis réponds en français, en TUTOYANT, de façon PRÉSENTABLE et courte, "
+    "dans cet ordre exact :\n"
+    "• *Contexte* : 1 phrase sur ce que montre l'image (de quoi il s'agit).\n"
+    "• *Réponse* : réponds précisément à la question, en t'appuyant sur ce qui est visible (2-4 phrases).\n"
+    "• *Et après* : 1 action concrète suivante (facultatif, seulement si utile).\n"
+    "N'invente rien : si une info n'est pas visible, dis-le. Si l'image est illisible, dis-le et demande une "
+    "capture plus nette. Pas de JSON, pas de Markdown lourd (juste ces 3 puces)."
+)
+
+async def _vision_tchavi(img_bytes: bytes, mime: str, question: str) -> str:
+    """Analyse d'image via Tchavi (format OpenAI image_url). '' si pas de clé / modèle sans vision / échec."""
+    if not (TCHAVI_API_KEY and TCHAVI_VISION_MODEL):
+        return ""
+    data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode()}"
+    payload = {"model": TCHAVI_VISION_MODEL,
+               "messages": [{"role": "system", "content": _VISION_SYSTEM},
+                            {"role": "user", "content": [
+                                {"type": "text", "text": (question or "Analyse cette image.")[:500]},
+                                {"type": "image_url", "image_url": {"url": data_uri}}]}],
+               "temperature": 0.3, "max_tokens": 900}
+    try:
+        r = await http().post(f"{TCHAVI_BASE_URL}/chat/completions",
+                              headers={"Authorization": f"Bearer {TCHAVI_API_KEY}"}, json=payload, timeout=45.0)
+        if r.status_code != 200:
+            logger.warning(f"[img-q] tchavi {TCHAVI_VISION_MODEL} {r.status_code}: {r.text[:150]}")
+            return ""
+        txt = (r.json().get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+        return txt.strip()
+    except Exception as e:
+        logger.warning(f"[img-q] tchavi {e}")
+        return ""
+
+async def _vision_gemini(img_bytes: bytes, mime: str, question: str) -> str:
+    """Repli : analyse d'image via Gemini (inline_data). '' si indisponible."""
     if not GEMINI_API_KEY:
         return ""
-    system = (
-        "Tu es NexMove, assistant mobilité/emploi pour des francophones d'Afrique de l'Ouest. "
-        "On te donne une IMAGE (souvent une capture d'écran : conversation, annonce, document, e-mail…) "
-        "et une QUESTION. Lis attentivement le contenu de l'image, RÉSUME le contexte utile en 1-2 phrases, "
-        "puis RÉPONDS précisément à la question en t'appuyant sur ce que montre l'image. Français, tutoiement, "
-        "concret, sans blabla. Ne DÉCRIS pas inutilement toute l'image : va à ce qui sert la question. "
-        "Si l'image est illisible, dis-le simplement. Pas de JSON, pas de Markdown lourd."
-    )
-    if question:
-        system += f"\n\nQUESTION : {question[:400]}"
-    payload = {
-        "contents": [{"parts": [
-            {"text": system},
-            {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}},
-        ]}],
-        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 900},
-    }
+    sys_q = _VISION_SYSTEM + (f"\n\nQUESTION : {question[:400]}" if question else "")
+    payload = {"contents": [{"parts": [
+        {"text": sys_q},
+        {"inline_data": {"mime_type": mime, "data": base64.b64encode(img_bytes).decode()}}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": 900}}
     for model in (GEMINI_VISION_MODEL, GEMINI_MODEL):
         try:
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
             r = await http().post(url, json=payload, timeout=45.0)
             if r.status_code != 200:
-                logger.warning(f"[img-q] {model} {r.status_code}: {r.text[:150]}")
+                logger.warning(f"[img-q] gemini {model} {r.status_code}: {r.text[:150]}")
                 continue
             cands = r.json().get("candidates") or []
             if cands:
@@ -389,8 +414,20 @@ async def analyze_image_question(img_bytes: bytes, mime: str = "image/jpeg", que
                 if txt:
                     return txt
         except Exception as e:
-            logger.warning(f"[img-q] {model} {e}")
+            logger.warning(f"[img-q] gemini {model} {e}")
     return ""
+
+async def analyze_image_question(img_bytes: bytes, mime: str = "image/jpeg", question: str = "") -> str:
+    """Analyse GÉNÉRALE d'une image/capture à la demande (vision) : lit le contenu et répond à la QUESTION,
+    de façon présentable. Route par TCHAVI EN PREMIER (modèle premium), repli GEMINI -> jamais de panne."""
+    rep = await _vision_tchavi(img_bytes, mime, question)
+    if rep:
+        logger.info("[img-q] analysé via tchavi")
+        return rep
+    rep = await _vision_gemini(img_bytes, mime, question)
+    if rep:
+        logger.info("[img-q] analysé via gemini (repli)")
+    return rep
 
 
 async def extract_text_vision(img_bytes: bytes, mime: str = "image/jpeg") -> str:
