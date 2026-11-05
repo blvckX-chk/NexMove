@@ -74,3 +74,28 @@ Pour ouvrir à tout le monde :
   (b) `MESSENGER_TOKEN` absent/erroné ; (c) tu écris depuis un compte sans rôle sur l'app (mode dev) ;
   (d) `META_APP_SECRET` erroné → signatures rejetées (regarde les logs : « signature invalide »).
 - **Logs** : `cd <dossier-deploiement> && docker compose logs --tail=50`.
+
+### ⭐ Test décisif : « les logs montrent GET mais jamais POST »
+C'est LE symptôme « Meta ne livre rien ». Dans 9 cas sur 10 : **la Page n'est pas abonnée à l'app**.
+Attention, il y a DEUX abonnements différents, et il faut **les deux** :
+1. **App → Webhooks** : s'abonner aux *champs* `messages` + `messaging_postbacks` (puis cliquer **Confirmer**).
+2. **App → Messenger → Paramètres API** : *abonner la PAGE à l'app* (bouton **Ajouter des abonnements** / **Subscribe** à côté du nom de la Page). ← **l'étape le plus souvent oubliée.**
+
+Vérifie l'abonnement de la Page en une commande (remplace `PAGE_TOKEN`) :
+```bash
+curl -s "https://graph.facebook.com/v21.0/me/subscribed_apps?access_token=PAGE_TOKEN"
+```
+- Réponse `{"data": []}` → la Page **n'est pas abonnée** : abonne-la (bouton ci-dessus) ou en API :
+```bash
+curl -s -X POST "https://graph.facebook.com/v21.0/me/subscribed_apps" \
+  -d "subscribed_fields=messages,messaging_postbacks" -d "access_token=PAGE_TOKEN"
+# attendu : {"success": true}
+```
+- Réponse avec ton app et `messages` dans `subscribed_fields` → l'abonnement est bon ; regarde alors
+  le **mode dev** : en *Développement*, seul un compte **admin/dev/testeur** de l'app peut écrire à la Page.
+
+### Vérifier que le token de Page est le bon
+```bash
+curl -s "https://graph.facebook.com/v21.0/me?access_token=PAGE_TOKEN"
+# doit renvoyer l'ID + le NOM de ta Page NexMove (pas une erreur de token).
+```
