@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.78.0"
+VERSION         = "3.79.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -302,7 +302,7 @@ class MobilityRequest(BaseModel):
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
 from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
-                 analyze_screenshot_vision, extract_text_vision, transcribe_audio,
+                 analyze_screenshot_vision, analyze_image_question, extract_text_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY, TCHAVI_API_KEY)  # noqa: F401
 
@@ -7327,6 +7327,42 @@ def render_timeline_png(stages, current_idx: int, title: str = "Ma feuille de ro
     return buf.getvalue()
 
 
+# Demande d'ANALYSE d'une image/capture (hors CV/offre) : « analyse cette capture », « regarde cette
+# conversation », « comprends le contexte », « que vois-tu », « explique cette image »…
+_ANALYZE_IMG_RE = re.compile(
+    r"\b(analyse\w*|regarde|comprend\w*|explique\w*|d[ée]cri\w*|que\s+(vois|voit|dit|montre)|de\s+quoi\s+(parle|s'agit)|"
+    r"c'est\s+quoi\s+(cette|ce)|le\s+contexte|cette\s+(capture|conversation|image|discussion|photo|annonce))\b", re.I)
+
+def _wants_image_analysis(cap_low: str) -> bool:
+    """La légende demande d'ANALYSER l'image elle-même (pas de l'envoyer comme CV/offre)."""
+    low = (cap_low or "").strip()
+    return len(low) >= 4 and bool(_ANALYZE_IMG_RE.search(low))
+
+async def _process_general_screenshot(session, img_bytes, filename, caption):
+    """Analyse GÉNÉRALE d'une image à la demande (vision) : lit la capture et répond à la question."""
+    if not img_bytes or len(img_bytes) > 20 * 1024 * 1024:
+        await deliver_text(session, "❌ Image illisible ou trop lourde (max 20 Mo). Reprends une capture nette.")
+        return
+    fn = (filename or "capture").lower()
+    mime = "image/png" if fn.endswith(".png") else ("image/webp" if fn.endswith(".webp") else "image/jpeg")
+    ok, _ = _quota_check(session, "guide", FREE_GUIDE_DAILY)   # vision = option coûteuse ; admin illimité
+    if not ok:
+        await deliver_text(session, _quota_exceeded_msg("l'analyse d'image"))
+        return
+    try:
+        rep = await analyze_image_question(img_bytes, mime, caption or "")
+    except Exception as e:
+        logger.error(f"[img-q] {e}"); rep = ""
+    if not rep:
+        await deliver_text(session, "😕 Je n'arrive pas à lire cette image (ou le service vision est momentanément "
+                                    "indisponible). Reprends une capture *nette*, ou colle le *texte* directement.")
+        return
+    _quota_bump(session, "guide")
+    session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _push(session, "assistant", rep)
+    logger.info(f"[img-q] {session.get('channel')} image analysée à la demande")
+    await deliver_text(session, "🔎 " + rep, with_menu=True)
+
 async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
     """Mode /guide : analyse une capture d'écran (vision Gemini) et renvoie un guidage concret."""
     if not img_bytes or len(img_bytes) > 20 * 1024 * 1024:
@@ -7400,6 +7436,13 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
     # Mode /guide : la capture d'écran est analysée par la vision (pas comme un CV).
     if session.get("guide_mode"):
         await _process_guide_screenshot(session, pdf_bytes, filename)
+        return
+    # Analyse d'IMAGE À LA DEMANDE (vision générale) : la légende dit « analyse cette capture / conversation,
+    # comprends le contexte… » -> on lit l'image et on répond, au lieu de la refuser comme « pas un CV ».
+    _is_img = (filename or "").lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".heic")) \
+        or (pdf_bytes[:3] in (b"\xff\xd8\xff", b"\x89PN"))
+    if _is_img and _wants_image_analysis(_cap_low):
+        await _process_general_screenshot(session, pdf_bytes, filename, caption)
         return
     # Boîte à outils PDF : fusion / images->PDF (tampon) ou découpe (immédiat)
     mode = session.get("tool_mode")
