@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.80.0"
+VERSION         = "3.83.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -301,7 +301,8 @@ class MobilityRequest(BaseModel):
     contraintes: dict = Field(default={})
 
 # ── IA (LLM + embeddings + vision) extraite dans llm.py (PR-B) ──
-from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision,
+from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision, set_allow_premium,
+                 build_profile_consensus, profile_source_hash,
                  analyze_screenshot_vision, analyze_image_question, extract_text_vision, transcribe_audio,
                  _embeddings_available, _LLM_PROVIDERS, GEMINI_API_KEY, GEMINI_MODEL,
                  GROQ_API_KEY, CEREBRAS_API_KEY, TCHAVI_API_KEY)  # noqa: F401
@@ -383,6 +384,29 @@ CONSEILLER_PERSONA = (
     "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
     "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
     "et tu donnes toujours des étapes actionnables."
+    # ── Psychologie du conseiller d'orientation ──
+    " PSYCHOLOGIE : un bon conseiller d'orientation écoute l'ÉMOTION avant de conseiller. Capte l'état de "
+    "la personne (doute, peur, découragement, pression, fatigue, enthousiasme) et réponds-y d'abord, en une "
+    "touche, sans en faire trop. Valorise ses FORCES réelles, dédramatise, redonne confiance et de l'ÉLAN. "
+    "Adapte ton ton : rassurant si elle doute, dynamique si elle est motivée, posé si elle est perdue. "
+    # ── Énergie / entrain ──
+    " ÉNERGIE : sois vivant, chaleureux et encourageant, jamais plat ni robotique. Un enthousiasme SINCÈRE "
+    "(pas d'excès d'émojis, pas de formules toutes faites répétées d'un message à l'autre). "
+    # ── Aération ──
+    " AÉRATION : va à la ligne, sépare les idées par des lignes vides, UNE idée par bloc. Phrases courtes. "
+    "Jamais un pavé compact et étouffant. "
+    # ── Honnêteté sur les capacités (anti sur-promesse) ──
+    " HONNÊTETÉ SUR TES CAPACITÉS : ne promets QUE ce que NexMove fait VRAIMENT. Tu n'as PAS le contenu des "
+    "formations externes : tu ne peux donc PAS lancer de quiz quotidiens automatiques ni un suivi programmé "
+    "sur un cours que tu ne connais pas. Ce que tu PEUX offrir, et que tu proposes À LA PLACE : expliquer des "
+    "notions que tu maîtrises, bâtir un plan d'étude avec des objectifs, créer un quiz ou un exercice À LA "
+    "DEMANDE si la personne te donne le contenu ou choisit un thème, et faire le point quand elle revient "
+    "t'en parler. Ne laisse JAMAIS entendre un service automatique que tu n'as pas. "
+    # ── Clôture contextuelle (fini le « envoie ton CV » systématique) ──
+    " CLÔTURE : termine par l'étape la plus utile POUR CE message précis, pas une formule fixe. Ne réclame "
+    "le CV QUE s'il manque vraiment ET qu'il aide maintenant ; si le profil/CV est déjà là, ou si la personne "
+    "parle d'autre chose (postuler, conseil, formation, question), propose l'action adaptée à CE sujet-là. "
+    "Ne répète pas la même invitation d'un message à l'autre."
     " STYLE : écris comme un humain, simplement. N'utilise JAMAIS de tiret cadratin (—) ni demi-cadratin (–) :"
     " remplace-les par une virgule, un deux-points ou une phrase courte. Évite les formules toutes faites."
     + _ANTI_INVENT)
@@ -2487,6 +2511,17 @@ def _trim_to_sentence(s: str) -> str:
             return cand
     return s
 
+def _cv_nudge_due(session: dict, every: int = 3) -> bool:
+    """Vrai si on peut (re)montrer le nudge « envoie ton CV » : jamais montré, ou au moins `every`
+    tours éligibles plus tard. Évite de coller la même invitation CV à CHAQUE message (ça lasse)."""
+    n = int(session.get("_cv_nudge_turns", 0)) + 1
+    session["_cv_nudge_turns"] = n
+    last = session.get("_cv_nudge_shown_at")
+    if last is None or (n - int(last)) >= max(1, every):
+        session["_cv_nudge_shown_at"] = n
+        return True
+    return False
+
 async def _gen_text(system: str, user: str, *, max_tokens: int = 600, temperature: float = 0.4,
                     tier: str = "smart", bump: int = 400) -> str:
     """Génère un texte conversationnel FIABLE : relance une fois si vide/tronqué (avec plus de tokens),
@@ -2533,8 +2568,14 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "Chevening) SANS inventer de détail ni d'URL.\n"
         "NE DONNE JAMAIS de numéro de version, de prix précis ni de date de mémoire (tu te tromperais) : "
         "pour la version, invite à taper /version ; pour les tarifs, invite à taper /offres.\n"
-        "Termine TOUJOURS par une invitation DOUCE à envoyer son CV (ou /creercv) · sans forcer, sans répéter "
-        "une formule toute faite. Max ~90 mots. Texte simple (pas de JSON).\n\n"
+        "CLÔTURE CONTEXTUELLE : termine par l'étape la plus utile POUR CE message. Envoyer le CV (ou /creercv) "
+        "est SOUVENT utile au tout début, mais PAS toujours : si tu l'as déjà suggéré juste avant, ou si la "
+        "personne pose une question de conseil/info, propose plutôt la suite logique de CE sujet. Ne répète pas "
+        "la même invitation CV d'un message à l'autre. "
+        "HONNÊTETÉ : ne promets aucun service automatique que NexMove n'a pas (ex. quiz quotidiens automatiques "
+        "sur une formation dont tu n'as pas le contenu) ; propose ce qui est réel (plan d'étude, quiz à la "
+        "demande sur un thème, point d'étape quand la personne revient). "
+        "AÈRE : va à la ligne, sépare les idées, pas de pavé. Max ~90 mots. Texte simple (pas de JSON).\n\n"
         "DIALOGUE RÉCENT (ne repose PAS une question déjà posée, ne te répète pas, fais avancer) :\n"
         + _recent_dialogue(session, 4)
     )
@@ -2656,8 +2697,9 @@ async def _cvbuild_finish(session: dict) -> tuple[str, dict]:
                   '"experience":[{"poste":"","organisation":"","type":"","duree":"","missions":[]}],'
                   '"competences":{"techniques":[],"outils":[],"soft_skills":[]},'
                   '"bilan":{"forces":["..."],"axes":["..."],"pistes":["..."]},"niveau_global":"junior|mid|senior","resume_profil":""}')
-        profil = await call_groq(system, f"Infos utilisateur :\n{raw}\n\nSchéma JSON attendu : {schema}",
-                                 temperature=0.2, max_tokens=1500)
+        profil = await build_profile_consensus(
+            system, f"Infos utilisateur :\n{raw}\n\nSchéma JSON attendu : {schema}",
+            source_text=raw, temperature=0.2, max_tokens=1500)
     except Exception as e:
         logger.error(f"[cvbuild] structuration: {e}")
     if not isinstance(profil, dict) or not (profil.get("identite") or {}).get("nom"):
@@ -3455,6 +3497,8 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
     profil = session.get("profil", {}) or {}   # disponible pour TOUS les handlers (évite UnboundLocalError)
+    # Gating modèles par TIER : premium (Tchavi) pour admin/payant, modèles gratuits pour les gratuits.
+    set_allow_premium(_user_tier(session) != "free")
 
     # Bug en attente de capture : un message TEXTE qui n'est pas un /bug annule l'attente
     # (évite qu'un CV envoyé ensuite parte par erreur comme capture de bug).
@@ -6159,7 +6203,9 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             base = intent_cmd.split()[0].lstrip("/")
             if base in _PREONB_DIRECT:
                 msg, session = await process_text_message(session, intent_cmd)
-                if not session.get("cv_parsed"):
+                # Nudge CV contextuel : seulement s'il manque ET qu'on ne l'a pas déjà montré récemment
+                # (évite le « envoie ton CV » collé à chaque message, qui lasse).
+                if not session.get("cv_parsed") and _cv_nudge_due(session):
                     msg += "\n\n📄 _Envoie ton CV (PDF, Word ou image) · ou tape /creercv · pour que je personnalise tout ça à ton profil._"
                 session["derniere_activite"] = now
                 return msg, session
@@ -7427,6 +7473,7 @@ async def _process_bug_screenshot(session, data, filename, caption=""):
 
 async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
     uid = session.get("user_id")
+    set_allow_premium(_user_tier(session) != "free")   # premium (Tchavi) seulement pour admin/payant
     # Signalement de bug : une capture arrive après /bug (mode armé) ou avec une légende « bug ».
     _cap_low = (caption or "").strip().lower()
     if session.get("bug_mode") or _cap_low.startswith(("/bug", "/probleme", "/problème", "/signaler", "bug")):
@@ -7611,12 +7658,22 @@ Document: {cv_text[:6000]}"""
     if profil_from_vision:
         profil = profil_from_vision   # analyse vision directe (image) : pas de deuxième appel LLM
     else:
-        try:
-            profil = await call_groq(system, prompt, temperature=0.1, max_tokens=3500)
-        except Exception as e:
-            logger.error(f"[cv] analyse LLM échouée: {e}")
-            await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute · je m'en occupe dès que possible.")
-            return
+        # Idempotence : même CV renvoyé -> on ne relance pas le consensus (on garde le profil).
+        _src_hash = profile_source_hash(cv_text[:6000])
+        _prev = session.get("profil") or {}
+        _prev_ok = bool((_prev.get("identite") or {}).get("nom") or _prev.get("formation") or _prev.get("experience"))
+        if (_prev.get("_meta") or {}).get("source_hash") == _src_hash and _prev_ok:
+            logger.info("[cv] source identique -> profil gardé (pas de ré-extraction)")
+            profil = _prev
+        else:
+            try:
+                # Consensus multi-modèles pour la DÉFINITION du profil (panel+juge payant / vote gratuit).
+                profil = await build_profile_consensus(system, prompt, source_text=cv_text[:6000],
+                                                       temperature=0.1, max_tokens=3500)
+            except Exception as e:
+                logger.error(f"[cv] analyse LLM échouée: {e}")
+                await deliver_text(session, "⏳ Le service d'analyse est momentanément indisponible. Renvoie ton CV dans une minute · je m'en occupe dès que possible.")
+                return
     if not isinstance(profil, dict) or not profil:
         await deliver_text(session, "😕 Je n'ai pas réussi à lire ce CV. Renvoie-le (PDF avec texte sélectionnable) ou réessaie dans un instant.")
         return
@@ -7808,6 +7865,10 @@ def _extract_incoming(channel, raw):
             text = "__wa_unsupported__"   # message poli renvoyé plus bas
     elif channel == "messenger":
         pb = raw.get("postback"); msg = raw.get("message")
+        # Écho : Messenger renvoie les messages SORTANTS de la Page (is_echo). On les ignore,
+        # sinon le bot se répondrait à lui-même en boucle. (delivery/read n'ont ni message ni postback.)
+        if msg and msg.get("is_echo"):
+            return None, None, None
         if pb:
             callback = pb.get("payload")
         elif msg:
@@ -7877,6 +7938,9 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
     session["chat_id"] = chat_id
     if username and username != "utilisateur":
         session["username"] = username
+    # Gating modèles par TIER posé au point d'entrée UNIQUE du routeur : couvre vocal, CV, image,
+    # callbacks et texte, ainsi que tout handler ajouté plus tard (anti-fuite premium « fail-open »).
+    set_allow_premium(_user_tier(session) != "free")
     text, callback, doc = _extract_incoming(channel, raw)
     # Message vocal : on télécharge, on transcrit (Gemini), et on traite comme du texte.
     if doc and doc.get("voice"):

@@ -2,6 +2,29 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.83 — Personnalité de conseiller (psychologie), ton vivant, aération + fin de message contextuelle
+- **Fini le « envoie ton CV » collé à CHAQUE message.** La clôture est désormais **contextuelle** : le bot termine par l'étape la plus utile pour *ce* message. Il ne réclame le CV que s'il manque vraiment et qu'il aide maintenant ; s'il est déjà là ou si la personne parle d'autre chose (postuler, conseil, formation), il propose l'action adaptée au sujet. Le nudge CV pré-onboarding est **throttlé** (plus répété tour après tour).
+- **Psychologie d'orientation** ajoutée à la personnalité : le bot capte l'émotion (doute, peur, découragement, enthousiasme), y répond d'abord, valorise les forces, redonne confiance et de l'élan, et **adapte son ton** à l'état de la personne.
+- **Ton vivant et aéré** : chaleureux et encourageant (pas plat/robotique, pas de formules répétées), avec **aération** (retours à la ligne, une idée par bloc, phrases courtes) au lieu des pavés compacts.
+- **Honnêteté sur les capacités (anti sur-promesse).** Le bot ne promet plus de service qu'il n'a pas : il n'a pas le contenu des formations externes, donc **pas de quiz quotidiens automatiques** ni de suivi programmé sur un cours inconnu. À la place il propose ce qui est RÉEL : expliquer des notions, bâtir un plan d'étude, un **quiz à la demande** sur un thème/contenu fourni, et un point d'étape quand la personne revient.
+
+## v3.82.1 — Messenger : anti-boucle (ignore les échos de la Page)
+- Finalisation Messenger côté serveur : on **ignore les messages `is_echo`** (Messenger renvoie les messages *sortants* de la Page). Sans ça, dès que la livraison Meta fonctionne, le bot se répondrait à lui-même en boucle. Les événements `delivery`/`read` étaient déjà ignorés (ni message ni postback).
+
+## v3.82 — Profil par consensus multi-modèles (panel+juge / vote) + confiance par champ
+- La **définition du profil** (CV uploadé *et* questionnaire sans CV) passe désormais par un **consensus de plusieurs modèles**, car un profil se construit rarement — on peut se payer la qualité sans risquer les 429 du quotidien.
+  - **Abonnés** : *panel + juge* — 2-3 modèles extraient en parallèle, un modèle « juge » fusionne en **un profil fidèle** (union des listes, majorité sur les conflits, **zéro invention**).
+  - **Gratuits** : *vote de cohérence* — même extraction sur plusieurs **modèles gratuits**, on garde les champs qui font consensus (base = la version la plus complète, majorité sur les scalaires, union dédupliquée sur les listes).
+- **Confiance/provenance gardée par champ** dans `profil["_meta"]` (méthode, taux d'accord, modèles utilisés) → base pour redemander plus tard les champs incertains.
+- **Idempotence (« garder »)** : empreinte de la source (`source_hash`). Même CV renvoyé → on **garde** le profil, pas de ré-extraction (ni coût, ni latence).
+- Repli propre : < 2 modèles dispos ou juge en échec → extraction standard / vote → **jamais de panne**. Respecte le gating tier (premium filtré pour le gratuit).
+- QC : gating tier posé aussi au **point d'entrée unique du routeur** (`_route_incoming`) → tous les chemins (vocal, CV, image, texte) et tout handler futur couverts (anti fuite premium « fail-open »).
+
+## v3.81 — Modèles par tier : premium pour admin/payant, gratuit pour les comptes gratuits
+- **Même système pour tous, modèles différents selon le tier.** La logique (analyse, routage, anti-invention, contexte…) est identique pour tout le monde. Seuls les **modèles premium** (Tchavi / OpenRouter payants) sont réservés à l'**admin et aux abonnés payants** ; les **comptes gratuits gardent tout le système** mais sur les **modèles gratuits** (Cerebras → Groq → Gemini).
+- Mise en œuvre : `set_allow_premium(tier != "free")` appelé au début de `process_text_message` et `process_cv` ; dans `call_groq`, les fournisseurs premium sont retirés de la chaîne de repli pour un compte gratuit, et la **vision Tchavi** est désactivée pour le gratuit (repli automatique sur la vision Gemini). Aucune panne : la chaîne gratuite reste complète.
+- Zéro coût premium accidentel sur les comptes gratuits, qualité maximale pour l'admin et les packs payants.
+
 ## v3.80 — Analyse d'image via Tchavi (premium) + prompt structuré
 - L'analyse d'image (v3.79) passait par Gemini direct. Désormais elle route **par Tchavi EN PREMIER** (modèle premium, `TCHAVI_VISION_MODEL`, défaut = le modèle quality), avec **repli automatique sur Gemini** si le modèle ne gère pas la vision ou échoue → jamais de panne.
 - **Prompt structuré et présentable** : la réponse suit toujours *Contexte* (ce que montre l'image) → *Réponse* (précise, ancrée sur le visible) → *Et après* (action suivante si utile). Anti-invention : si une info n'est pas visible, le bot le dit.

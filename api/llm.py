@@ -6,7 +6,7 @@ Extrait de main.py (PR-B du refactor). Comportement STRICTEMENT identique :
 - même analyse vision Gemini pour les CV en image
 """
 from __future__ import annotations
-import os, json, hashlib, base64, asyncio, math, logging
+import os, json, hashlib, base64, asyncio, math, logging, contextvars
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -39,6 +39,22 @@ TCHAVI_GENERATE_MODEL = os.getenv("TCHAVI_GENERATE_MODEL", TCHAVI_MODEL)      # 
 # Modèle VISION via Tchavi (lecture d'images/captures). DOIT supporter la vision (gpt-4o, claude, gemini…).
 # Défaut = le modèle quality. Repli automatique sur Gemini si vide/échec -> jamais de panne.
 TCHAVI_VISION_MODEL   = os.getenv("TCHAVI_VISION_MODEL", TCHAVI_GENERATE_MODEL)
+
+# Gating par TIER : même LOGIQUE pour tous, mais les modèles PREMIUM (Tchavi/OpenRouter) sont réservés
+# à l'admin et aux abonnés payants. Les comptes gratuits gardent tout le système mais sur modèles gratuits.
+# Réglé par requête via set_allow_premium() ; défaut True (appels internes/admin).
+_PREMIUM_PROVIDER_NAMES = {"tchavi", "openrouter", "tchavi-gen", "openrouter-gen"}
+_ALLOW_PREMIUM = contextvars.ContextVar("allow_premium", default=True)
+
+def set_allow_premium(allowed: bool) -> None:
+    """À appeler au début du traitement d'un message : True pour admin/payant, False pour gratuit."""
+    _ALLOW_PREMIUM.set(bool(allowed))
+
+def _premium_allowed() -> bool:
+    try:
+        return _ALLOW_PREMIUM.get()
+    except Exception:
+        return True
 
 GROQ_MODEL          = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 GROQ_MODEL_FAST     = os.getenv("GROQ_MODEL_FAST", "openai/gpt-oss-20b")
@@ -172,6 +188,9 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
         # On met le fournisseur préféré en tête pour le conversationnel (meilleur contexte/anti-invention),
         # sans casser la chaîne de repli (tri stable : les autres gardent leur ordre).
         providers = sorted(_LLM_PROVIDERS, key=lambda p: p["name"] != SMART_LEAD_PROVIDER)
+    # Compte gratuit : on retire les fournisseurs PREMIUM (même logique, modèles gratuits).
+    if not _premium_allowed():
+        providers = [p for p in providers if p["name"] not in _PREMIUM_PROVIDER_NAMES]
     for prov in providers:
         if not prov["key"]:
             continue
@@ -203,6 +222,243 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
         raise HTTPException(500, "Aucun fournisseur LLM configuré (clés manquantes).")
     logger.error(f"[llm] tous indisponibles: {last}")
     raise HTTPException(503, "Service IA temporairement surchargé. Réessaie dans un instant.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSENSUS MULTI-MODÈLES — uniquement pour la DÉFINITION DU PROFIL (rare -> coût OK).
+#   • Abonnés payants (premium autorisé) : PANEL + JUGE — plusieurs modèles extraient
+#     en parallèle, un modèle « juge » fusionne en UN profil fidèle (zéro invention).
+#   • Comptes gratuits : VOTE DE COHÉRENCE — même extraction sur plusieurs modèles
+#     gratuits, on garde les champs qui font consensus ; la confiance = taux d'accord.
+# Dans les deux cas on GARDE une confiance/provenance par champ dans profil["_meta"],
+# + un hash de la source pour ne PAS relancer le panel si le profil n'a pas changé.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Champs scalaires votés à la majorité (chemins imbriqués).
+_PROFILE_SCALAR_PATHS = [
+    ("identite", "nom"), ("identite", "email"), ("identite", "telephone"),
+    ("identite", "localisation"), ("identite", "linkedin"), ("identite", "github"),
+    ("niveau_global",), ("resume_profil",),
+]
+# Champs listes : union dédupliquée. Pour les listes de dicts, clé de dédup.
+_PROFILE_LIST_DICT_KEYS = {
+    "formation": ("diplome", "annee"),
+    "experience": ("poste", "organisation"),
+    "projets": ("nom",),
+}
+
+
+def profile_source_hash(text: str) -> str:
+    """Empreinte courte et stable de la source (texte du CV / réponses) pour l'idempotence."""
+    return hashlib.sha256((text or "").strip().encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+def _available_provider_names(premium: bool) -> list:
+    out = []
+    for p in _LLM_PROVIDERS:
+        if not p.get("key"):
+            continue
+        if not premium and p["name"] in _PREMIUM_PROVIDER_NAMES:
+            continue
+        out.append(p["name"])
+    return out
+
+
+def _dig(d, path):
+    v = d
+    for k in path:
+        v = v.get(k) if isinstance(v, dict) else None
+    return v
+
+
+def _norm_val(v) -> str:
+    return " ".join(str(v if v is not None else "").lower().split())
+
+
+def _is_empty(v) -> bool:
+    return v in (None, "", [], {}) or (isinstance(v, str) and not v.strip())
+
+
+def _completeness(profil: dict) -> int:
+    """Nombre de champs utiles remplis — sert à choisir la base la plus riche."""
+    score = 0
+    ident = profil.get("identite") or {}
+    score += sum(1 for k in ("nom", "email", "telephone", "localisation") if not _is_empty(ident.get(k)))
+    score += len(profil.get("formation") or [])
+    score += len(profil.get("experience") or [])
+    for vals in (profil.get("competences") or {}).values():
+        score += len(vals or []) if isinstance(vals, list) else 0
+    if not _is_empty(profil.get("resume_profil")):
+        score += 2
+    return score
+
+
+def _vote_scalar(cands: list, path):
+    """Majorité sur un champ scalaire ; renvoie (valeur_gagnante, confiance 0-1)."""
+    from collections import Counter
+    vals = [_dig(c, path) for c in cands]
+    vals = [v for v in vals if not _is_empty(v)]
+    if not vals:
+        return None, 0.0
+    counts = Counter(_norm_val(v) for v in vals)
+    top_norm, n = counts.most_common(1)[0]
+    winner = next(v for v in vals if _norm_val(v) == top_norm)
+    return winner, round(n / len(cands), 2)
+
+
+def _union_list(cands: list, field: str):
+    """Union dédupliquée d'un champ liste ; confiance = fraction de candidats non vides."""
+    dict_key = _PROFILE_LIST_DICT_KEYS.get(field)
+    seen, merged = set(), []
+    non_empty = 0
+    for c in cands:
+        lst = c.get(field)
+        if not isinstance(lst, list) or not lst:
+            continue
+        non_empty += 1
+        for item in lst:
+            if isinstance(item, dict) and dict_key:
+                sig = tuple(_norm_val(item.get(k)) for k in dict_key)
+            else:
+                sig = _norm_val(item) if not isinstance(item, (dict, list)) else _norm_val(json.dumps(item, sort_keys=True))
+            if sig in seen:
+                continue
+            seen.add(sig)
+            merged.append(item)
+    return merged, round(non_empty / len(cands), 2) if cands else 0.0
+
+
+def _vote_merge_profiles(cands: list):
+    """VOTE DE COHÉRENCE (gratuit). Renvoie (profil_fusionné, confidence_map)."""
+    base = dict(max(cands, key=_completeness))   # copie de la version la plus complète
+    conf = {}
+    # Scalaires : la majorité corrige la base.
+    for path in _PROFILE_SCALAR_PATHS:
+        val, c = _vote_scalar(cands, path)
+        key = ".".join(path)
+        if val is not None:
+            tgt = base
+            for k in path[:-1]:
+                tgt = tgt.setdefault(k, {})
+                if not isinstance(tgt, dict):
+                    break
+            else:
+                tgt[path[-1]] = val
+            conf[key] = c
+    # Listes simples et de dicts : union.
+    for field in ("formation", "experience", "projets", "certifications"):
+        merged, c = _union_list(cands, field)
+        if merged:
+            base[field] = merged
+            conf[field] = c
+    # langues (dans identite) + compétences (dict de listes).
+    lang, lc = _union_list([{"langues": (c.get("identite") or {}).get("langues")} for c in cands], "langues")
+    if lang:
+        base.setdefault("identite", {})["langues"] = lang
+        conf["identite.langues"] = lc
+    comp_keys = set()
+    for c in cands:
+        comp_keys.update((c.get("competences") or {}).keys())
+    if comp_keys:
+        base.setdefault("competences", {})
+        for ck in comp_keys:
+            merged, c = _union_list([{ck: (cc.get("competences") or {}).get(ck)} for cc in cands], ck)
+            if merged:
+                base["competences"][ck] = merged
+                conf[f"competences.{ck}"] = c
+    return base, conf
+
+
+_JUDGE_SYSTEM = (
+    "Tu es un JUGE d'extractions de CV. On te donne PLUSIEURS extractions JSON du MÊME document, "
+    "faites par des modèles différents. Fusionne-les en UN SEUL profil, le plus fidèle et complet. "
+    "RÈGLES STRICTES : n'invente AUCUNE information qui n'apparaît dans aucune extraction ; "
+    "si les extractions se contredisent, garde la valeur la plus fréquente / la plus plausible ; "
+    "pour les listes (formation, expérience, compétences, langues), fais l'UNION sans doublons ; "
+    "identite.nom = le vrai nom de la personne, jamais un titre de modèle de CV. "
+    "Réponds en JSON STRICT : {\"profil\": {<le profil fusionné, même schéma que les extractions>}, "
+    "\"confidence\": {\"<champ>\": <0.0-1.0 = accord entre extractions>}}."
+)
+
+
+async def _judge_merge_profiles(cands: list, max_tokens: int):
+    """PANEL + JUGE (payant). Renvoie (profil_fusionné, confidence_map) ou (None, None) si échec."""
+    payload = "\n\n".join(f"Extraction {i+1} :\n{json.dumps(c, ensure_ascii=False)}" for i, c in enumerate(cands))
+    try:
+        out = await call_groq(_JUDGE_SYSTEM, payload, temperature=0.0,
+                              max_tokens=max(max_tokens, 2500), tier="smart")
+    except Exception as e:
+        logger.warning(f"[consensus] juge échec: {e}")
+        return None, None
+    if not isinstance(out, dict):
+        return None, None
+    profil = out.get("profil") if isinstance(out.get("profil"), dict) else out
+    conf = out.get("confidence") if isinstance(out.get("confidence"), dict) else {}
+    if not isinstance(profil, dict) or not profil:
+        return None, None
+    return profil, conf
+
+
+async def _extract_on(name: str, system_prompt: str, user_prompt: str, temperature: float, max_tokens: int):
+    """Extraction forcée sur UN fournisseur nommé (sans repli). dict ou None."""
+    prov = next((p for p in _LLM_PROVIDERS if p["name"] == name and p.get("key")), None)
+    if not prov:
+        return None
+    try:
+        if prov["api"] == "gemini":
+            raw = await _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens, True)
+        else:
+            raw = await _llm_openai(prov, prov["model"], system_prompt, user_prompt, temperature, max_tokens, True)
+        d = _llm_parse_json(raw)
+        return d if isinstance(d, dict) and d else None
+    except Exception as e:
+        logger.warning(f"[consensus] {name} échec: {e}")
+        return None
+
+
+async def build_profile_consensus(system_prompt: str, user_prompt: str, *, source_text: str = "",
+                                  temperature: float = 0.1, max_tokens: int = 3500):
+    """Construit un profil par CONSENSUS multi-modèles (voir en-tête de section).
+    Renvoie un profil dict enrichi de profil["_meta"] = {method, confidence, providers,
+    source_hash, built_at}. Repli propre sur une extraction simple si < 2 modèles dispos
+    ou en cas d'échec -> jamais de panne. Respecte le gating tier (premium filtré pour le gratuit)."""
+    premium = _premium_allowed()
+    names = _available_provider_names(premium)
+    meta = {"method": "single", "confidence": {}, "providers": names[:1],
+            "source_hash": profile_source_hash(source_text or user_prompt)}
+
+    def _finish(profil, method, conf, provs):
+        if isinstance(profil, dict) and profil:
+            meta.update(method=method, confidence=conf or {}, providers=provs)
+            profil["_meta"] = meta
+        return profil
+
+    if len(names) < 2:
+        profil = await call_groq(system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens)
+        return _finish(profil if isinstance(profil, dict) else {}, "single", {}, names[:1])
+
+    panel = names[:3]
+    results = await asyncio.gather(
+        *[_extract_on(n, system_prompt, user_prompt, temperature, max_tokens) for n in panel],
+        return_exceptions=True)
+    cands = [(n, r) for n, r in zip(panel, results) if isinstance(r, dict) and r]
+    if not cands:
+        # tous les modèles forcés ont échoué -> extraction standard avec repli interne
+        profil = await call_groq(system_prompt, user_prompt, temperature=temperature, max_tokens=max_tokens)
+        return _finish(profil if isinstance(profil, dict) else {}, "single", {}, [])
+    if len(cands) == 1:
+        return _finish(cands[0][1], "single", {}, [cands[0][0]])
+
+    cand_profiles = [c[1] for c in cands]
+    provs = [c[0] for c in cands]
+    if premium:
+        merged, conf = await _judge_merge_profiles(cand_profiles, max_tokens)
+        if merged:
+            return _finish(merged, "panel+judge", conf, provs)
+        merged, conf = _vote_merge_profiles(cand_profiles)   # repli si le juge échoue
+        return _finish(merged, "vote(fallback)", conf, provs)
+    merged, conf = _vote_merge_profiles(cand_profiles)
+    return _finish(merged, "vote", conf, provs)
 
 
 # ── Embeddings (matching sémantique) ──
@@ -370,8 +626,9 @@ _VISION_SYSTEM = (
 )
 
 async def _vision_tchavi(img_bytes: bytes, mime: str, question: str) -> str:
-    """Analyse d'image via Tchavi (format OpenAI image_url). '' si pas de clé / modèle sans vision / échec."""
-    if not (TCHAVI_API_KEY and TCHAVI_VISION_MODEL):
+    """Analyse d'image via Tchavi (format OpenAI image_url). '' si pas de clé / modèle sans vision / échec
+    / compte gratuit (les comptes gratuits passent par la vision gratuite Gemini)."""
+    if not (TCHAVI_API_KEY and TCHAVI_VISION_MODEL) or not _premium_allowed():
         return ""
     data_uri = f"data:{mime};base64,{base64.b64encode(img_bytes).decode()}"
     payload = {"model": TCHAVI_VISION_MODEL,
