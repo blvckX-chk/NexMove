@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.86 — Noter CHAQUE offre (feedback par offre, sans liste mono-sélection)
+- **Retour terrain** : *« on doit pouvoir cocher les deux, dire si chaque offre est bonne ou pas »*. Le picker WhatsApp/Messenger s'affichait en **liste mono-sélection** (elle se ferme au 1er choix) → impossible de noter plusieurs offres.
+- **Telegram** : les boutons sont désormais présentés clairement **par offre** (`👍 1 | 👎 1`, `👍 2 | 👎 2`…), persistants — on en note autant qu'on veut (c'était déjà techniquement possible, c'est maintenant explicite).
+- **WhatsApp/Messenger** : fini la liste piégeuse ; on invite à tout noter en **une réponse texte** — *« 1 oui, 2 non, 3 oui »*, *« 1👍 2👎 »*, *« 1 et 3 bonnes »* — parsé par offre, avec garde anti-faux-positif (notation courte uniquement). L'avis global (« utile » / « pas pour moi ») reste accepté.
+
 ## v3.85 — Corrections en langage naturel au récap + objectif respecté + icônes neutres (retours terrain)
 - **Correction en langage naturel au récap.** Avant, seul le format strict « champ : valeur » était compris ; une phrase comme *« Chine, software engineering, en anglais »* était **ignorée** (il gardait l'ancien profil et sortait des offres à côté, ex. un job PHP à Cotonou). Désormais le bot **comprend la phrase libre**, met à jour les bons champs (pays, mots-clés, langue, objectif, type) et réaffiche le récap corrigé.
 - **« J'ai demandé une bourse, il m'a sorti des jobs ».** Quand l'objectif explicite est *bourse / études / fellowship*, un simple mot « emploi-ish » dans la demande ne fait plus basculer la recherche vers des jobs : **l'objectif de la personne tranche**.

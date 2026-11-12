@@ -4351,3 +4351,19 @@ def test_requested_type_conflit_objectif_prime_v384():
     assert main._requested_type("software engineering, find me jobs", "bourse") == "bourse"
     assert main._requested_type("je veux un emploi maintenant", "travailler") == "emploi"
     assert main._requested_type("bourse ou emploi", "tous") == ""   # vraiment indifférent
+
+
+# --- Feedback PAR offre en une réponse (retour terrain : noter chaque offre) v3.86 ---
+def test_offers_feedback_multi_v386():
+    sess = {"last_offers": [{"sig": "a"}, {"sig": "b"}, {"sig": "c"}]}
+    assert main._offers_feedback_multi("1 oui, 2 non, 3 oui", sess) == {0: 1, 1: -1, 2: 1}
+    assert main._offers_feedback_multi("1👍 2👎", sess) == {0: 1, 1: -1}
+    assert main._offers_feedback_multi("1 et 3 bonnes", sess) == {0: 1, 2: 1}
+    assert main._offers_feedback_multi("1 pas pour moi", sess) == {0: -1}
+
+def test_offers_feedback_multi_pas_de_faux_positif_v386():
+    sess = {"last_offers": [{"sig": "a"}, {"sig": "b"}, {"sig": "c"}]}
+    assert main._offers_feedback_multi("je veux voir 2 ou 3 offres de plus", sess) == {}
+    assert main._offers_feedback_multi("5 oui", sess) == {}          # hors borne
+    assert main._offers_feedback_multi("merci beaucoup", sess) == {}
+    assert main._offers_feedback_multi("1 oui", {"last_offers": []}) == {}  # sans offres

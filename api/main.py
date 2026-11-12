@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.85.0"
+VERSION         = "3.86.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1057,6 +1057,37 @@ def _offers_feedback_nl(low: str, session: dict) -> str:
     if _FB_UP_RE.search(low):
         return "up"
     return ""
+
+# Avis PAR OFFRE en une seule réponse (retour terrain : « on doit pouvoir noter chaque offre »).
+# WhatsApp/Messenger rendent les boutons en LISTE mono-sélection -> on permet de tout noter au texte.
+_FB_POS_TOK = {"oui", "ok", "bon", "bonne", "bons", "bonnes", "utile", "utiles", "parfait",
+               "yes", "top", "nickel", "👍", "interesse", "intéresse", "intéressé", "cool", "go"}
+_FB_NEG_TOK = {"non", "pas", "mauvais", "mauvaise", "nul", "nulle", "hors", "no", "jamais",
+               "rien", "👎", "passe", "bof"}
+
+def _offers_feedback_multi(text: str, session: dict) -> dict:
+    """Capte un avis PAR OFFRE tapé en une fois : « 1 oui, 2 non, 3 oui », « 1👍 2👎 »,
+    « 1 et 3 bonnes ». Retourne {index0based: +1|-1}. Vide si aucun couple numéro↔avis."""
+    offers = session.get("last_offers") or []
+    if not offers:
+        return {}
+    low = (text or "").lower()
+    if len(low) > 60 or not re.search(r"\d", low):   # une notation reste courte (anti faux positif)
+        return {}
+    toks = re.findall(r"👍|👎|\d+|[a-zàâäéèêëïîôöùûüç]+", low)
+    pending, res = [], {}
+    for tok in toks:
+        if tok.isdigit():
+            n = int(tok)
+            if 1 <= n <= len(offers):
+                pending.append(n - 1)
+        else:
+            vote = 1 if tok in _FB_POS_TOK else (-1 if tok in _FB_NEG_TOK else None)
+            if vote is not None and pending:
+                for idx in pending:
+                    res[idx] = vote
+                pending = []
+    return res
 
 def _refers_to_prior_list(low: str, session: dict) -> bool:
     """Vrai si le message est une QUESTION sur des opportunités déjà listées (portail/dernières offres),
@@ -6389,6 +6420,30 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t)
         return await process_text_message(session, _cmd)
 
+    # Avis PAR OFFRE en une réponse (« 1 oui, 2 non, 3 oui ») — prioritaire sur l'avis global.
+    _fb_multi = _offers_feedback_multi(t, session)
+    if _fb_multi:
+        offers = session.get("last_offers") or []
+        pos, neg = [], []
+        try:
+            for idx, vote in sorted(_fb_multi.items()):
+                sig = offers[idx].get("sig") if idx < len(offers) else ""
+                if sig:
+                    opp_store.add_feedback(session.get("user_id"), sig, vote)
+                (pos if vote > 0 else neg).append(str(idx + 1))
+        except Exception as e:
+            logger.warning(f"[fb-multi] {e}")
+        _push(session, "user", t)
+        _parts = []
+        if pos:
+            _parts.append("👍 " + ", ".join(pos))
+        if neg:
+            _parts.append("👎 " + ", ".join(neg))
+        msg = ("✅ Noté : " + " · ".join(_parts) + ".\n"
+               "J'affine tes prochaines offres dans ce sens. 👉 Pour candidater : `/postuler <titre>`.")
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     # MÉCANISME GÉNÉRAL (suite) : avis 👍/👎 TAPÉ sur les dernières offres (« utile » / « pas pour moi »).
     _fb = _offers_feedback_nl(low, session)
     if _fb:
@@ -7217,6 +7272,24 @@ async def deliver_text(session, text, with_menu=False, options=None):
     kb = _tg_keyboard(options) if options else (_tg_keyboard(get_menu(session, "root")[1]) if with_menu else None)
     return await send_message(to, text, kb)
 
+async def deliver_feedback(session, kb):
+    """Invite à noter les offres. Telegram : boutons PAR offre (persistants, multi-tap).
+    WhatsApp/Messenger : les listes natives sont mono-sélection (elles se ferment au 1er
+    choix) -> on invite à tout noter en UNE réponse texte (« 1 oui, 2 non »), sans liste
+    piégeuse. `kb` reste les boutons par offre (utilisés sur Telegram)."""
+    ch = session.get("channel", "telegram")
+    n = len(session.get("last_offers") or [])
+    if ch in ("whatsapp", "messenger"):
+        ex = "1 oui, 2 non" + (", 3 oui" if n >= 3 else "")
+        return await deliver_text(
+            session,
+            f"📊 Ces offres te vont ? Dis-moi pour *chacune* en une réponse — ex. « {ex} » "
+            "(ou « utile » / « pas pour moi » pour toutes).")
+    return await deliver_menu(
+        session,
+        "📊 Ces offres te correspondent ? Tape 👍/👎 pour *chaque* offre (tu peux en noter plusieurs).",
+        kb)
+
 async def _send_typing(session) -> None:
     """Indicateur « en train d'écrire… » AVANT une opération lente (recherche, analyse CV) :
     réduit la latence PERÇUE (l'utilisateur voit que ça bosse au lieu d'un silence). Best-effort :
@@ -7290,7 +7363,7 @@ async def handle_action(session, data, callback_id=None):
         fb = session.pop("_feedback_kb", None)
         await deliver_text(session, msg, with_menu=show, options=opts)
         if fb:
-            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb)
+            await deliver_feedback(session, fb)
         return session
     if data.startswith("m:"):
         title, opts = get_menu(session, data[2:])
@@ -8055,7 +8128,7 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
         session_manager.set(user_id, session)
         await deliver_text(session, msg, with_menu=show_menu, options=kb_options)
         if fb_kb:
-            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
+            await deliver_feedback(session, fb_kb)
 
 def _profil_txt_court(profil: dict) -> str:
     prefs = (profil.get("preferences", {}) or {})
@@ -8427,7 +8500,7 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     session_manager.set(uid, session)
     await deliver_text(session, message, with_menu=show_menu, options=kb_options)
     if fb_kb:
-        await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
+        await deliver_feedback(session, fb_kb)
     return {"ok": True}
 
 @app.post("/api/chat-cv")
