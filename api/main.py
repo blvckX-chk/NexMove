@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.83.0"
+VERSION         = "3.86.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -317,7 +317,7 @@ from fastapi.responses import RedirectResponse, PlainTextResponse
 # (Embeddings/vision : voir llm.py · PR-B)
 
 ETAPE_INSTRUCTIONS = {
-    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
+    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: conseiller IA emploi & mobilité pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
     "ATTENTE_CV": "L'utilisateur doit envoyer son CV (PDF, Word ou image). Rappelle-lui brièvement.",
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
@@ -1058,6 +1058,37 @@ def _offers_feedback_nl(low: str, session: dict) -> str:
         return "up"
     return ""
 
+# Avis PAR OFFRE en une seule réponse (retour terrain : « on doit pouvoir noter chaque offre »).
+# WhatsApp/Messenger rendent les boutons en LISTE mono-sélection -> on permet de tout noter au texte.
+_FB_POS_TOK = {"oui", "ok", "bon", "bonne", "bons", "bonnes", "utile", "utiles", "parfait",
+               "yes", "top", "nickel", "👍", "interesse", "intéresse", "intéressé", "cool", "go"}
+_FB_NEG_TOK = {"non", "pas", "mauvais", "mauvaise", "nul", "nulle", "hors", "no", "jamais",
+               "rien", "👎", "passe", "bof"}
+
+def _offers_feedback_multi(text: str, session: dict) -> dict:
+    """Capte un avis PAR OFFRE tapé en une fois : « 1 oui, 2 non, 3 oui », « 1👍 2👎 »,
+    « 1 et 3 bonnes ». Retourne {index0based: +1|-1}. Vide si aucun couple numéro↔avis."""
+    offers = session.get("last_offers") or []
+    if not offers:
+        return {}
+    low = (text or "").lower()
+    if len(low) > 60 or not re.search(r"\d", low):   # une notation reste courte (anti faux positif)
+        return {}
+    toks = re.findall(r"👍|👎|\d+|[a-zàâäéèêëïîôöùûüç]+", low)
+    pending, res = [], {}
+    for tok in toks:
+        if tok.isdigit():
+            n = int(tok)
+            if 1 <= n <= len(offers):
+                pending.append(n - 1)
+        else:
+            vote = 1 if tok in _FB_POS_TOK else (-1 if tok in _FB_NEG_TOK else None)
+            if vote is not None and pending:
+                for idx in pending:
+                    res[idx] = vote
+                pending = []
+    return res
+
 def _refers_to_prior_list(low: str, session: dict) -> bool:
     """Vrai si le message est une QUESTION sur des opportunités déjà listées (portail/dernières offres),
     donc à traiter en conversation (ancré) et NON comme une nouvelle recherche web."""
@@ -1248,9 +1279,9 @@ def _progress_bar(done: int, total: int, taille: int = 8) -> str:
 # les réponses déjà données · onboarding ADAPTATIF (ex. pas de nationalité/passeport ni de
 # financement d'études pour un simple stage/job LOCAL).
 PREF_FIELDS: dict[str, tuple[str, Optional[list]]] = {
-    "objectif":            ("🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)",
+    "objectif":            ("🎯 Quel est ton objectif ?\n(travailler / étudier / bourse / fellowship / tous)\n_Tu peux en combiner : écris par ex. « bourse et fellowship »._",
                             ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"]),
-    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… · ou ton *propre pays* pour des offres locales, ou « tous »)",
+    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : Canada, Allemagne… · ou ton *propre pays* pour des offres locales · ou « tous » · tu peux aussi en écarter : « sauf la France »)",
                             None),
     "nationalite":         ("🛂 Quelle est ta nationalité (pays du passeport) ?", None),
     "financement":         ("💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?",
@@ -1477,7 +1508,7 @@ async def _route_intent(session: dict, t: str):
     tl = (t or "").strip()
     if not tl or len(tl) > 400:
         return None
-    system = ("Tu es un routeur d'intention pour un assistant d'emploi/mobilité (NexMove). "
+    system = ("Tu es un routeur d'intention pour un conseiller IA emploi/mobilité (NexMove). "
               "Classe le DERNIER message de l'utilisateur en UNE catégorie, selon ce qu'il VEUT faire :\n"
               "- recruteur_offre : un RECRUTEUR/employeur veut publier/diffuser une offre d'emploi (il PROPOSE un poste).\n"
               "- recherche_opportunite : un CANDIDAT cherche un emploi/stage/bourse/formation (il CHERCHE pour lui).\n"
@@ -1592,9 +1623,13 @@ async def _onboard_llm_turn(session: dict, t: str):
               "On a ASSEZ (done=true) dès qu'on connaît son OBJECTIF et son DOMAINE/compétences (le reste est bonus). "
               "Champs possibles : objectif (emploi/études/bourse/télétravail/mobilité/tous), mots_cles (domaine), "
               "langues_opportunite (français/anglais/les deux), niveau (débutant/intermédiaire/confirmé), "
-              "pays_cibles, nationalite, type_emploi (temps plein/partiel/télétravail/alternance). "
+              "pays_cibles, pays_exclus, nationalite, type_emploi (temps plein/partiel/télétravail/alternance). "
+              "GÉO IMPORTANT : si la personne ÉCARTE un lieu (« oublie/sans/sauf/pas la France »), ne le mets "
+              "JAMAIS dans pays_cibles ; mets les lieux VISÉS dans pays_cibles et les lieux à écarter dans "
+              "pays_exclus (ex. « en Afrique ou Europe, oublie la France et le Bénin » -> pays_cibles:\"Afrique, Europe\", "
+              "pays_exclus:\"France, Bénin\"). "
               'JSON STRICT: {"extracted":{"objectif":"","mots_cles":"","langues_opportunite":"","niveau":"",'
-              '"pays_cibles":"","nationalite":"","type_emploi":""},"reply":"<ta réponse + éventuellement UNE question, ou vide si rien à ajouter>","done":false}')
+              '"pays_cibles":"","pays_exclus":"","nationalite":"","type_emploi":""},"reply":"<ta réponse + éventuellement UNE question, ou vide si rien à ajouter>","done":false}')
     cv_ctx = _cv_brief(profil) if session.get("cv_parsed") else ""
     user = (f"DÉJÀ CONNU (ne pas redemander) : {known or 'rien encore'}\n"
             + (f"DÉJÀ SUR SON CV (ne JAMAIS redemander ce qui y figure — domaine, expérience, "
@@ -1613,6 +1648,12 @@ async def _onboard_llm_turn(session: dict, t: str):
         if v and v.lower() not in _ONBOARD_VIDES and (not prefs.get(k) or k in cv_guessed):
             prefs[k] = v[:120]
             cv_guessed.discard(k)   # désormais confirmé par l'utilisateur, plus une devinette
+    # Pays EXCLUS : capté par le LLM et/ou déduit de la phrase (« oublie la France »).
+    _px = set(prefs.get("pays_exclus") or [])
+    _px |= _geo_terms_in(str(ext.get("pays_exclus", "") or ""))
+    _px |= _parse_pays_prefs(t)[1]
+    if _px:
+        prefs["pays_exclus"] = sorted(_px)
     # Ceinture + bretelles : si la personne NOMME explicitement un domaine (« dans la finance »),
     # on force les mots-clés dessus, même si le LLM l'a raté et que le CV avait pré-rempli autre chose.
     _obj, _dom = _normalize_objectif(t)
@@ -2379,7 +2420,7 @@ def _resume_prefs(prefs):
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
             + corps + "\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.\n"
-            "_(Tu peux aussi corriger un champ, ex. « pays : France ».)_")
+            "_(Tu peux aussi corriger en écrivant simplement ce qui change, ex. « plutôt des bourses, en anglais » ou « cible : Canada ».)_")
 
 # ── Récap de profil ÉDITABLE : l'utilisateur corrige un champ en écrivant "champ: valeur" ──
 _PROFIL_EDIT_FIELDS = {
@@ -2421,11 +2462,62 @@ def _try_profil_edit(session: dict, t: str):
         pass
     return f"✅ Mis à jour : *{champ}* → {_md_clean(val)}.\n_Tape /profil pour voir ton récap complet._"
 
+async def _nl_profile_edit(session: dict, t: str):
+    """Correction du profil en LANGAGE NATUREL (pas seulement « champ: valeur »).
+    Ex. « Chine, software engineering, en anglais » -> pays_cibles=Chine, mots_cles=software
+    engineering, langue=anglais. Retour terrain : avant, hors format strict la correction était
+    ignorée (il gardait l'ancien profil et sortait des offres à côté). Retourne un message
+    récapitulant ce qui a changé, ou None si rien de clair n'a été capté."""
+    txt = (t or "").strip()
+    if len(txt) < 3 or txt.lower() in ("oui", "non", "yes", "no", "ok"):
+        return None
+    profil = session.setdefault("profil", {})
+    prefs = profil.setdefault("preferences", {})
+    system = (CONSEILLER_PERSONA +
+              " La personne CORRIGE ou PRÉCISE son profil de recherche. Extrait UNIQUEMENT ce qu'elle dit "
+              "EXPLICITEMENT (n'invente rien ; laisse vide sinon). GÉO : un lieu ÉCARTÉ "
+              "(« oublie/sans/sauf/pas X ») va dans pays_exclus ; un lieu VISÉ va dans pays_cibles. "
+              "objectif ∈ {travailler, étudier, bourse, fellowship, tous}. "
+              'JSON STRICT: {"objectif":"","mots_cles":"","langues_opportunite":"","niveau":"",'
+              '"pays_cibles":"","pays_exclus":"","type_emploi":""}')
+    try:
+        r = await call_groq(system, f"PROFIL ACTUEL: {dict(prefs)}\nMESSAGE: {txt}",
+                            temperature=0.2, max_tokens=300, tier="smart")
+    except Exception as e:
+        logger.warning(f"[nl_edit] {e}")
+        return None
+    if not isinstance(r, dict):
+        return None
+    labels = {"objectif": "objectif", "mots_cles": "mots-clés", "langues_opportunite": "langue",
+              "niveau": "niveau", "pays_cibles": "pays", "type_emploi": "type de poste"}
+    changed = []
+    for k in ("objectif", "mots_cles", "langues_opportunite", "niveau", "pays_cibles", "type_emploi"):
+        v = str(r.get(k, "") or "").strip()
+        if v and v.lower() not in _ONBOARD_VIDES and v.lower() != str(prefs.get(k, "") or "").lower():
+            prefs[k] = v[:120]
+            changed.append(f"*{labels[k]}* → {_md_clean(v)}")
+    # Exclusions géographiques (ré-inclusion prioritaire gérée en aval par run_osint).
+    _exc = _geo_terms_in(str(r.get("pays_exclus", "") or "")) | _parse_pays_prefs(txt)[1]
+    if _exc:
+        _cur = set(prefs.get("pays_exclus") or [])
+        if not _exc <= _cur:
+            prefs["pays_exclus"] = sorted(_cur | _exc)
+            changed.append("*pays écartés* → " + ", ".join(sorted(_exc)))
+    if not changed:
+        return None
+    profil["preferences"] = prefs
+    session["profil"] = profil
+    try:
+        profile_store.save(session.get("user_id"), session)
+    except Exception:
+        pass
+    return "✅ C'est noté : " + " · ".join(changed) + "."
+
 # ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
 _WELCOME_PITCH = (
     "🧭 *NexMove, c'est quoi ?*\n"
-    "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n"
-    "Je suis ton assistant IA de *mobilité et d'orientation* (Afrique de l'Ouest & international). Concrètement :\n"
+    "_Études, emploi, ici ou ailleurs : ton conseiller pour ton prochain move._\n"
+    "Je suis ton *conseiller IA emploi & mobilité* (Afrique de l'Ouest & international). Concrètement :\n"
     "• 🔎 je trouve de *vraies* opportunités · emplois, stages, bourses, fellowships · *locales et à l'étranger* ;\n"
     "• 🎓 je t'accompagne *pas à pas* (études en France/Campus France, Canada, visa…) ;\n"
     "• 📄 je prépare tes *dossiers* : CV, lettre de motivation, projet d'études ;\n"
@@ -2543,7 +2635,7 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
     """Répond à N'IMPORTE QUELLE question d'un visiteur pas encore onboardé (RGPD, prix, fiabilité,
     « c'est quoi », etc.) via l'IA, puis invite doucement à envoyer le CV. Pas de mots-clés imposés."""
     system = (
-        "Tu es NexMove, l'assistant IA de mobilité, d'orientation et d'emploi pour les francophones "
+        "Tu es NexMove, le conseiller IA emploi & mobilité pour les francophones "
         "d'Afrique de l'Ouest (Bénin…). L'utilisateur n'a PAS encore créé son profil. Réponds DIRECTEMENT "
         "et honnêtement à sa question, quelle qu'elle soit, en français, en TUTOYANT, ton chaleureux et concret.\n"
         "Faits à connaître :\n"
@@ -3729,12 +3821,17 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             except Exception as e:
                 logger.warning(f"referral attribute: {e}")
         msg = ("👋 *Bienvenue sur NexMove !*\n"
-               "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n\n"
-               "Voici comment ça marche :\n"
-               "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* · j'analyse ton profil.\n"
-               "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
-               "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
-               "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*\n"
+               "Je suis ton *conseiller IA emploi & mobilité* : études, emploi, bourses — ici ou ailleurs, je t'accompagne pas à pas.\n\n"
+               "*Ce que je sais faire pour toi :*\n"
+               "🔎 trouver de *vraies* opportunités notées pour ton profil (locales et à l'étranger)\n"
+               "📄 préparer ton *CV* et ta *lettre* adaptés à chaque offre\n"
+               "🎓 te guider sur *Campus France*, visa, bourses, Canada…\n"
+               "🧰 des *outils PDF* (compresser, fusionner, images→PDF) pour tes dossiers\n\n"
+               "*Comment on démarre :*\n"
+               "1️⃣ Envoie ton *CV (PDF, Word ou image)* · j'analyse ton profil.\n"
+               "2️⃣ Je te pose 2-3 questions (objectif, pays…).\n"
+               "3️⃣ Je te sors tes premières opportunités.\n\n"
+               "📄 *Pour commencer, envoie ton CV.*\n"
                "📝 Pas encore de CV ? Tape /creercv · je t'en crée un. (ou /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -6173,9 +6270,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             # Réponse AMBIGUË (ni oui ni non, ex. « Au Bénin ») -> on NE réinitialise JAMAIS (sinon on
             # perd tout le profil). On tente une correction de champ, sinon on garde tout et on re-propose.
             edited = _try_profil_edit(session, t)
+            if not edited:
+                # Correction en langage naturel (« Chine, software engineering, en anglais »).
+                edited = await _nl_profile_edit(session, t)
             if edited:
                 prefs = session.get("profil", {}).get("preferences", {}) or {}
-                msg = edited + "\n\n" + _resume_prefs(prefs)
+                msg = (edited + "\n\n" + _resume_prefs(prefs)
+                       + "\n\n*Oui* pour lancer sur ce profil, ou continue à préciser.")
             else:
                 prefs = session.get("profil", {}).get("preferences", {}) or {}
                 # Si ça ressemble à un lieu/pays, on le propose comme pays cible (sans l'imposer).
@@ -6183,7 +6284,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if not prefs.get("pays_cibles") and re.search(r"[A-Za-zÀ-ÿ]{3,}", t) and len(t.strip()) <= 40:
                     hint = (f"\n\n_Si tu voulais préciser un pays, écris par ex. « pays : {_md_clean(t.strip()[:30])} »._")
                 msg = ("👍 Je garde ton profil. Réponds *Oui* pour lancer, *Non* pour tout refaire, "
-                       "ou corrige un champ (ex. « pays : Bénin »)." + hint + "\n\n" + _resume_prefs(prefs))
+                       "ou dis-moi simplement ce qui change (ex. « plutôt des bourses, en anglais »)." + hint + "\n\n" + _resume_prefs(prefs))
             session["_kb_options"] = _CONFIRM_KB
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -6318,6 +6419,30 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _cmd = ("/commentpostuler " if _lf == "act:lien_postuler" else "/chances ") + cible
         _push(session, "user", t)
         return await process_text_message(session, _cmd)
+
+    # Avis PAR OFFRE en une réponse (« 1 oui, 2 non, 3 oui ») — prioritaire sur l'avis global.
+    _fb_multi = _offers_feedback_multi(t, session)
+    if _fb_multi:
+        offers = session.get("last_offers") or []
+        pos, neg = [], []
+        try:
+            for idx, vote in sorted(_fb_multi.items()):
+                sig = offers[idx].get("sig") if idx < len(offers) else ""
+                if sig:
+                    opp_store.add_feedback(session.get("user_id"), sig, vote)
+                (pos if vote > 0 else neg).append(str(idx + 1))
+        except Exception as e:
+            logger.warning(f"[fb-multi] {e}")
+        _push(session, "user", t)
+        _parts = []
+        if pos:
+            _parts.append("👍 " + ", ".join(pos))
+        if neg:
+            _parts.append("👎 " + ", ".join(neg))
+        msg = ("✅ Noté : " + " · ".join(_parts) + ".\n"
+               "J'affine tes prochaines offres dans ce sens. 👉 Pour candidater : `/postuler <titre>`.")
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
 
     # MÉCANISME GÉNÉRAL (suite) : avis 👍/👎 TAPÉ sur les dernières offres (« utile » / « pas pour moi »).
     _fb = _offers_feedback_nl(low, session)
@@ -7112,7 +7237,7 @@ def get_menu(session, key):
             ("ℹ️ Tout voir", "act:outils"),
             ("⬅️ Retour", "m:root")])
     return ("🧭 *NexMove* · que veux-tu faire ?", [
-        ("🔎 Trouver", "m:find"), ("🇫🇷 Procédures", "m:cf"),
+        ("🔎 Trouver", "m:find"), ("🛂 Procédures", "m:cf"),
         ("📄 Candidater", "m:apply"), ("🧰 Outils", "m:tools"),
         ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
 
@@ -7146,6 +7271,24 @@ async def deliver_text(session, text, with_menu=False, options=None):
         return await fb_text(to, text)
     kb = _tg_keyboard(options) if options else (_tg_keyboard(get_menu(session, "root")[1]) if with_menu else None)
     return await send_message(to, text, kb)
+
+async def deliver_feedback(session, kb):
+    """Invite à noter les offres. Telegram : boutons PAR offre (persistants, multi-tap).
+    WhatsApp/Messenger : les listes natives sont mono-sélection (elles se ferment au 1er
+    choix) -> on invite à tout noter en UNE réponse texte (« 1 oui, 2 non »), sans liste
+    piégeuse. `kb` reste les boutons par offre (utilisés sur Telegram)."""
+    ch = session.get("channel", "telegram")
+    n = len(session.get("last_offers") or [])
+    if ch in ("whatsapp", "messenger"):
+        ex = "1 oui, 2 non" + (", 3 oui" if n >= 3 else "")
+        return await deliver_text(
+            session,
+            f"📊 Ces offres te vont ? Dis-moi pour *chacune* en une réponse — ex. « {ex} » "
+            "(ou « utile » / « pas pour moi » pour toutes).")
+    return await deliver_menu(
+        session,
+        "📊 Ces offres te correspondent ? Tape 👍/👎 pour *chaque* offre (tu peux en noter plusieurs).",
+        kb)
 
 async def _send_typing(session) -> None:
     """Indicateur « en train d'écrire… » AVANT une opération lente (recherche, analyse CV) :
@@ -7220,7 +7363,7 @@ async def handle_action(session, data, callback_id=None):
         fb = session.pop("_feedback_kb", None)
         await deliver_text(session, msg, with_menu=show, options=opts)
         if fb:
-            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb)
+            await deliver_feedback(session, fb)
         return session
     if data.startswith("m:"):
         title, opts = get_menu(session, data[2:])
@@ -7985,7 +8128,7 @@ async def _route_incoming(channel, user_id, chat_id, username, raw):
         session_manager.set(user_id, session)
         await deliver_text(session, msg, with_menu=show_menu, options=kb_options)
         if fb_kb:
-            await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
+            await deliver_feedback(session, fb_kb)
 
 def _profil_txt_court(profil: dict) -> str:
     prefs = (profil.get("preferences", {}) or {})
@@ -8357,7 +8500,7 @@ async def chat(request: ChatRequest, _auth: bool = Depends(verify_api_key)):
     session_manager.set(uid, session)
     await deliver_text(session, message, with_menu=show_menu, options=kb_options)
     if fb_kb:
-        await deliver_menu(session, "📊 Ces offres te correspondent ? 👍 utile · 👎 hors sujet", fb_kb)
+        await deliver_feedback(session, fb_kb)
     return {"ok": True}
 
 @app.post("/api/chat-cv")
@@ -8443,6 +8586,73 @@ VISA_DB = {
     "turquie":{"facilite":70,"delai":3,"refus_pct":12,"cout_usd":35,"type":"evisa"},
     "default":{"facilite":50,"delai":60,"refus_pct":30,"cout_usd":100,"type":"inconnu"}
 }
+
+# --- Préférences géographiques : distinguer les pays VISÉS des pays EXCLUS -----
+# Avant, « oublie la France » était pris à l'envers (le mot « france » était capté
+# comme cible par simple sous-chaîne). On reconnaît désormais la NÉGATION.
+# alias (ce que la personne tape) -> forme canonique
+_GEO_ALIASES = {
+    "france": "france", "benin": "benin", "bénin": "benin",
+    "canada": "canada", "allemagne": "allemagne", "germany": "allemagne",
+    "belgique": "belgique", "suisse": "suisse", "luxembourg": "luxembourg",
+    "maroc": "maroc", "tunisie": "tunisie", "algerie": "algerie", "algérie": "algerie",
+    "senegal": "senegal", "sénégal": "senegal", "togo": "togo", "ghana": "ghana",
+    "cote d'ivoire": "cote d'ivoire", "côte d'ivoire": "cote d'ivoire",
+    "ivoire": "cote d'ivoire", "nigeria": "nigeria", "nigéria": "nigeria",
+    "usa": "usa", "etats-unis": "usa", "états-unis": "usa", "amerique": "amerique",
+    "amérique": "amerique", "europe": "europe", "afrique": "afrique", "asie": "asie",
+    "royaume-uni": "royaume-uni", "angleterre": "royaume-uni", "uk": "royaume-uni",
+    "espagne": "espagne", "italie": "italie", "portugal": "portugal",
+    "pays-bas": "pays-bas", "hollande": "pays-bas", "bresil": "bresil", "brésil": "bresil",
+    "turquie": "turquie", "georgie": "georgie", "géorgie": "georgie",
+    "cedeao": "cedeao", "cédéao": "cedeao",
+}
+# canonique -> alias à détecter dans un texte (pour filtrer les résultats)
+_GEO_CANON_ALIASES: dict = {}
+for _a, _c in _GEO_ALIASES.items():
+    _GEO_CANON_ALIASES.setdefault(_c, set()).add(_a)
+# déclencheurs de négation : ce qui SUIT est exclu (« oublie X », « sans X », « sauf X »…)
+_NEG_TRIGGERS = ("oubli", "sauf", "exclu", "hormis", "hors ", "à part", "a part",
+                 "autre que", "autres que", "sans ", "pas de ", "pas la ", "pas le ",
+                 "pas en ", "pas au ", "pas aux ", "évit", "evit", " ni ")
+_WORD_EDGE = "a-zàâäéèêëïîôöùûüç0-9"
+
+def _geo_terms_in(text: str) -> set:
+    """Formes canoniques des lieux reconnus présents dans `text` (frontières de mot)."""
+    low = (text or "").lower()
+    found = set()
+    for alias, canon in _GEO_ALIASES.items():
+        if re.search(rf"(?<![{_WORD_EDGE}]){re.escape(alias)}(?![{_WORD_EDGE}])", low):
+            found.add(canon)
+    return found
+
+def _parse_pays_prefs(text: str):
+    """Sépare les lieux VISÉS des lieux EXCLUS dans une phrase libre.
+    « en Afrique ou Europe, oublie la France et le Bénin »
+      -> inclus={afrique, europe}, exclus={france, benin}.
+    Retourne (inclus:set, exclus:set) en formes canoniques."""
+    low = (text or "").lower()
+    if not low.strip():
+        return set(), set()
+    neg_pos = min((low.find(t) for t in _NEG_TRIGGERS if t in low), default=-1)
+    if neg_pos < 0:
+        return _geo_terms_in(low), set()
+    inclus = _geo_terms_in(low[:neg_pos])
+    exclus = _geo_terms_in(low[neg_pos:])
+    inclus -= exclus   # un lieu explicitement exclu ne peut pas rester visé
+    return inclus, exclus
+
+def _result_pays_exclu(src: dict, exclus: set) -> bool:
+    """Vrai si un résultat web porte clairement sur un pays EXCLU (titre/url/extrait)."""
+    if not exclus:
+        return False
+    hay = f" {(src.get('title','') or '').lower()} {(src.get('url','') or '').lower()} " \
+          f"{(src.get('content','') or '')[:160].lower()} "
+    for canon in exclus:
+        for alias in _GEO_CANON_ALIASES.get(canon, {canon}):
+            if re.search(rf"(?<![{_WORD_EDGE}]){re.escape(alias)}(?![{_WORD_EDGE}])", hay):
+                return True
+    return False
 
 async def tavily_search(query: str, max_results: int = 7) -> list:
     if not TAVILY_API_KEY:
@@ -9717,11 +9927,20 @@ def _requested_type(cible: str, objectif: str) -> str:
     b = any(k in s for k in _BOURSE_KW)
     if objectif in ("travailler",):
         e = True
-    if objectif in ("étudier", "etudier", "bourse"):
+    if objectif in ("étudier", "etudier", "bourse", "fellowship"):
         b = True
-    if e and not b:
+    if e and b:
+        # Conflit (ex. objectif « bourse » + un mot emploi dans la demande) : l'OBJECTIF
+        # explicite de la personne tranche, pour ne pas lui sortir des jobs quand elle
+        # a demandé une bourse (retour terrain).
+        if objectif in ("bourse", "étudier", "etudier", "fellowship"):
+            return "bourse"
+        if objectif in ("travailler",):
+            return "emploi"
+        return ""
+    if e:
         return "emploi"
-    if b and not e:
+    if b:
         return "bourse"
     return ""
 
@@ -9745,6 +9964,29 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     financement = prefs.get("financement") or "non précisé"
     pays_cibles = prefs.get("pays_cibles") or ""
     objectif = prefs.get("objectif") or "tous"
+    # Pays EXCLUS (« oublie/sans/sauf X ») : dans les préférences OU la demande courante.
+    # Corrige le cas « oublie la France » pris à l'envers comme cible = France.
+    _inc, _exc = _parse_pays_prefs(f"{pays_cibles} {cible or ''}")
+    # Stock + nouvelles exclusions, MAIS un lieu re-visé explicitement redevient éligible.
+    pays_exclus = (_exc | {str(x).lower() for x in (prefs.get("pays_exclus") or [])}) - _inc
+    if session is not None and pays_exclus != set(prefs.get("pays_exclus") or []):
+        try:
+            prefs["pays_exclus"] = sorted(pays_exclus)
+            profil["preferences"] = prefs
+        except Exception:
+            pass
+    # Cible géographique EFFECTIVE, nettoyée des négations : on ne laisse jamais
+    # la phrase d'exclusion (« oublie la France… ») servir de zone de recherche.
+    if _inc:
+        pays_eff = " ".join(sorted(_inc))
+    elif _exc:
+        # On ne connaît que ce qu'il EXCLUT : on garde la cible éventuelle écrite AVANT la
+        # négation (« Mali, oublie le Nigeria » -> « Mali »), sinon rien d'imposé.
+        _plc = (pays_cibles or "").lower()
+        _cut = min((_plc.find(tt) for tt in _NEG_TRIGGERS if tt in _plc), default=-1)
+        pays_eff = (pays_cibles[:_cut] if _cut >= 0 else pays_cibles).strip(" ,.;·-")
+    else:
+        pays_eff = pays_cibles
     resume = profil.get("resume_profil", "")
     formations = [f.get("diplome", "") for f in (profil.get("formation") or []) if f.get("diplome")][:3]
     experiences = [f"{e.get('poste','')} ({e.get('organisation','')})" for e in (profil.get("experience") or []) if e.get("poste")][:3]
@@ -9752,15 +9994,17 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     terms = _profil_search_terms(profil)
     domaine = terms["domaine"]; mots_list = terms["mots_list"]
     type_emploi = prefs.get("type_emploi") or ""
-    cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités"
+    cible = (cible or "").strip() or f"{domaine} {pays_eff}".strip() or "opportunités"
     cible_lower = cible.lower()
-    pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
+    # Un pays EXCLU ne peut jamais être détecté comme cible (garde-fou anti-inversion).
+    pays_detecte = next((p for p in VISA_DB if p != "default" and p not in pays_exclus
+                         and (p in cible_lower or p in pays_eff.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
     # Champ élargi : proposer aussi des opportunités LOCALES (pas seulement à l'étranger)
     # Pays RÉEL de l'utilisateur : d'abord l'indicatif du numéro (WhatsApp/Messenger), sinon la nationalité.
     phone_pays = _pays_from_phone(user_id) if channel in ("whatsapp", "messenger") else ""
     local_pays = phone_pays or _pays_from_nat(nationalite)
-    _pc_low = (pays_cibles or "").lower()
+    _pc_low = (pays_eff or "").lower()
     _pc_vide = (not pays_cibles) or _pc_low in ("tous", "local", "sur place", "mon pays", "")
     veut_local = _pc_vide or "afrique" in _pc_low or (local_pays and local_pays.lower() in (_pc_low + " " + cible_lower))
     today = datetime.now(timezone.utc).date().isoformat()
@@ -9787,7 +10031,7 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     if pays_detecte:
         zone = pays_detecte
     elif not _pc_vide:
-        zone = pays_cibles
+        zone = pays_eff
     elif remote:
         zone = ""                      # remote = sans pays
     else:
@@ -9818,6 +10062,12 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
             if fc["url"] not in seen_u:
                 seen_u.add(fc["url"]); grounded.append(fc)
 
+    # Respect des EXCLUSIONS : on retire les résultats portant clairement sur un pays écarté.
+    if pays_exclus and grounded:
+        _kept = [s for s in grounded if not _result_pays_exclu(s, pays_exclus)]
+        if _kept:                       # on ne vide jamais le pool par excès de filtrage
+            grounded = _kept
+
     if grounded:
         # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
         sims = await semantic_scores(profil_txt, grounded, lambda s: f"{s.get('title','')} {(s.get('content','') or '')[:300]}")
@@ -9841,9 +10091,12 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
         local_txt = ((f"IMPORTANT : inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations comme "
                       f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
                      if veut_local and local_pays else "")
+        exclus_txt = (f"⛔ PAYS À EXCLURE : {', '.join(sorted(pays_exclus))}. Ne sélectionne AUCUNE "
+                      f"opportunité située dans ces pays, même si elle apparaît dans les résultats.\n"
+                      if pays_exclus else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
-{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}.
+DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_eff or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
+{diversite}{type_emploi_txt}{local_txt}{exclus_txt}DATE DU JOUR: {today}.
 ⛔ ÉCHÉANCES : EXCLUS impérativement toute opportunité dont la date limite de candidature est ANTÉRIEURE à {today} (édition déjà close, bourse d'une année passée). En cas de doute sur une date passée, NE la sélectionne PAS. Quand une date limite À VENIR est visible dans le résultat, renseigne-la dans "deadline" (texte) ET "deadline_iso" (AAAA-MM-JJ) ; sinon laisse les deux vides (n'invente jamais de date).
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}

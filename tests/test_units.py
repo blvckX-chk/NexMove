@@ -4318,3 +4318,52 @@ def test_remote_sources_elargies_v323():
     qs = main._build_osint_queries(terms, "télétravail", "emploi", "", "Bénin", "télétravail", False, remote=True)
     blob = " ".join(qs)
     assert "remote.co" in blob and "wellfound.com" in blob
+
+
+# --- Exclusions géographiques (bug « oublie la France » pris à l'envers) v3.84 ---
+def test_parse_pays_prefs_exclusion_screenshot():
+    # Retour testeur réel : « oublie la France et le Bénin » était pris comme CIBLE France.
+    inc, exc = main._parse_pays_prefs(
+        "Je cherche une opportunité en Afrique ou en Europe. Oublies la France et le Benin")
+    assert inc == {"afrique", "europe"}
+    assert exc == {"france", "benin"}
+
+def test_parse_pays_prefs_inclusion_simple():
+    inc, exc = main._parse_pays_prefs("France, Canada")
+    assert inc == {"france", "canada"} and exc == set()
+
+def test_parse_pays_prefs_reinclusion_prioritaire():
+    inc, exc = main._parse_pays_prefs("je veux la France, pas le Canada")
+    assert inc == {"france"} and exc == {"canada"}
+
+def test_result_pays_exclu_filtre_france():
+    src = {"title": "Postes Expertise France (France) | LinkedIn",
+           "url": "https://linkedin.com/jobs/france", "content": "poste en France"}
+    assert main._result_pays_exclu(src, {"france"}) is True
+    assert main._result_pays_exclu(src, set()) is False
+    autre = {"title": "Bourse recherche Ghana", "url": "x", "content": "au Ghana"}
+    assert main._result_pays_exclu(autre, {"france"}) is False
+
+
+def test_requested_type_conflit_objectif_prime_v384():
+    # Retour terrain : objectif « bourse » mais un mot emploi dans la demande -> on sort
+    # quand même des bourses, pas des jobs. L'objectif explicite tranche.
+    assert main._requested_type("software engineering, find me jobs", "bourse") == "bourse"
+    assert main._requested_type("je veux un emploi maintenant", "travailler") == "emploi"
+    assert main._requested_type("bourse ou emploi", "tous") == ""   # vraiment indifférent
+
+
+# --- Feedback PAR offre en une réponse (retour terrain : noter chaque offre) v3.86 ---
+def test_offers_feedback_multi_v386():
+    sess = {"last_offers": [{"sig": "a"}, {"sig": "b"}, {"sig": "c"}]}
+    assert main._offers_feedback_multi("1 oui, 2 non, 3 oui", sess) == {0: 1, 1: -1, 2: 1}
+    assert main._offers_feedback_multi("1👍 2👎", sess) == {0: 1, 1: -1}
+    assert main._offers_feedback_multi("1 et 3 bonnes", sess) == {0: 1, 2: 1}
+    assert main._offers_feedback_multi("1 pas pour moi", sess) == {0: -1}
+
+def test_offers_feedback_multi_pas_de_faux_positif_v386():
+    sess = {"last_offers": [{"sig": "a"}, {"sig": "b"}, {"sig": "c"}]}
+    assert main._offers_feedback_multi("je veux voir 2 ou 3 offres de plus", sess) == {}
+    assert main._offers_feedback_multi("5 oui", sess) == {}          # hors borne
+    assert main._offers_feedback_multi("merci beaucoup", sess) == {}
+    assert main._offers_feedback_multi("1 oui", {"last_offers": []}) == {}  # sans offres

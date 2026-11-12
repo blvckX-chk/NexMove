@@ -2,6 +2,27 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.86 — Noter CHAQUE offre (feedback par offre, sans liste mono-sélection)
+- **Retour terrain** : *« on doit pouvoir cocher les deux, dire si chaque offre est bonne ou pas »*. Le picker WhatsApp/Messenger s'affichait en **liste mono-sélection** (elle se ferme au 1er choix) → impossible de noter plusieurs offres.
+- **Telegram** : les boutons sont désormais présentés clairement **par offre** (`👍 1 | 👎 1`, `👍 2 | 👎 2`…), persistants — on en note autant qu'on veut (c'était déjà techniquement possible, c'est maintenant explicite).
+- **WhatsApp/Messenger** : fini la liste piégeuse ; on invite à tout noter en **une réponse texte** — *« 1 oui, 2 non, 3 oui »*, *« 1👍 2👎 »*, *« 1 et 3 bonnes »* — parsé par offre, avec garde anti-faux-positif (notation courte uniquement). L'avis global (« utile » / « pas pour moi ») reste accepté.
+
+## v3.85 — Corrections en langage naturel au récap + objectif respecté + icônes neutres (retours terrain)
+- **Correction en langage naturel au récap.** Avant, seul le format strict « champ : valeur » était compris ; une phrase comme *« Chine, software engineering, en anglais »* était **ignorée** (il gardait l'ancien profil et sortait des offres à côté, ex. un job PHP à Cotonou). Désormais le bot **comprend la phrase libre**, met à jour les bons champs (pays, mots-clés, langue, objectif, type) et réaffiche le récap corrigé.
+- **« J'ai demandé une bourse, il m'a sorti des jobs ».** Quand l'objectif explicite est *bourse / études / fellowship*, un simple mot « emploi-ish » dans la demande ne fait plus basculer la recherche vers des jobs : **l'objectif de la personne tranche**.
+- **Exemples neutres.** Fini les exemples toujours centrés *« pays : France / Bénin »* ; les suggestions sont neutres (« plutôt des bourses, en anglais », « cible : Canada »).
+- **Icône Procédures** : le drapeau 🇫🇷 (qui laissait croire que c'était France-only) devient 🛂, générique mobilité.
+- **Objectif combinable** : on peut en choisir plusieurs en l'écrivant (« bourse et fellowship »), en plus des boutons. La question pays mentionne aussi l'exclusion (« sauf la France »).
+- **Le bot se présente** : l'accueil dit qui il est (*conseiller IA emploi & mobilité*) et **à quoi servent ses outils** (trouver des offres notées, CV/lettre, Campus France/visa, outils PDF) avant de demander le CV.
+- **« Conseiller IA » partout** : le mot « assistant » (accueil, pitch, personas, vitrine : balises SEO/OpenGraph, hero, FAQ, JSON-LD) devient « conseiller IA », comme demandé.
+- QC senior : cas limite « cible hors lexique + exclusion » (« Mali, oublie le Nigeria ») géré (Mali conservé). Tests de non-régression ajoutés.
+
+## v3.84 — Respect des pays EXCLUS (« oublie la France… » n'est plus pris à l'envers)
+- **Bug testeur corrigé.** Quand la personne écartait un lieu — *« en Afrique ou en Europe, oublie la France et le Bénin »* — le bot faisait **l'inverse** et ramenait des offres… en France. Cause : la phrase était stockée telle quelle et le mot « france » était capté comme **cible** par simple sous-chaîne, le « oublie » ignoré.
+- **Notion de pays exclus** introduite partout : un parseur de négation (`oublie/sans/sauf/pas/évite/ni…`) sépare les lieux **visés** des lieux **écartés**, les mémorise dans `preferences.pays_exclus`, et les respecte à chaque étape : un pays exclu ne peut plus être détecté comme cible, n'entre plus dans la zone de recherche, les résultats qui portent dessus sont **filtrés**, et le modèle de sélection reçoit une consigne d'exclusion explicite.
+- **Ré-inclusion prioritaire** : si la personne re-vise plus tard un pays qu'elle avait écarté, l'exclusion est levée automatiquement.
+- Onboarding : l'extraction apprend à ranger un lieu écarté dans `pays_exclus` (plus jamais dans `pays_cibles`). Tests de non-régression ajoutés (dont la phrase exacte du retour terrain).
+
 ## v3.83 — Personnalité de conseiller (psychologie), ton vivant, aération + fin de message contextuelle
 - **Fini le « envoie ton CV » collé à CHAQUE message.** La clôture est désormais **contextuelle** : le bot termine par l'étape la plus utile pour *ce* message. Il ne réclame le CV que s'il manque vraiment et qu'il aide maintenant ; s'il est déjà là ou si la personne parle d'autre chose (postuler, conseil, formation), il propose l'action adaptée au sujet. Le nudge CV pré-onboarding est **throttlé** (plus répété tour après tour).
 - **Psychologie d'orientation** ajoutée à la personnalité : le bot capte l'émotion (doute, peur, découragement, enthousiasme), y répond d'abord, valorise les forces, redonne confiance et de l'élan, et **adapte son ton** à l'état de la personne.
