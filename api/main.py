@@ -317,7 +317,7 @@ from fastapi.responses import RedirectResponse, PlainTextResponse
 # (Embeddings/vision : voir llm.py · PR-B)
 
 ETAPE_INSTRUCTIONS = {
-    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: agent IA pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
+    "WELCOME": "Accueille chaleureusement l'utilisateur. Présente NexMove en 2 phrases: conseiller IA emploi & mobilité pour préparer son prochain départ (études, emploi, bourses, mobilité internationale) adapté à son profil. Demande d'envoyer le CV (PDF, Word ou image).",
     "ATTENTE_CV": "L'utilisateur doit envoyer son CV (PDF, Word ou image). Rappelle-lui brièvement.",
     "CV_RECU": "Le CV a été analysé. L'utilisateur confirme les informations. Réponds Oui pour passer aux préférences.",
     "PREFERENCES": "Collecte des préférences (gérée par le code).",
@@ -1477,7 +1477,7 @@ async def _route_intent(session: dict, t: str):
     tl = (t or "").strip()
     if not tl or len(tl) > 400:
         return None
-    system = ("Tu es un routeur d'intention pour un assistant d'emploi/mobilité (NexMove). "
+    system = ("Tu es un routeur d'intention pour un conseiller IA emploi/mobilité (NexMove). "
               "Classe le DERNIER message de l'utilisateur en UNE catégorie, selon ce qu'il VEUT faire :\n"
               "- recruteur_offre : un RECRUTEUR/employeur veut publier/diffuser une offre d'emploi (il PROPOSE un poste).\n"
               "- recherche_opportunite : un CANDIDAT cherche un emploi/stage/bourse/formation (il CHERCHE pour lui).\n"
@@ -2485,8 +2485,8 @@ async def _nl_profile_edit(session: dict, t: str):
 # ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
 _WELCOME_PITCH = (
     "🧭 *NexMove, c'est quoi ?*\n"
-    "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n"
-    "Je suis ton assistant IA de *mobilité et d'orientation* (Afrique de l'Ouest & international). Concrètement :\n"
+    "_Études, emploi, ici ou ailleurs : ton conseiller pour ton prochain move._\n"
+    "Je suis ton *conseiller IA emploi & mobilité* (Afrique de l'Ouest & international). Concrètement :\n"
     "• 🔎 je trouve de *vraies* opportunités · emplois, stages, bourses, fellowships · *locales et à l'étranger* ;\n"
     "• 🎓 je t'accompagne *pas à pas* (études en France/Campus France, Canada, visa…) ;\n"
     "• 📄 je prépare tes *dossiers* : CV, lettre de motivation, projet d'études ;\n"
@@ -2604,7 +2604,7 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
     """Répond à N'IMPORTE QUELLE question d'un visiteur pas encore onboardé (RGPD, prix, fiabilité,
     « c'est quoi », etc.) via l'IA, puis invite doucement à envoyer le CV. Pas de mots-clés imposés."""
     system = (
-        "Tu es NexMove, l'assistant IA de mobilité, d'orientation et d'emploi pour les francophones "
+        "Tu es NexMove, le conseiller IA emploi & mobilité pour les francophones "
         "d'Afrique de l'Ouest (Bénin…). L'utilisateur n'a PAS encore créé son profil. Réponds DIRECTEMENT "
         "et honnêtement à sa question, quelle qu'elle soit, en français, en TUTOYANT, ton chaleureux et concret.\n"
         "Faits à connaître :\n"
@@ -3790,12 +3790,17 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
             except Exception as e:
                 logger.warning(f"referral attribute: {e}")
         msg = ("👋 *Bienvenue sur NexMove !*\n"
-               "_Études, emploi, ici ou ailleurs : l'assistant pour ton prochain move._\n\n"
-               "Voici comment ça marche :\n"
-               "1️⃣ Envoie-moi ton *CV (PDF, Word ou image)* · j'analyse ton profil.\n"
-               "2️⃣ Je te pose quelques questions (objectif, pays, financement…).\n"
-               "3️⃣ Ensuite : /veille (trouver), /campusfrance (études en France), /postuler (CV + lettre).\n\n"
-               "📄 *Pour commencer, envoie ton CV (PDF, Word ou image).*\n"
+               "Je suis ton *conseiller IA emploi & mobilité* : études, emploi, bourses — ici ou ailleurs, je t'accompagne pas à pas.\n\n"
+               "*Ce que je sais faire pour toi :*\n"
+               "🔎 trouver de *vraies* opportunités notées pour ton profil (locales et à l'étranger)\n"
+               "📄 préparer ton *CV* et ta *lettre* adaptés à chaque offre\n"
+               "🎓 te guider sur *Campus France*, visa, bourses, Canada…\n"
+               "🧰 des *outils PDF* (compresser, fusionner, images→PDF) pour tes dossiers\n\n"
+               "*Comment on démarre :*\n"
+               "1️⃣ Envoie ton *CV (PDF, Word ou image)* · j'analyse ton profil.\n"
+               "2️⃣ Je te pose 2-3 questions (objectif, pays…).\n"
+               "3️⃣ Je te sors tes premières opportunités.\n\n"
+               "📄 *Pour commencer, envoie ton CV.*\n"
                "📝 Pas encore de CV ? Tape /creercv · je t'en crée un. (ou /tuto pour le guide)")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -9902,7 +9907,11 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     if _inc:
         pays_eff = " ".join(sorted(_inc))
     elif _exc:
-        pays_eff = ""                       # on sait seulement ce qu'il NE veut PAS
+        # On ne connaît que ce qu'il EXCLUT : on garde la cible éventuelle écrite AVANT la
+        # négation (« Mali, oublie le Nigeria » -> « Mali »), sinon rien d'imposé.
+        _plc = (pays_cibles or "").lower()
+        _cut = min((_plc.find(tt) for tt in _NEG_TRIGGERS if tt in _plc), default=-1)
+        pays_eff = (pays_cibles[:_cut] if _cut >= 0 else pays_cibles).strip(" ,.;·-")
     else:
         pays_eff = pays_cibles
     resume = profil.get("resume_profil", "")

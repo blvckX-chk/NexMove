@@ -8,7 +8,9 @@ Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'
 - **Exemples neutres.** Fini les exemples toujours centrés *« pays : France / Bénin »* ; les suggestions sont neutres (« plutôt des bourses, en anglais », « cible : Canada »).
 - **Icône Procédures** : le drapeau 🇫🇷 (qui laissait croire que c'était France-only) devient 🛂, générique mobilité.
 - **Objectif combinable** : on peut en choisir plusieurs en l'écrivant (« bourse et fellowship »), en plus des boutons. La question pays mentionne aussi l'exclusion (« sauf la France »).
-- Tests de non-régression ajoutés.
+- **Le bot se présente** : l'accueil dit qui il est (*conseiller IA emploi & mobilité*) et **à quoi servent ses outils** (trouver des offres notées, CV/lettre, Campus France/visa, outils PDF) avant de demander le CV.
+- **« Conseiller IA » partout** : le mot « assistant » (accueil, pitch, personas, vitrine : balises SEO/OpenGraph, hero, FAQ, JSON-LD) devient « conseiller IA », comme demandé.
+- QC senior : cas limite « cible hors lexique + exclusion » (« Mali, oublie le Nigeria ») géré (Mali conservé). Tests de non-régression ajoutés.
 
 ## v3.84 — Respect des pays EXCLUS (« oublie la France… » n'est plus pris à l'envers)
 - **Bug testeur corrigé.** Quand la personne écartait un lieu — *« en Afrique ou en Europe, oublie la France et le Bénin »* — le bot faisait **l'inverse** et ramenait des offres… en France. Cause : la phrase était stockée telle quelle et le mot « france » était capté comme **cible** par simple sous-chaîne, le « oublie » ignoré.
