@@ -4343,3 +4343,11 @@ def test_result_pays_exclu_filtre_france():
     assert main._result_pays_exclu(src, set()) is False
     autre = {"title": "Bourse recherche Ghana", "url": "x", "content": "au Ghana"}
     assert main._result_pays_exclu(autre, {"france"}) is False
+
+
+def test_requested_type_conflit_objectif_prime_v384():
+    # Retour terrain : objectif « bourse » mais un mot emploi dans la demande -> on sort
+    # quand même des bourses, pas des jobs. L'objectif explicite tranche.
+    assert main._requested_type("software engineering, find me jobs", "bourse") == "bourse"
+    assert main._requested_type("je veux un emploi maintenant", "travailler") == "emploi"
+    assert main._requested_type("bourse ou emploi", "tous") == ""   # vraiment indifférent

@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.85 — Corrections en langage naturel au récap + objectif respecté + icônes neutres (retours terrain)
+- **Correction en langage naturel au récap.** Avant, seul le format strict « champ : valeur » était compris ; une phrase comme *« Chine, software engineering, en anglais »* était **ignorée** (il gardait l'ancien profil et sortait des offres à côté, ex. un job PHP à Cotonou). Désormais le bot **comprend la phrase libre**, met à jour les bons champs (pays, mots-clés, langue, objectif, type) et réaffiche le récap corrigé.
+- **« J'ai demandé une bourse, il m'a sorti des jobs ».** Quand l'objectif explicite est *bourse / études / fellowship*, un simple mot « emploi-ish » dans la demande ne fait plus basculer la recherche vers des jobs : **l'objectif de la personne tranche**.
+- **Exemples neutres.** Fini les exemples toujours centrés *« pays : France / Bénin »* ; les suggestions sont neutres (« plutôt des bourses, en anglais », « cible : Canada »).
+- **Icône Procédures** : le drapeau 🇫🇷 (qui laissait croire que c'était France-only) devient 🛂, générique mobilité.
+- **Objectif combinable** : on peut en choisir plusieurs en l'écrivant (« bourse et fellowship »), en plus des boutons. La question pays mentionne aussi l'exclusion (« sauf la France »).
+- Tests de non-régression ajoutés.
+
 ## v3.84 — Respect des pays EXCLUS (« oublie la France… » n'est plus pris à l'envers)
 - **Bug testeur corrigé.** Quand la personne écartait un lieu — *« en Afrique ou en Europe, oublie la France et le Bénin »* — le bot faisait **l'inverse** et ramenait des offres… en France. Cause : la phrase était stockée telle quelle et le mot « france » était capté comme **cible** par simple sous-chaîne, le « oublie » ignoré.
 - **Notion de pays exclus** introduite partout : un parseur de négation (`oublie/sans/sauf/pas/évite/ni…`) sépare les lieux **visés** des lieux **écartés**, les mémorise dans `preferences.pays_exclus`, et les respecte à chaque étape : un pays exclu ne peut plus être détecté comme cible, n'entre plus dans la zone de recherche, les résultats qui portent dessus sont **filtrés**, et le modèle de sélection reçoit une consigne d'exclusion explicite.

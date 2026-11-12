@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.84.0"
+VERSION         = "3.85.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1248,9 +1248,9 @@ def _progress_bar(done: int, total: int, taille: int = 8) -> str:
 # les réponses déjà données · onboarding ADAPTATIF (ex. pas de nationalité/passeport ni de
 # financement d'études pour un simple stage/job LOCAL).
 PREF_FIELDS: dict[str, tuple[str, Optional[list]]] = {
-    "objectif":            ("🎯 Quel est ton objectif principal ?\n(travailler / étudier / bourse / fellowship / tous)",
+    "objectif":            ("🎯 Quel est ton objectif ?\n(travailler / étudier / bourse / fellowship / tous)\n_Tu peux en combiner : écris par ex. « bourse et fellowship »._",
                             ["Travailler", "Étudier", "Bourse", "Fellowship", "Tous"]),
-    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : France, Canada… · ou ton *propre pays* pour des offres locales, ou « tous »)",
+    "pays_cibles":         ("🌍 Quels pays ou régions vises-tu ?\n(ex : Canada, Allemagne… · ou ton *propre pays* pour des offres locales · ou « tous » · tu peux aussi en écarter : « sauf la France »)",
                             None),
     "nationalite":         ("🛂 Quelle est ta nationalité (pays du passeport) ?", None),
     "financement":         ("💰 Financement : bourse indispensable, tu peux auto-financer, ou peu importe ?",
@@ -2389,7 +2389,7 @@ def _resume_prefs(prefs):
     return ("📋 *Récapitulatif de ton profil de recherche :*\n"
             + corps + "\n\n"
             "Tout est correct ? Réponds *Oui* pour lancer, ou *Non* pour recommencer.\n"
-            "_(Tu peux aussi corriger un champ, ex. « pays : France ».)_")
+            "_(Tu peux aussi corriger en écrivant simplement ce qui change, ex. « plutôt des bourses, en anglais » ou « cible : Canada ».)_")
 
 # ── Récap de profil ÉDITABLE : l'utilisateur corrige un champ en écrivant "champ: valeur" ──
 _PROFIL_EDIT_FIELDS = {
@@ -2430,6 +2430,57 @@ def _try_profil_edit(session: dict, t: str):
     except Exception:
         pass
     return f"✅ Mis à jour : *{champ}* → {_md_clean(val)}.\n_Tape /profil pour voir ton récap complet._"
+
+async def _nl_profile_edit(session: dict, t: str):
+    """Correction du profil en LANGAGE NATUREL (pas seulement « champ: valeur »).
+    Ex. « Chine, software engineering, en anglais » -> pays_cibles=Chine, mots_cles=software
+    engineering, langue=anglais. Retour terrain : avant, hors format strict la correction était
+    ignorée (il gardait l'ancien profil et sortait des offres à côté). Retourne un message
+    récapitulant ce qui a changé, ou None si rien de clair n'a été capté."""
+    txt = (t or "").strip()
+    if len(txt) < 3 or txt.lower() in ("oui", "non", "yes", "no", "ok"):
+        return None
+    profil = session.setdefault("profil", {})
+    prefs = profil.setdefault("preferences", {})
+    system = (CONSEILLER_PERSONA +
+              " La personne CORRIGE ou PRÉCISE son profil de recherche. Extrait UNIQUEMENT ce qu'elle dit "
+              "EXPLICITEMENT (n'invente rien ; laisse vide sinon). GÉO : un lieu ÉCARTÉ "
+              "(« oublie/sans/sauf/pas X ») va dans pays_exclus ; un lieu VISÉ va dans pays_cibles. "
+              "objectif ∈ {travailler, étudier, bourse, fellowship, tous}. "
+              'JSON STRICT: {"objectif":"","mots_cles":"","langues_opportunite":"","niveau":"",'
+              '"pays_cibles":"","pays_exclus":"","type_emploi":""}')
+    try:
+        r = await call_groq(system, f"PROFIL ACTUEL: {dict(prefs)}\nMESSAGE: {txt}",
+                            temperature=0.2, max_tokens=300, tier="smart")
+    except Exception as e:
+        logger.warning(f"[nl_edit] {e}")
+        return None
+    if not isinstance(r, dict):
+        return None
+    labels = {"objectif": "objectif", "mots_cles": "mots-clés", "langues_opportunite": "langue",
+              "niveau": "niveau", "pays_cibles": "pays", "type_emploi": "type de poste"}
+    changed = []
+    for k in ("objectif", "mots_cles", "langues_opportunite", "niveau", "pays_cibles", "type_emploi"):
+        v = str(r.get(k, "") or "").strip()
+        if v and v.lower() not in _ONBOARD_VIDES and v.lower() != str(prefs.get(k, "") or "").lower():
+            prefs[k] = v[:120]
+            changed.append(f"*{labels[k]}* → {_md_clean(v)}")
+    # Exclusions géographiques (ré-inclusion prioritaire gérée en aval par run_osint).
+    _exc = _geo_terms_in(str(r.get("pays_exclus", "") or "")) | _parse_pays_prefs(txt)[1]
+    if _exc:
+        _cur = set(prefs.get("pays_exclus") or [])
+        if not _exc <= _cur:
+            prefs["pays_exclus"] = sorted(_cur | _exc)
+            changed.append("*pays écartés* → " + ", ".join(sorted(_exc)))
+    if not changed:
+        return None
+    profil["preferences"] = prefs
+    session["profil"] = profil
+    try:
+        profile_store.save(session.get("user_id"), session)
+    except Exception:
+        pass
+    return "✅ C'est noté : " + " · ".join(changed) + "."
 
 # ── Accueil moins rigide : répondre AVANT de réclamer le CV ──
 _WELCOME_PITCH = (
@@ -6183,9 +6234,13 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             # Réponse AMBIGUË (ni oui ni non, ex. « Au Bénin ») -> on NE réinitialise JAMAIS (sinon on
             # perd tout le profil). On tente une correction de champ, sinon on garde tout et on re-propose.
             edited = _try_profil_edit(session, t)
+            if not edited:
+                # Correction en langage naturel (« Chine, software engineering, en anglais »).
+                edited = await _nl_profile_edit(session, t)
             if edited:
                 prefs = session.get("profil", {}).get("preferences", {}) or {}
-                msg = edited + "\n\n" + _resume_prefs(prefs)
+                msg = (edited + "\n\n" + _resume_prefs(prefs)
+                       + "\n\n*Oui* pour lancer sur ce profil, ou continue à préciser.")
             else:
                 prefs = session.get("profil", {}).get("preferences", {}) or {}
                 # Si ça ressemble à un lieu/pays, on le propose comme pays cible (sans l'imposer).
@@ -6193,7 +6248,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 if not prefs.get("pays_cibles") and re.search(r"[A-Za-zÀ-ÿ]{3,}", t) and len(t.strip()) <= 40:
                     hint = (f"\n\n_Si tu voulais préciser un pays, écris par ex. « pays : {_md_clean(t.strip()[:30])} »._")
                 msg = ("👍 Je garde ton profil. Réponds *Oui* pour lancer, *Non* pour tout refaire, "
-                       "ou corrige un champ (ex. « pays : Bénin »)." + hint + "\n\n" + _resume_prefs(prefs))
+                       "ou dis-moi simplement ce qui change (ex. « plutôt des bourses, en anglais »)." + hint + "\n\n" + _resume_prefs(prefs))
             session["_kb_options"] = _CONFIRM_KB
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -7122,7 +7177,7 @@ def get_menu(session, key):
             ("ℹ️ Tout voir", "act:outils"),
             ("⬅️ Retour", "m:root")])
     return ("🧭 *NexMove* · que veux-tu faire ?", [
-        ("🔎 Trouver", "m:find"), ("🇫🇷 Procédures", "m:cf"),
+        ("🔎 Trouver", "m:find"), ("🛂 Procédures", "m:cf"),
         ("📄 Candidater", "m:apply"), ("🧰 Outils", "m:tools"),
         ("📊 Mon espace", "m:space"), ("❓ Aide", "act:aide")])
 
@@ -9794,11 +9849,20 @@ def _requested_type(cible: str, objectif: str) -> str:
     b = any(k in s for k in _BOURSE_KW)
     if objectif in ("travailler",):
         e = True
-    if objectif in ("étudier", "etudier", "bourse"):
+    if objectif in ("étudier", "etudier", "bourse", "fellowship"):
         b = True
-    if e and not b:
+    if e and b:
+        # Conflit (ex. objectif « bourse » + un mot emploi dans la demande) : l'OBJECTIF
+        # explicite de la personne tranche, pour ne pas lui sortir des jobs quand elle
+        # a demandé une bourse (retour terrain).
+        if objectif in ("bourse", "étudier", "etudier", "fellowship"):
+            return "bourse"
+        if objectif in ("travailler",):
+            return "emploi"
+        return ""
+    if e:
         return "emploi"
-    if b and not e:
+    if b:
         return "bourse"
     return ""
 
