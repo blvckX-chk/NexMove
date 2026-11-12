@@ -4318,3 +4318,28 @@ def test_remote_sources_elargies_v323():
     qs = main._build_osint_queries(terms, "télétravail", "emploi", "", "Bénin", "télétravail", False, remote=True)
     blob = " ".join(qs)
     assert "remote.co" in blob and "wellfound.com" in blob
+
+
+# --- Exclusions géographiques (bug « oublie la France » pris à l'envers) v3.84 ---
+def test_parse_pays_prefs_exclusion_screenshot():
+    # Retour testeur réel : « oublie la France et le Bénin » était pris comme CIBLE France.
+    inc, exc = main._parse_pays_prefs(
+        "Je cherche une opportunité en Afrique ou en Europe. Oublies la France et le Benin")
+    assert inc == {"afrique", "europe"}
+    assert exc == {"france", "benin"}
+
+def test_parse_pays_prefs_inclusion_simple():
+    inc, exc = main._parse_pays_prefs("France, Canada")
+    assert inc == {"france", "canada"} and exc == set()
+
+def test_parse_pays_prefs_reinclusion_prioritaire():
+    inc, exc = main._parse_pays_prefs("je veux la France, pas le Canada")
+    assert inc == {"france"} and exc == {"canada"}
+
+def test_result_pays_exclu_filtre_france():
+    src = {"title": "Postes Expertise France (France) | LinkedIn",
+           "url": "https://linkedin.com/jobs/france", "content": "poste en France"}
+    assert main._result_pays_exclu(src, {"france"}) is True
+    assert main._result_pays_exclu(src, set()) is False
+    autre = {"title": "Bourse recherche Ghana", "url": "x", "content": "au Ghana"}
+    assert main._result_pays_exclu(autre, {"france"}) is False

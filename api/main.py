@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.83.0"
+VERSION         = "3.84.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1592,9 +1592,13 @@ async def _onboard_llm_turn(session: dict, t: str):
               "On a ASSEZ (done=true) dès qu'on connaît son OBJECTIF et son DOMAINE/compétences (le reste est bonus). "
               "Champs possibles : objectif (emploi/études/bourse/télétravail/mobilité/tous), mots_cles (domaine), "
               "langues_opportunite (français/anglais/les deux), niveau (débutant/intermédiaire/confirmé), "
-              "pays_cibles, nationalite, type_emploi (temps plein/partiel/télétravail/alternance). "
+              "pays_cibles, pays_exclus, nationalite, type_emploi (temps plein/partiel/télétravail/alternance). "
+              "GÉO IMPORTANT : si la personne ÉCARTE un lieu (« oublie/sans/sauf/pas la France »), ne le mets "
+              "JAMAIS dans pays_cibles ; mets les lieux VISÉS dans pays_cibles et les lieux à écarter dans "
+              "pays_exclus (ex. « en Afrique ou Europe, oublie la France et le Bénin » -> pays_cibles:\"Afrique, Europe\", "
+              "pays_exclus:\"France, Bénin\"). "
               'JSON STRICT: {"extracted":{"objectif":"","mots_cles":"","langues_opportunite":"","niveau":"",'
-              '"pays_cibles":"","nationalite":"","type_emploi":""},"reply":"<ta réponse + éventuellement UNE question, ou vide si rien à ajouter>","done":false}')
+              '"pays_cibles":"","pays_exclus":"","nationalite":"","type_emploi":""},"reply":"<ta réponse + éventuellement UNE question, ou vide si rien à ajouter>","done":false}')
     cv_ctx = _cv_brief(profil) if session.get("cv_parsed") else ""
     user = (f"DÉJÀ CONNU (ne pas redemander) : {known or 'rien encore'}\n"
             + (f"DÉJÀ SUR SON CV (ne JAMAIS redemander ce qui y figure — domaine, expérience, "
@@ -1613,6 +1617,12 @@ async def _onboard_llm_turn(session: dict, t: str):
         if v and v.lower() not in _ONBOARD_VIDES and (not prefs.get(k) or k in cv_guessed):
             prefs[k] = v[:120]
             cv_guessed.discard(k)   # désormais confirmé par l'utilisateur, plus une devinette
+    # Pays EXCLUS : capté par le LLM et/ou déduit de la phrase (« oublie la France »).
+    _px = set(prefs.get("pays_exclus") or [])
+    _px |= _geo_terms_in(str(ext.get("pays_exclus", "") or ""))
+    _px |= _parse_pays_prefs(t)[1]
+    if _px:
+        prefs["pays_exclus"] = sorted(_px)
     # Ceinture + bretelles : si la personne NOMME explicitement un domaine (« dans la finance »),
     # on force les mots-clés dessus, même si le LLM l'a raté et que le CV avait pré-rempli autre chose.
     _obj, _dom = _normalize_objectif(t)
@@ -8444,6 +8454,73 @@ VISA_DB = {
     "default":{"facilite":50,"delai":60,"refus_pct":30,"cout_usd":100,"type":"inconnu"}
 }
 
+# --- Préférences géographiques : distinguer les pays VISÉS des pays EXCLUS -----
+# Avant, « oublie la France » était pris à l'envers (le mot « france » était capté
+# comme cible par simple sous-chaîne). On reconnaît désormais la NÉGATION.
+# alias (ce que la personne tape) -> forme canonique
+_GEO_ALIASES = {
+    "france": "france", "benin": "benin", "bénin": "benin",
+    "canada": "canada", "allemagne": "allemagne", "germany": "allemagne",
+    "belgique": "belgique", "suisse": "suisse", "luxembourg": "luxembourg",
+    "maroc": "maroc", "tunisie": "tunisie", "algerie": "algerie", "algérie": "algerie",
+    "senegal": "senegal", "sénégal": "senegal", "togo": "togo", "ghana": "ghana",
+    "cote d'ivoire": "cote d'ivoire", "côte d'ivoire": "cote d'ivoire",
+    "ivoire": "cote d'ivoire", "nigeria": "nigeria", "nigéria": "nigeria",
+    "usa": "usa", "etats-unis": "usa", "états-unis": "usa", "amerique": "amerique",
+    "amérique": "amerique", "europe": "europe", "afrique": "afrique", "asie": "asie",
+    "royaume-uni": "royaume-uni", "angleterre": "royaume-uni", "uk": "royaume-uni",
+    "espagne": "espagne", "italie": "italie", "portugal": "portugal",
+    "pays-bas": "pays-bas", "hollande": "pays-bas", "bresil": "bresil", "brésil": "bresil",
+    "turquie": "turquie", "georgie": "georgie", "géorgie": "georgie",
+    "cedeao": "cedeao", "cédéao": "cedeao",
+}
+# canonique -> alias à détecter dans un texte (pour filtrer les résultats)
+_GEO_CANON_ALIASES: dict = {}
+for _a, _c in _GEO_ALIASES.items():
+    _GEO_CANON_ALIASES.setdefault(_c, set()).add(_a)
+# déclencheurs de négation : ce qui SUIT est exclu (« oublie X », « sans X », « sauf X »…)
+_NEG_TRIGGERS = ("oubli", "sauf", "exclu", "hormis", "hors ", "à part", "a part",
+                 "autre que", "autres que", "sans ", "pas de ", "pas la ", "pas le ",
+                 "pas en ", "pas au ", "pas aux ", "évit", "evit", " ni ")
+_WORD_EDGE = "a-zàâäéèêëïîôöùûüç0-9"
+
+def _geo_terms_in(text: str) -> set:
+    """Formes canoniques des lieux reconnus présents dans `text` (frontières de mot)."""
+    low = (text or "").lower()
+    found = set()
+    for alias, canon in _GEO_ALIASES.items():
+        if re.search(rf"(?<![{_WORD_EDGE}]){re.escape(alias)}(?![{_WORD_EDGE}])", low):
+            found.add(canon)
+    return found
+
+def _parse_pays_prefs(text: str):
+    """Sépare les lieux VISÉS des lieux EXCLUS dans une phrase libre.
+    « en Afrique ou Europe, oublie la France et le Bénin »
+      -> inclus={afrique, europe}, exclus={france, benin}.
+    Retourne (inclus:set, exclus:set) en formes canoniques."""
+    low = (text or "").lower()
+    if not low.strip():
+        return set(), set()
+    neg_pos = min((low.find(t) for t in _NEG_TRIGGERS if t in low), default=-1)
+    if neg_pos < 0:
+        return _geo_terms_in(low), set()
+    inclus = _geo_terms_in(low[:neg_pos])
+    exclus = _geo_terms_in(low[neg_pos:])
+    inclus -= exclus   # un lieu explicitement exclu ne peut pas rester visé
+    return inclus, exclus
+
+def _result_pays_exclu(src: dict, exclus: set) -> bool:
+    """Vrai si un résultat web porte clairement sur un pays EXCLU (titre/url/extrait)."""
+    if not exclus:
+        return False
+    hay = f" {(src.get('title','') or '').lower()} {(src.get('url','') or '').lower()} " \
+          f"{(src.get('content','') or '')[:160].lower()} "
+    for canon in exclus:
+        for alias in _GEO_CANON_ALIASES.get(canon, {canon}):
+            if re.search(rf"(?<![{_WORD_EDGE}]){re.escape(alias)}(?![{_WORD_EDGE}])", hay):
+                return True
+    return False
+
 async def tavily_search(query: str, max_results: int = 7) -> list:
     if not TAVILY_API_KEY:
         return []
@@ -9745,6 +9822,25 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     financement = prefs.get("financement") or "non précisé"
     pays_cibles = prefs.get("pays_cibles") or ""
     objectif = prefs.get("objectif") or "tous"
+    # Pays EXCLUS (« oublie/sans/sauf X ») : dans les préférences OU la demande courante.
+    # Corrige le cas « oublie la France » pris à l'envers comme cible = France.
+    _inc, _exc = _parse_pays_prefs(f"{pays_cibles} {cible or ''}")
+    # Stock + nouvelles exclusions, MAIS un lieu re-visé explicitement redevient éligible.
+    pays_exclus = (_exc | {str(x).lower() for x in (prefs.get("pays_exclus") or [])}) - _inc
+    if session is not None and pays_exclus != set(prefs.get("pays_exclus") or []):
+        try:
+            prefs["pays_exclus"] = sorted(pays_exclus)
+            profil["preferences"] = prefs
+        except Exception:
+            pass
+    # Cible géographique EFFECTIVE, nettoyée des négations : on ne laisse jamais
+    # la phrase d'exclusion (« oublie la France… ») servir de zone de recherche.
+    if _inc:
+        pays_eff = " ".join(sorted(_inc))
+    elif _exc:
+        pays_eff = ""                       # on sait seulement ce qu'il NE veut PAS
+    else:
+        pays_eff = pays_cibles
     resume = profil.get("resume_profil", "")
     formations = [f.get("diplome", "") for f in (profil.get("formation") or []) if f.get("diplome")][:3]
     experiences = [f"{e.get('poste','')} ({e.get('organisation','')})" for e in (profil.get("experience") or []) if e.get("poste")][:3]
@@ -9752,15 +9848,17 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     terms = _profil_search_terms(profil)
     domaine = terms["domaine"]; mots_list = terms["mots_list"]
     type_emploi = prefs.get("type_emploi") or ""
-    cible = (cible or "").strip() or f"{domaine} {pays_cibles}".strip() or "opportunités"
+    cible = (cible or "").strip() or f"{domaine} {pays_eff}".strip() or "opportunités"
     cible_lower = cible.lower()
-    pays_detecte = next((p for p in VISA_DB if p != "default" and (p in cible_lower or p in pays_cibles.lower())), None)
+    # Un pays EXCLU ne peut jamais être détecté comme cible (garde-fou anti-inversion).
+    pays_detecte = next((p for p in VISA_DB if p != "default" and p not in pays_exclus
+                         and (p in cible_lower or p in pays_eff.lower())), None)
     visa_info = VISA_DB.get(pays_detecte, VISA_DB["default"])
     # Champ élargi : proposer aussi des opportunités LOCALES (pas seulement à l'étranger)
     # Pays RÉEL de l'utilisateur : d'abord l'indicatif du numéro (WhatsApp/Messenger), sinon la nationalité.
     phone_pays = _pays_from_phone(user_id) if channel in ("whatsapp", "messenger") else ""
     local_pays = phone_pays or _pays_from_nat(nationalite)
-    _pc_low = (pays_cibles or "").lower()
+    _pc_low = (pays_eff or "").lower()
     _pc_vide = (not pays_cibles) or _pc_low in ("tous", "local", "sur place", "mon pays", "")
     veut_local = _pc_vide or "afrique" in _pc_low or (local_pays and local_pays.lower() in (_pc_low + " " + cible_lower))
     today = datetime.now(timezone.utc).date().isoformat()
@@ -9787,7 +9885,7 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
     if pays_detecte:
         zone = pays_detecte
     elif not _pc_vide:
-        zone = pays_cibles
+        zone = pays_eff
     elif remote:
         zone = ""                      # remote = sans pays
     else:
@@ -9818,6 +9916,12 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
             if fc["url"] not in seen_u:
                 seen_u.add(fc["url"]); grounded.append(fc)
 
+    # Respect des EXCLUSIONS : on retire les résultats portant clairement sur un pays écarté.
+    if pays_exclus and grounded:
+        _kept = [s for s in grounded if not _result_pays_exclu(s, pays_exclus)]
+        if _kept:                       # on ne vide jamais le pool par excès de filtrage
+            grounded = _kept
+
     if grounded:
         # Tri sémantique : les sources dont le SENS est le plus proche du profil passent en tête
         sims = await semantic_scores(profil_txt, grounded, lambda s: f"{s.get('title','')} {(s.get('content','') or '')[:300]}")
@@ -9841,9 +9945,12 @@ async def run_osint(profil: dict, cible: str = "", user_id: str = "", exclude_ur
         local_txt = ((f"IMPORTANT : inclus AUSSI des opportunités LOCALES au {local_pays} (emplois, formations comme "
                       f"l'ASIN, bourses locales), pas seulement à l'étranger.\n" + _local_sources_txt(local_pays))
                      if veut_local and local_pays else "")
+        exclus_txt = (f"⛔ PAYS À EXCLURE : {', '.join(sorted(pays_exclus))}. Ne sélectionne AUCUNE "
+                      f"opportunité située dans ces pays, même si elle apparaît dans les résultats.\n"
+                      if pays_exclus else "")
         prompt = f"""PROFIL CANDIDAT: {profil_txt}
-DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_cibles or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
-{diversite}{type_emploi_txt}{local_txt}DATE DU JOUR: {today}.
+DOMAINE VISÉ: {domaine} · PAYS: {'TÉLÉTRAVAIL / à distance — AUCUNE restriction géographique (ne privilégie PAS le pays local)' if remote else (pays_detecte or pays_eff or (local_pays + ' (local) + international' if local_pays else 'indifférent'))}
+{diversite}{type_emploi_txt}{local_txt}{exclus_txt}DATE DU JOUR: {today}.
 ⛔ ÉCHÉANCES : EXCLUS impérativement toute opportunité dont la date limite de candidature est ANTÉRIEURE à {today} (édition déjà close, bourse d'une année passée). En cas de doute sur une date passée, NE la sélectionne PAS. Quand une date limite À VENIR est visible dans le résultat, renseigne-la dans "deadline" (texte) ET "deadline_iso" (AAAA-MM-JJ) ; sinon laisse les deux vides (n'invente jamais de date).
 RÉSULTATS WEB (choisis par INDEX):
 {sources_txt}

@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.84 — Respect des pays EXCLUS (« oublie la France… » n'est plus pris à l'envers)
+- **Bug testeur corrigé.** Quand la personne écartait un lieu — *« en Afrique ou en Europe, oublie la France et le Bénin »* — le bot faisait **l'inverse** et ramenait des offres… en France. Cause : la phrase était stockée telle quelle et le mot « france » était capté comme **cible** par simple sous-chaîne, le « oublie » ignoré.
+- **Notion de pays exclus** introduite partout : un parseur de négation (`oublie/sans/sauf/pas/évite/ni…`) sépare les lieux **visés** des lieux **écartés**, les mémorise dans `preferences.pays_exclus`, et les respecte à chaque étape : un pays exclu ne peut plus être détecté comme cible, n'entre plus dans la zone de recherche, les résultats qui portent dessus sont **filtrés**, et le modèle de sélection reçoit une consigne d'exclusion explicite.
+- **Ré-inclusion prioritaire** : si la personne re-vise plus tard un pays qu'elle avait écarté, l'exclusion est levée automatiquement.
+- Onboarding : l'extraction apprend à ranger un lieu écarté dans `pays_exclus` (plus jamais dans `pays_cibles`). Tests de non-régression ajoutés (dont la phrase exacte du retour terrain).
+
 ## v3.83 — Personnalité de conseiller (psychologie), ton vivant, aération + fin de message contextuelle
 - **Fini le « envoie ton CV » collé à CHAQUE message.** La clôture est désormais **contextuelle** : le bot termine par l'étape la plus utile pour *ce* message. Il ne réclame le CV que s'il manque vraiment et qu'il aide maintenant ; s'il est déjà là ou si la personne parle d'autre chose (postuler, conseil, formation), il propose l'action adaptée au sujet. Le nudge CV pré-onboarding est **throttlé** (plus répété tour après tour).
 - **Psychologie d'orientation** ajoutée à la personnalité : le bot capte l'émotion (doute, peur, découragement, enthousiasme), y répond d'abord, valorise les forces, redonne confiance et de l'élan, et **adapte son ton** à l'état de la personne.
