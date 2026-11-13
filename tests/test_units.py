@@ -4367,3 +4367,14 @@ def test_offers_feedback_multi_pas_de_faux_positif_v386():
     assert main._offers_feedback_multi("5 oui", sess) == {}          # hors borne
     assert main._offers_feedback_multi("merci beaucoup", sess) == {}
     assert main._offers_feedback_multi("1 oui", {"last_offers": []}) == {}  # sans offres
+
+
+# --- Panel unique des retours testeurs (/retours admin) v3.87 ---
+def test_retours_report_agrege_v387():
+    main.opp_store.add_contact("tu1", "alice", "[BUG] bouton cassé", True)
+    main.opp_store.add_contact("tu2", "bob", "[AVIS] super", True)
+    main._log_miss({"user_id": "tu9", "channel": "whatsapp", "etape": "X"}, "hmm", "nlu_fallback")
+    rep = main._retours_report()
+    assert isinstance(rep, str)
+    assert "Retours NexMove" in rep
+    assert "Bugs" in rep and "Avis" in rep and "Incompris" in rep

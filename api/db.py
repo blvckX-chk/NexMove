@@ -326,6 +326,17 @@ class OppStore:
             return 0
         return max(-25, min(25, int(row[0]) * 8))
 
+    def feedback_counts(self) -> tuple:
+        """(nb signaux aimés, nb signaux rejetés) — pour le panel /retours admin."""
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            pos = con.execute("SELECT COUNT(*) FROM feedback WHERE score > 0").fetchone()[0]
+            neg = con.execute("SELECT COUNT(*) FROM feedback WHERE score < 0").fetchone()[0]
+        except Exception:
+            pos = neg = 0
+        con.close()
+        return int(pos or 0), int(neg or 0)
+
     # ---- journal /contact ----
     def _ensure_contacts(self):
         con = sqlite3.connect(self._path, timeout=10)

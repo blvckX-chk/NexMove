@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.87 — Recueil des retours : panel admin unique /retours
+- Nouvelle commande admin **`/retours`** : un seul endroit pour voir tous les retours testeurs — 🐞 **bugs**, 🌟 **avis/témoignages**, 📨 **contacts**, 😕 **incompris** (messages non routés, groupés par type), et le compteur 👍/👎 des **votes sur offres**. Agrège `contacts` (tags `[BUG]`/`[AVIS]`) + le journal des incompris + `feedback_counts`.
+- S'appuie sur l'existant (chaque `/bug`, `/avis`, `/contact` est déjà remonté à l'admin et stocké) : rien à faire côté testeur, tout remonte et se consulte d'un coup.
+- `db.py` : `feedback_counts()` (nb signaux aimés / rejetés).
+
 ## v3.86 — Noter CHAQUE offre (feedback par offre, sans liste mono-sélection)
 - **Retour terrain** : *« on doit pouvoir cocher les deux, dire si chaque offre est bonne ou pas »*. Le picker WhatsApp/Messenger s'affichait en **liste mono-sélection** (elle se ferme au 1er choix) → impossible de noter plusieurs offres.
 - **Telegram** : les boutons sont désormais présentés clairement **par offre** (`👍 1 | 👎 1`, `👍 2 | 👎 2`…), persistants — on en note autant qu'on veut (c'était déjà techniquement possible, c'est maintenant explicite).

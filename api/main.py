@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.86.0"
+VERSION         = "3.87.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -705,6 +705,64 @@ def _log_miss(session: dict, text: str, kind: str) -> None:
 
 def _misses_recent(n: int = 20) -> list:
     return list(_ROUTE_MISSES)[-n:][::-1]
+
+def _retours_report(limit: int = 60) -> str:
+    """Panel admin UNIQUE des retours testeurs : bugs, avis, contacts, incompris, votes offres.
+    Agrège opp_store.contacts (tags [BUG]/[AVIS]) + _ROUTE_MISSES + feedback_counts. Un seul endroit
+    pour tout voir, sans avoir à fouiller plusieurs commandes."""
+    try:
+        rows = opp_store.list_contacts(limit)
+    except Exception:
+        rows = []
+    bugs, avis, autres = [], [], []
+    for (cid, uid, uname, txt, fwd, dt) in rows:
+        when = str(dt)[5:16].replace("T", " ")
+        s = str(txt or "")
+        line = f"#{cid} · {when} · @{_md_clean(str(uname) or 'x')} (`{uid}`)"
+        if s.startswith("[BUG]"):
+            bugs.append((line, s[5:].strip()))
+        elif s.startswith("[AVIS]"):
+            avis.append((line, s[6:].strip()))
+        else:
+            autres.append((line, s))
+
+    def _blk(title, items, n=5):
+        if not items:
+            return f"{title} — _aucun_"
+        out = [f"{title} ({len(items)})"]
+        for line, ex in items[:n]:
+            out.append(f"{line}\n   {_md_clean(ex)[:140]}")
+        if len(items) > n:
+            out.append(f"_… +{len(items)-n} autres_")
+        return "\n".join(out)
+
+    misses = _misses_recent(40)
+    by_kind: dict = {}
+    for m in misses:
+        by_kind.setdefault(m.get("kind", "?"), []).append(m)
+    if misses:
+        ml = []
+        for kind, ms in sorted(by_kind.items(), key=lambda kv: -len(kv[1])):
+            ex = _md_clean(str(ms[0].get("text", "")))[:80]
+            ml.append(f"• {kind} ({len(ms)}) — ex. « {ex} »")
+        miss_blk = f"😕 *Incompris* ({len(misses)})\n" + "\n".join(ml)
+    else:
+        miss_blk = "😕 *Incompris* — _aucun depuis le dernier redémarrage_"
+    try:
+        pos, neg = opp_store.feedback_counts()
+    except Exception:
+        pos, neg = 0, 0
+    header = (f"📋 *Retours NexMove* · {datetime.now(timezone.utc).strftime('%d/%m %H:%M UTC')}\n"
+              f"👍 {pos} signaux aimés · 👎 {neg} rejetés\n"
+              "───────────────")
+    return "\n\n".join([
+        header,
+        _blk("🐞 *Bugs*", bugs),
+        _blk("🌟 *Avis / témoignages*", avis),
+        _blk("📨 *Contacts*", autres, n=4),
+        miss_blk,
+        "_Détail : /contacts_log · répondre à quelqu'un : /repondre <id> <message>_",
+    ])
 
 # Qualité des livrables (CV/lettre) : qui a rédigé + si le QC a dû relancer / passer le filet dur.
 # Sert au panel admin /qualite pour arbitrer Tchavi premium vs modèles gratuits (A/B). En mémoire.
@@ -4674,6 +4732,15 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         else:
             msg = ("📝 Message bien noté (enregistré, l'équipe le verra). Pour être recontacté rapidement, joins-nous directement :\n\n"
                    + contact_bloc)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/retours") or low.startswith("/retour ") or low == "/retour":
+        # Panel UNIQUE des retours testeurs (bugs, avis, contacts, incompris, votes) · ADMIN.
+        if not _is_admin(session):
+            msg = "🔒 Commande réservée à l'administrateur."
+        else:
+            msg = _retours_report()
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
