@@ -4378,3 +4378,43 @@ def test_retours_report_agrege_v387():
     assert isinstance(rep, str)
     assert "Retours NexMove" in rep
     assert "Bugs" in rep and "Avis" in rep and "Incompris" in rep
+
+
+# --- Retour terrain Messenger (v3.88) : nom, formations, troncature, corrections, gras ---
+def test_reconcile_cv_name_fichier_confirme_v388():
+    txt = "PRENOMA NOMB\nLOGISTIQUE\nAdresse : Secteur 12, Rue Tartempion"
+    assert main._reconcile_cv_name("Rue Tartempion", "CV Prenoma NOMB.pdf", txt) == ("Prenoma Nomb", True)
+    assert main._reconcile_cv_name("Prenoma Nomb", "CV Prenoma NOMB.pdf", txt)[1] is False
+    assert main._reconcile_cv_name("Jean Dupont", "CV Prenoma NOMB.pdf", "Jean Dupont")[1] is False
+
+def test_clean_formations_vs_name_v388():
+    out = main._clean_formations_vs_name(
+        [{"diplome": "Logistique", "etablissement": "NOMB PRENOMA"}, {"diplome": "Licence", "etablissement": "Univ"}],
+        "Prenoma Nomb")
+    assert out[0]["etablissement"] == "" and out[1]["etablissement"] == "Univ"
+
+def test_extract_name_correction_v388():
+    assert main._extract_name_correction("Mensah ketsia le nom") == "Mensah Ketsia"
+    assert main._extract_name_correction("Le nom c'est AXA") == "AXA"
+    assert main._extract_name_correction("je m'appelle ketsia mensah") == "Ketsia Mensah"
+    for s in ("c'est quoi le nom ?", "corrige le nom", "Créer un nouveau", "le nom de l'entreprise"):
+        assert main._extract_name_correction(s) == ""
+
+def test_wants_create_cv_v388():
+    sess = {"historique": [{"role": "assistant", "content": "Pas de CV ? /creercv"}]}
+    assert main._wants_create_cv("créer un nouveau", sess)
+    assert main._wants_create_cv("je veux créer mon cv", {})
+    assert not main._wants_create_cv("je veux faire un master", sess)
+    assert not main._wants_create_cv("créer un compte", sess)
+
+def test_norm_md_double_asterisques_v388():
+    assert main._norm_md("ton nom est **Ketsia**. Tape **/creercv**") == "ton nom est *Ketsia*. Tape */creercv*"
+
+def test_split_message_ne_tronque_plus_v388():
+    import channels
+    longtxt = ("A" * 300 + "\n\n") * 9 + "Ces informations sont-elles correctes ?"
+    head, tail = channels.split_head_tail(longtxt, 640)
+    assert tail == "Ces informations sont-elles correctes ?"
+    parts = channels.split_message(longtxt, 1900)
+    assert all(len(p) <= 1900 for p in parts)
+    assert "".join(parts).replace("\n", "") == longtxt.replace("\n", "")   # rien de perdu

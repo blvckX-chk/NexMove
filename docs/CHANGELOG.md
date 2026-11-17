@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.88 — Retour terrain Messenger : nom faux, récap tronqué, corrections ignorées
+- **Nom faux corrigé** : l'IA avait lu une *adresse* du CV comme nom (deux fois). Le nom extrait est maintenant **recoupé** avec le nom du fichier et le texte du CV : si le nom du fichier figure dans le CV et ne partage aucun mot avec celui de l'IA, c'est lui qui est retenu.
+- **Formations polluées** : le titre du CV (« Logistique · NOM PRÉNOM ») n'apparaît plus comme établissement.
+- **Compétences** : repli sur les autres listes extraites, et plus de ligne « Compétences : » vide.
+- **Messages tronqués** : Messenger coupait les messages à boutons à 640 caractères (« Ces informations sont-elles correctes » sans « ? », puis juste « Ce »), WhatsApp à 1000, et tous les canaux coupaient les longs textes. Les messages longs sont désormais **découpés** proprement (paragraphes), les boutons restent sur la dernière partie avec la question.
+- **Correction du nom en langage libre** (« X le nom », « mon nom c'est X », « je m'appelle X ») : **réellement enregistrée** (avant : l'IA répondait « je note » sans rien sauver, puis demandait de renvoyer un CV corrigé).
+- **« Créer un nouveau »** lance directement la création de CV au lieu de répondre « tape /creercv ».
+- **Gras** : les `**x**` des réponses IA sont convertis en `*x*` (plus d'astérisques visibles sur Messenger/WhatsApp).
+- Tests de non-régression ajoutés.
+
 ## v3.87 — Recueil des retours : panel admin unique /retours
 - Nouvelle commande admin **`/retours`** : un seul endroit pour voir tous les retours testeurs — 🐞 **bugs**, 🌟 **avis/témoignages**, 📨 **contacts**, 😕 **incompris** (messages non routés, groupés par type), et le compteur 👍/👎 des **votes sur offres**. Agrège `contacts` (tags `[BUG]`/`[AVIS]`) + le journal des incompris + `feedback_counts`.
 - S'appuie sur l'existant (chaque `/bug`, `/avis`, `/contact` est déjà remonté à l'admin et stocké) : rien à faire côté testeur, tout remonte et se consulte d'un coup.

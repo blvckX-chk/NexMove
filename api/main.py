@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.87.0"
+VERSION         = "3.88.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1044,6 +1044,103 @@ def _name_from_filename(filename: str) -> str:
     if not mots:
         return ""
     return " ".join(m.capitalize() for m in mots[:3]).strip()
+
+def _name_tokens(s: str) -> set:
+    """Mots d'un nom, sans accents ni casse (« KARANTAO Awa » -> {karantao, awa})."""
+    import unicodedata
+    s = unicodedata.normalize("NFKD", str(s or "")).encode("ascii", "ignore").decode().lower()
+    return set(re.findall(r"[a-z]{2,}", s))
+
+def _reconcile_cv_name(nom: str, filename: str, cv_text: str):
+    """Recoupe le nom extrait par l'IA avec le nom du FICHIER et le TEXTE du CV.
+    Retour terrain : nom de fichier « CV Prénom NOM.pdf » -> l'IA a sorti un autre nom (une
+    adresse lue dans le CV), deux fois de suite. Si le nom du fichier est CONFIRMÉ par le contenu du CV et ne
+    partage aucun mot avec le nom extrait, c'est lui le bon. Retourne (nom, corrigé: bool)."""
+    devine = _name_from_filename(filename)
+    if not devine or _looks_like_template_name(devine):
+        return nom, False
+    dt, nt = _name_tokens(devine), _name_tokens(nom)
+    if not dt or (dt & nt):
+        return nom, False                 # cohérents (au moins un mot commun) -> on garde l'IA
+    if dt <= _name_tokens(cv_text):       # le nom du fichier figure bien dans le CV
+        return devine, True
+    return nom, False
+
+def _clean_formations_vs_name(forms: list, nom: str) -> list:
+    """Retire le NOM de la personne pris à tort pour un établissement / diplôme
+    (retour terrain : « Logistique · NOM PRÉNOM » = le titre du CV lu comme une formation)."""
+    nt = _name_tokens(nom)
+    if not nt:
+        return forms or []
+    out = []
+    for f in forms or []:
+        f = dict(f)
+        if _name_tokens(f.get("etablissement")) and _name_tokens(f.get("etablissement")) <= nt:
+            f["etablissement"] = ""
+        tete = f.get("diplome") or f.get("domaine") or ""
+        if _name_tokens(tete) and _name_tokens(tete) <= nt:
+            continue                      # « diplôme » = le nom -> entrée bidon
+        out.append(f)
+    return out
+
+_NOM_CORR_RES = [
+    re.compile(r"^\s*(?:mon|le)\s+(?:vrai\s+)?nom\s*(?:c'?est|c’est|est|=|:)\s*(?P<n>.+?)\s*[.!]?\s*$", re.I),
+    re.compile(r"^\s*nom\s+(?:c'?est|c’est|est)\s+(?P<n>.+?)\s*[.!]?\s*$", re.I),
+    re.compile(r"^\s*(?:je\s+m'?appelle|je\s+m’appelle|moi\s+c'?est)\s+(?P<n>.+?)\s*[.!]?\s*$", re.I),
+    re.compile(r"^\s*(?P<n>.+?)\s*,?\s*(?:c'?est\s+|c’est\s+)?(?:le|mon)\s+(?:vrai\s+)?nom\s*[.!]?\s*$", re.I),
+]
+
+_NOM_STOP = {"c'est", "cest", "est", "le", "la", "mon", "ma", "ton", "ta", "votre", "faux", "quoi", "quel",
+             "quelle", "comment", "pourquoi", "change", "changer", "modifie", "modifier", "corrige",
+             "corriger", "mets", "mettre", "ajoute", "ajouter", "pas", "bon", "mauvais", "erreur", "vrai"}
+
+def _extract_name_correction(t: str) -> str:
+    """Capte une correction de nom en langage libre : « Mensah ketsia le nom », « le nom c'est X »,
+    « je m'appelle X ». Retourne le nom propre, ou "" si ce n'en est pas une."""
+    txt = (t or "").strip()
+    if not txt or txt.startswith("/") or len(txt) > 80 or "?" in txt:
+        return ""
+    for rx in _NOM_CORR_RES:
+        m = rx.match(txt)
+        if not m:
+            continue
+        n = re.sub(r"[^A-Za-zÀ-ÿ'’\- ]", " ", m.group("n"))
+        n = re.sub(r"\s+", " ", n).strip(" -'’")
+        mots = n.split()
+        if not (1 <= len(mots) <= 5) or len(n) < 2:
+            return ""
+        if {w.lower().strip("'’") for w in mots} & _NOM_STOP:
+            return ""                     # « corrige le nom », « quel est le nom »… : pas un nom
+        return " ".join(w if w.isupper() else w.capitalize() for w in mots)
+    return ""
+
+def _apply_name_correction(session: dict, t: str) -> str:
+    """Applique une correction de nom en langage libre au profil. Retourne le nom appliqué ou ""."""
+    n = _extract_name_correction(t)
+    if not n:
+        return ""
+    profil = session.setdefault("profil", {})
+    profil.setdefault("identite", {})["nom"] = n
+    try:
+        profile_store.save(session.get("user_id"), session)
+    except Exception:
+        pass
+    return n
+
+_CREATE_CV_RE = re.compile(r"\b(cr[ée]{1,2}r|cr[ée]e|refaire|r[ée]diger|g[ée]n[ée]rer)\b", re.I)
+
+def _wants_create_cv(low: str, session: dict) -> bool:
+    """« Créer un nouveau » (en réponse à « envoyer le CV ou en créer un ? ») -> lancer /creercv
+    directement, au lieu de répondre « tape /creercv » (retour terrain)."""
+    low = (low or "").lower()
+    if not _CREATE_CV_RE.search(low) or len(low) > 60:
+        return False
+    if re.search(r"\bcv\b", low):
+        return True
+    last_bot = next((h.get("content", "") for h in reversed(session.get("historique") or [])
+                     if h.get("role") == "assistant"), "")
+    return ("creercv" in str(last_bot).lower() and len(low) <= 30 and "compte" not in low
+            and bool(re.search(r"\b(nouveau|nouvelle|un|mon)\b", low)))
 
 # Marqueurs déictiques : la personne parle d'opportunités DÉJÀ affichées (portail/offres listées)
 # et non d'une nouvelle recherche. Ex. « parmi ces bourses… », « les 4 citées plus haut », « lesquelles ».
@@ -6116,6 +6213,20 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     # recommencer sans perdre le profil ; (2) une correction de champ (« nom : Ketsia », « mon email… »)
     # -> on l'applique et on re-propose. Sinon on NE bloque PAS (créer cv / postuler… restent routés).
     if etape == "CV_RECU":
+        # Correction du NOM en langage libre (« X le nom », « mon nom c'est X ») : avant, l'IA
+        # répondait « je note » SANS enregistrer, puis demandait de renvoyer un CV corrigé.
+        _nn = _apply_name_correction(session, t)
+        if _nn:
+            _push(session, "user", t)
+            msg = (f"✅ Nom corrigé : *{_md_clean(_nn)}*.\n\n"
+                   "Tout est bon maintenant ? Confirme 👇 (ou réponds *Oui*).")
+            session["_kb_options"] = [("✅ C'est correct", "onb:oui"), ("🔄 Recommencer", "onb:reset")]
+            _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        # « Créer un nouveau » -> on lance la création de CV, pas « tape /creercv ».
+        if _wants_create_cv(low, session):
+            _push(session, "user", t)
+            return await _cvbuild_start(session)
         edited = _try_profil_edit(session, t)
         if edited:
             _push(session, "user", t)
@@ -6359,9 +6470,15 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     # Pas encore onboardé : on COMPREND n'importe quelle phrase (IA), on ne réclame pas bêtement le CV.
     if not session.get("onboarding_complete"):
         # 1) « Je n'ai pas de CV » -> création guidée directe.
-        if _wants_no_cv(low):
+        if _wants_no_cv(low) or _wants_create_cv(low, session):
             _push(session, "user", t)
             return await _cvbuild_start(session)
+        _nn = _apply_name_correction(session, t)
+        if _nn:
+            _push(session, "user", t)
+            msg = f"✅ C'est noté : ton nom est *{_md_clean(_nn)}*."
+            _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
         _push(session, "user", t)
         # 2) Intention CLAIRE et informative (Campus France, Canada, écoles, visa…) : on la traite
         #    DIRECTEMENT, même sans CV · inutile de reposer des questions dont la réponse est évidente
@@ -6397,6 +6514,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
     # Onboardé : correction rapide du profil "champ: valeur" AVANT tout routage (sinon "pays: canada"
     # serait capté comme l'intention /canada).
     edited = _try_profil_edit(session, t)
+    if not edited:
+        _nn = _apply_name_correction(session, t)
+        if _nn:
+            edited = f"✅ Nom mis à jour : *{_md_clean(_nn)}* (utilisé dans tes CV et lettres)."
     if edited:
         # Cohérence continue : si l'édition touche l'objectif, on ré-évalue (corrige/flag) silencieusement.
         if "objectif" in low.split(":")[0]:
@@ -7312,6 +7433,7 @@ def get_menu(session, key):
 
 # ---------- Couche canal (dispatch) ----------
 async def deliver_menu(session, title, options):
+    title = _norm_md(title)
     ch = session.get("channel", "telegram"); to = session.get("chat_id")
     if ch == "whatsapp":
         return await wa_menu(to, title, options)
@@ -7319,9 +7441,18 @@ async def deliver_menu(session, title, options):
         return await fb_menu(to, title, options)
     return await send_message(to, title, _tg_keyboard(options))
 
+def _norm_md(text: str) -> str:
+    """Les modèles écrivent souvent le gras en Markdown standard **x** ; WhatsApp, Messenger et le
+    Markdown Telegram n'acceptent que *x* -> on voyait des astérisques parasites (« *Prénom Nom* »)."""
+    if not text or ("**" not in text and "__" not in text):
+        return text
+    text = re.sub(r"\*\*(.+?)\*\*", r"*\1*", text, flags=re.S)
+    text = re.sub(r"__(.+?)__", r"_\1_", text, flags=re.S)
+    return text
+
 async def deliver_text(session, text, with_menu=False, options=None):
     # `options` = boutons attachés à CE message (confirmation, choix d'onboarding…), prioritaires sur le menu.
-    text = _scrub_outbound(text)
+    text = _norm_md(_scrub_outbound(text))
     ch = session.get("channel", "telegram"); to = session.get("chat_id")
     if ch == "whatsapp":
         if options:
@@ -7986,10 +8117,27 @@ Document: {cv_text[:6000]}"""
         nom = devine or "—"
         if devine:
             profil.setdefault("identite", {})["nom"] = devine   # persister pour lettres/dossiers
+    # Recoupement du nom (retour terrain : une adresse du CV prise pour le nom, deux fois).
+    if nom and nom != "—":
+        _nom2, _fixed = _reconcile_cv_name(nom, filename, cv_text)
+        if _fixed:
+            logger.info(f"[cv] nom IA {nom!r} incohérent avec le fichier/CV -> {_nom2!r}")
+            nom = _nom2
+            profil.setdefault("identite", {})["nom"] = nom
+    # Le nom pris à tort pour un établissement (« Logistique · NOM PRÉNOM ») est retiré.
+    profil["formation"] = _clean_formations_vs_name(profil.get("formation"), nom if nom != "—" else "")
     formation_txt = _render_formation_recap(profil.get("formation", []) or [])
-    skills = (profil.get("competences", {}).get("techniques", []) + profil.get("competences", {}).get("securite", []))[:5]
+    _comp = profil.get("competences", {}) or {}
+    skills = list(_comp.get("techniques", []) or []) + list(_comp.get("securite", []) or [])
+    if not skills:   # repli : l'IA range parfois tout ailleurs (outils, transversales…)
+        for _k, _v in _comp.items():
+            if isinstance(_v, list) and _k not in ("langues",):
+                skills += [x for x in _v if isinstance(x, str)]
+    skills = [s for s in skills if str(s).strip()][:5]
     nom_aff = nom if nom and nom != "—" else "_(je n'ai pas trouvé ton nom — dis-le-moi)_"
-    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom_aff}\n🎓 *Formations détectées :*\n{formation_txt}\n💻 *Compétences :* {', '.join(skills)}\n"
+    message = f"✅ *CV analysé avec succès !*\n\n👤 *Nom :* {nom_aff}\n🎓 *Formations détectées :*\n{formation_txt}\n"
+    if skills:   # plus de ligne « Compétences : » vide
+        message += f"💻 *Compétences :* {', '.join(skills)}\n"
     bilan = profil.get("bilan", {}) or {}
     if bilan.get("forces"):
         message += "\n💪 *Tes atouts :* " + _tidy_frag(", ".join(bilan["forces"][:3])) + "\n"
@@ -8021,7 +8169,8 @@ Document: {cv_text[:6000]}"""
         logger.info(f"[cv] {session.get('channel')} {nom} -> MAJ (onboardé, prefs conservées)")
         await deliver_text(session, message, with_menu=True)
         return
-    message += "\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*)."
+    message += ("\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*).\n"
+                "_Une erreur ? Écris-la simplement, ex. « mon nom c'est Ketsia Mensah »._")
     session["etape"] = "CV_RECU"
     _push(session, "assistant", message)
     session_manager.set(session.get("user_id"), session)
