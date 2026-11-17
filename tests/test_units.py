@@ -4465,3 +4465,42 @@ def test_pref_no_menu_v391():
     assert main._PREF_NO_MENU.search("pas besoin de me proposer des options")
     assert main._PREF_NO_MENU.search("arrête les menus stp")
     assert not main._PREF_NO_MENU.search("quelles options de bourse ?")
+
+
+# --- v3.95 : audit sécurité (clé API publique, source marketing) ---
+def test_api_key_problem_detects_public_and_short(monkeypatch):
+    monkeypatch.setattr(main, "FORGE_NEX_API_KEY", "forge_nex_secret_2026")
+    assert "publique" in main._api_key_problem()
+    monkeypatch.setattr(main, "FORGE_NEX_API_KEY", "court")
+    assert "courte" in main._api_key_problem()
+    monkeypatch.setattr(main, "FORGE_NEX_API_KEY", "x" * 40)
+    assert main._api_key_problem() == ""
+
+
+def test_verify_api_key_refuses_public_key_even_if_sent(monkeypatch):
+    import asyncio, pytest
+    from fastapi import HTTPException
+    monkeypatch.setattr(main, "FORGE_NEX_API_KEY", "forge_nex_secret_2026")
+    with pytest.raises(HTTPException) as e:
+        asyncio.run(main.verify_api_key("forge_nex_secret_2026"))
+    assert e.value.status_code == 503
+
+
+def test_verify_api_key_fails_closed_without_key_in_production(monkeypatch):
+    import asyncio, pytest
+    from fastapi import HTTPException
+    monkeypatch.setattr(main, "FORGE_NEX_API_KEY", "")
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "123:abc")
+    with pytest.raises(HTTPException):
+        asyncio.run(main.verify_api_key(None))
+    monkeypatch.setattr(main, "TELEGRAM_TOKEN", "")
+    monkeypatch.setattr(main, "WHATSAPP_TOKEN", "")
+    monkeypatch.setattr(main, "MESSENGER_TOKEN", "")
+    assert asyncio.run(main.verify_api_key(None)) is True   # mode dev local
+
+
+def test_verify_api_key_accepts_strong_key(monkeypatch):
+    import asyncio
+    k = "Zr8" * 12
+    monkeypatch.setattr(main, "FORGE_NEX_API_KEY", k)
+    assert asyncio.run(main.verify_api_key(k)) is True

@@ -1,0 +1,18 @@
+# En-têtes de sécurité de la vitrine (Cloudflare Workers static assets).
+# Site 100 % statique : aucune donnée utilisateur ici. Seul admin.html appelle l'API, avec une clé saisie à la main.
+/*
+  Strict-Transport-Security: max-age=31536000
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://api-nexmove.blvckunlimited.space; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'; upgrade-insecure-requests
+
+/admin.html
+  X-Robots-Tag: noindex, nofollow
+  Cache-Control: no-store
+  Referrer-Policy: no-referrer
+
+/version.txt
+  Cache-Control: no-cache

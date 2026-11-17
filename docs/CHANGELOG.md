@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.95 — Audit sécurité : clé API publique neutralisée, admin durci, en-têtes vitrine
+- **Clé API** : l'ancienne valeur d'exemple `forge_nex_secret_2026` (publiée dans le dépôt public) est désormais **refusée** par l'API ; sans clé, `/api/*` est fermé dès qu'un canal est configuré. Alerte admin au démarrage si la clé est absente, publique ou trop courte. `.env.example`, docs et workflows n8n ne contiennent plus de valeur (les workflows lisent `{{ $env.FORGE_NEX_KEY }}`).
+- **Panneau admin** : échappement de toutes les valeurs issues des utilisateurs (sources marketing, répartitions) — fermait une injection HTML possible via `/start src_…` ; clé gardée pour l'onglet seulement (sessionStorage).
+- **Vitrine** : en-têtes de sécurité `web/_headers` (HSTS, CSP, anti-iframe, nosniff, Referrer/Permissions-Policy, admin non indexé et non mis en cache). Vérifié : aucune page ne casse sous la CSP.
+- Fiche `docs/SECURITE.md` : ce qui est public, ce qui ne doit pas l'être, comment changer la clé et vérifier.
+
 ## v3.94 — « Qui t'a créé ? » : réponse fixe · contact de l'équipe sur la vitrine · version vérifiable
 - **Bot** : « qui t'a créé / c'est qui ton créateur / qui est derrière ce bot… » reçoit une **réponse fixe** (blvckUnlimited, Cotonou, Bénin, moyens de contact) au lieu d'une réponse inventée par l'IA. Garde-fou ajouté dans la personnalité pour les variantes. Réglable dans `.env` : `CREATOR_NAME` (nom du fondateur, affiché si renseigné), `CREATOR_ORG`, `CREATOR_CITY`, `CREATOR_EMAIL`.
 - **Vitrine** : bloc « Contacter l'équipe » (WhatsApp de l'équipe + e-mail) dans le pied de page, lien « Contact » dans le menu.

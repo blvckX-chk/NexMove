@@ -116,7 +116,7 @@
           "parameters": [
             {
               "name": "X-Forge-Nex-Key",
-              "value": "forge_nex_secret_2026"
+              "value": "={{ $env.FORGE_NEX_KEY }}"
             }
           ]
         },
@@ -165,7 +165,7 @@
           "parameters": [
             {
               "name": "X-Forge-Nex-Key",
-              "value": "forge_nex_secret_2026"
+              "value": "={{ $env.FORGE_NEX_KEY }}"
             }
           ]
         },
