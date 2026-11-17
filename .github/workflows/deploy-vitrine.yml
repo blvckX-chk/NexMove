@@ -1,0 +1,48 @@
+name: Déploiement vitrine (Cloudflare)
+
+# Publie la vitrine statique (web/) sur Cloudflare Workers à chaque merge sur main.
+# Remplace le build Git intégré de Cloudflare, qui échouait en 0 s sans journal.
+# Secrets requis (Settings > Secrets and variables > Actions) :
+#   CLOUDFLARE_API_TOKEN   jeton API avec le modèle « Edit Cloudflare Workers »
+#   CLOUDFLARE_ACCOUNT_ID  identifiant du compte (visible dans l'URL du tableau de bord)
+on:
+  push:
+    branches: [main]
+    paths: ["web/**", "wrangler.toml", ".github/workflows/deploy-vitrine.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vitrine
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier les secrets
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$ACCOUNT" ]; then
+            echo "::error::Ajoute CLOUDFLARE_API_TOKEN et CLOUDFLARE_ACCOUNT_ID dans les secrets du dépôt."
+            exit 1
+          fi
+
+      - name: Publier sur Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Vérifier le site en ligne
+        run: |
+          sleep 10
+          code=$(curl -s -o /dev/null -w "%{http_code}" https://nexmove.blvckunlimited.space/)
+          echo "Accueil : HTTP $code"
+          [ "$code" = "200" ] || { echo "::error::Le site ne répond pas 200 après déploiement."; exit 1; }
+          curl -s -o /dev/null -w "Page 404 de marque : HTTP %{http_code}\n" https://nexmove.blvckunlimited.space/page-inexistante

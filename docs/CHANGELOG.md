@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.93 — Déploiement automatique de la vitrine + supports imprimés (affiche, carte de visite)
+- **Vitrine publiée par GitHub Actions** (`.github/workflows/deploy-vitrine.yml`) à chaque merge sur `main` touchant `web/` : remplace le build Git intégré de Cloudflare, qui échouait en 0 s sans journal. Vérifie ensuite que le site répond. Requiert deux secrets du dépôt : `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+- **Affiche de découverte A4** et **carte de visite** 85×55 recto-verso : PDF vectoriels prêts à imprimer (fond perdu 3 mm, zone de sécurité, polices incorporées), QR codes WhatsApp / Telegram vérifiés par décodage. Coordonnées centralisées dans `brand/contact.json` (changer le numéro du bot = une ligne).
+- **PDF modifiables pour Canva** (`brand/exports/canva/`) : HERO, posts et image de partage à texte vectoriel.
+
 ## v3.92 — Logo N-maison partout (version provisoire extraite de l'affiche) + set visuel final
 - Symbole officiel **extrait de l'affiche** (détouré PNG + SVG par tracé de contours, sans redessin), versionné dans `brand/assets/` avec sa source.
 - **Vitrine** : le « M » est remplacé par le N-maison sur toutes les pages (en-tête, pied, widget), pastilles à fond nuit plat ; nouveaux `favicon` (SVG/PNG/ICO), icône Apple, `logo-nexmove.png` (données Google) et image de partage `og.png`.

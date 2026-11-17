@@ -1,0 +1,51 @@
+<!doctype html>
+<!--
+Carte de visite NexMove — 85×55 mm + 3 mm de fond perdu (91×61 mm), recto (nuit) / verso (crème + QR).
+Texte à ≥ 7 mm du bord du fichier (3 mm de fond perdu + 4 mm de marge). Corps minimum 7 pt (≈ 2,5 mm).
+Coordonnées remplies depuis brand/contact.json.
+-->
+<html lang="fr"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=Instrument+Sans:wght@400;600;700&family=Geist+Mono:wght@500;700&display=block" rel="stylesheet">
+<link rel="stylesheet" href="_base.css">
+<style>
+@page{size:91mm 61mm;margin:0}
+html,body{margin:0;width:91mm}
+.card{position:relative;width:91mm;height:61mm;overflow:hidden;font-family:'Instrument Sans',sans-serif;break-after:page;page-break-after:always}
+.card:last-child{break-after:auto;page-break-after:auto}
+/* Recto */
+.recto{background:var(--nuit);color:var(--off)}
+.recto .mark{position:absolute;left:9mm;top:17.5mm;height:26mm}
+.recto .bloc{position:absolute;left:41mm;top:19mm;right:7mm}
+.recto .wm{font-size:11.5mm}
+.recto .rule{width:14mm;height:.8mm;margin:2.6mm 0 2.6mm}
+.recto .tag{font-family:'Geist Mono',monospace;font-weight:700;font-size:2.35mm;letter-spacing:.14em;color:var(--mut);text-transform:uppercase;line-height:1.5}
+/* Verso */
+.verso{background:var(--off);color:var(--nuit)}
+.verso .titre{position:absolute;left:7mm;top:7mm;width:46mm;font-family:'Big Shoulders',sans-serif;font-weight:800;font-size:6.6mm;line-height:.92;letter-spacing:-.01em}
+.verso .titre em{font-style:normal;color:#B57A00}
+.verso .lignes{position:absolute;left:7mm;bottom:7mm;font-size:2.65mm;line-height:1.55}
+.verso .lignes span{font-family:'Geist Mono',monospace;font-weight:700;font-size:2.2mm;letter-spacing:.1em;color:#5A6680;display:inline-block;width:17mm}
+.verso .qr{position:absolute;right:7mm;top:8.5mm;width:24mm;text-align:center}
+.verso .qr img{width:24mm;height:24mm;display:block;background:#F4F1EA}
+.verso .qr .c{font-family:'Geist Mono',monospace;font-weight:700;font-size:2.1mm;letter-spacing:.08em;color:#5A6680;margin-top:1.4mm;text-transform:uppercase}
+.verso .filet{position:absolute;left:0;right:0;bottom:0;height:4.6mm;background:var(--ambre)}  /* 3 mm de fond perdu + 1,6 mm visible */
+</style></head><body>
+<div class="card recto">
+  <img class="mark" src="../assets/mark.png" alt="">
+  <div class="bloc">
+    <div class="wm">Nex<b>Move</b></div>
+    <div class="rule"></div>
+    <div class="tag">Conseiller IA<br>Emploi · Études · Mobilité</div>
+  </div>
+</div>
+<div class="card verso">
+  <div class="titre">Postule moins<br>au hasard.<br><em>Décroche plus.</em></div>
+  <div class="qr"><img src="../assets/qr-whatsapp.svg" alt="QR WhatsApp"><div class="c">Scanne · WhatsApp</div></div>
+  <div class="lignes">
+    <div><span>WHATSAPP</span>+229 62 11 87 61</div>
+    <div><span>TELEGRAM</span>@nex_move_bot</div>
+    <div><span>SITE</span>nexmove.blvckunlimited.space</div>
+  </div>
+  <div class="filet"></div>
+</div>
+</body></html>

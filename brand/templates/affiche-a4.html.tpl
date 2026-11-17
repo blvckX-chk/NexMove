@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+Affiche de découverte A4 — 210×297 mm + 3 mm de fond perdu (216×303 mm). Composition éditoriale :
+en-tête (wordmark + folio) · titre géant · promesse + marque · 3 étapes · bloc « où me trouver » (QR).
+Système NexMove (voir _base.css). Coordonnées remplies depuis brand/contact.json (ne pas éditer le .html généré).
+Sécurité : tout le texte reste à ≥ 15 mm du bord du fichier (3 mm de fond perdu + 12 mm de marge).
+-->
+<html lang="fr"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=Instrument+Sans:wght@400;600;700&family=Geist+Mono:wght@500;700&display=block" rel="stylesheet">
+<link rel="stylesheet" href="_base.css">
+<style>
+@page{size:216mm 303mm;margin:0}
+html,body{width:216mm;height:303mm;margin:0}
+.p{width:216mm;height:303mm}
+.x{position:absolute;left:15mm;right:15mm;z-index:2}
+.head{top:15mm;display:flex;justify-content:space-between;align-items:baseline}
+.head .wm{font-size:13mm}
+.folio{font-size:3mm;color:var(--mut)}
+.rule{position:absolute;left:15mm;top:31mm;width:30mm;height:1.2mm}
+.kick{top:42mm;font-size:3.4mm;color:var(--ambre);letter-spacing:.18em}
+.titre{top:50mm;font-size:30mm;line-height:.9}
+.titre .pt{color:var(--ambre)}
+.promesse{top:147mm;right:72mm;font-size:5.2mm;line-height:1.38;color:#D6DCEB;text-wrap:pretty}
+.promesse b{color:var(--off)}
+.mark{position:absolute;right:15mm;top:141mm;height:46mm;z-index:2}
+.etapes{top:198mm;display:grid;grid-template-columns:repeat(3,1fr);gap:8mm;border-top:.3mm solid var(--line);padding-top:6mm}
+.etapes .n{font-family:'Geist Mono',monospace;font-weight:700;font-size:3.4mm;color:var(--ambre);letter-spacing:.12em}
+.etapes .t{font-family:'Big Shoulders',sans-serif;font-weight:800;font-size:7.5mm;line-height:1;margin-top:2mm}
+.etapes .d{font-size:3.5mm;line-height:1.4;color:var(--mut);margin-top:2mm}
+.info{top:241mm;bottom:15mm;display:grid;grid-template-columns:31mm 31mm 1fr;gap:6mm;align-items:start}
+.qr img{width:31mm;height:31mm;display:block;border-radius:1.5mm;background:#F4F1EA}  /* QR toujours sombre sur clair */
+.qr .l{font-family:'Geist Mono',monospace;font-weight:700;font-size:2.7mm;letter-spacing:.12em;color:var(--mut);margin-top:2mm;text-transform:uppercase}
+.qr .v{font-size:3.3mm;font-weight:700;margin-top:.6mm;white-space:nowrap}
+.cta{align-self:stretch;display:flex;flex-direction:column;justify-content:space-between}
+.cta .lead{font-family:'Big Shoulders',sans-serif;font-weight:800;font-size:9mm;line-height:.95}
+.cta .lead em{font-style:normal;color:var(--ambre)}
+.cta .site{font-family:'Geist Mono',monospace;font-size:3.6mm;color:var(--vert)}
+.cta .badge{font-size:2.8mm;padding:2.6mm 5mm;align-self:flex-start}
+</style></head><body>
+<div class="p">
+  <div class="motif"></div>
+  <div class="x head"><div class="wm">Nex<b>Move</b></div><div class="folio mono">Est. Bénin · CEDEAO</div></div>
+  <div class="rule"></div>
+  <div class="x kick mono">Ton conseiller IA · emploi &amp; mobilité</div>
+  <div class="x titre display">Postule moins<br>au hasard.<br><span class="pt">Décroche plus.</span></div>
+  <div class="x promesse">NexMove <b>lit ton CV</b>, trouve de <b>vraies opportunités</b> (au pays et à l'étranger), les <b>note selon ton profil</b> et prépare ta candidature. Directement dans Telegram ou WhatsApp, sans app à installer.</div>
+  <img class="mark" src="../assets/mark.png" alt="">
+  <div class="x etapes">
+    <div><div class="n">01</div><div class="t">Envoie ton CV</div><div class="d">PDF, Word ou photo. Pas de CV ? On le crée ensemble.</div></div>
+    <div><div class="n">02</div><div class="t">Reçois tes offres notées</div><div class="d">Emplois, stages, bourses, avec un score expliqué.</div></div>
+    <div><div class="n">03</div><div class="t">Postule, prêt</div><div class="d">CV adapté, lettre de motivation, entraînement à l'entretien.</div></div>
+  </div>
+  <div class="x info">
+    <div class="qr"><img src="../assets/qr-whatsapp.svg" alt="QR WhatsApp"><div class="l">WhatsApp</div><div class="v">{{WHATSAPP}}</div></div>
+    <div class="qr"><img src="../assets/qr-telegram.svg" alt="QR Telegram"><div class="l">Telegram</div><div class="v">{{TELEGRAM}}</div></div>
+    <div class="cta">
+      <div class="lead">Scanne,<br>écris <em>« Bonjour »</em>.</div>
+      <div class="site">{{SITE}}</div>
+      <div class="badge">Gratuit pour commencer · Mobile Money</div>
+    </div>
+  </div>
+</div>
+</body></html>
