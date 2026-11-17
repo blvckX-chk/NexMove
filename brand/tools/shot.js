@@ -7,7 +7,7 @@ const { chromium } = require('playwright');
   await p.goto(html.startsWith('http') ? html : 'file://' + require('path').resolve(html), { waitUntil: 'networkidle' });
   try { await p.evaluate(() => document.fonts.ready); } catch (e) {}
   await p.waitForTimeout(400);
-  await p.screenshot({ path: out, fullPage: full });
+  await p.screenshot({ path: out, fullPage: full, omitBackground: !!process.env.TRANSPARENT });
   const ow = await p.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   if (ow > 0) console.log('OVERFLOW horizontal:', ow, 'px');
   await b.close();

@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.92 — Logo N-maison partout (version provisoire extraite de l'affiche) + set visuel final
+- Symbole officiel **extrait de l'affiche** (détouré PNG + SVG par tracé de contours, sans redessin), versionné dans `brand/assets/` avec sa source.
+- **Vitrine** : le « M » est remplacé par le N-maison sur toutes les pages (en-tête, pied, widget), pastilles à fond nuit plat ; nouveaux `favicon` (SVG/PNG/ICO), icône Apple, `logo-nexmove.png` (données Google) et image de partage `og.png`.
+- **Set visuel** régénéré avec le vrai logo (HERO v2, 3 posts 4:5, og) ; le logo n'est plus jamais coupé par le bord.
+
 ## v3.91 — Compréhension du contexte : CV d'un tiers, suivi ancré, questionnaires qui ne piègent plus
 Retour terrain Telegram : un conseiller envoie le CV d'une candidate (« pour que je lui fasse un retour »), puis « conseils pour améliorer le CV » -> le bot lançait la **création de CV**, puis prenait chaque message comme une réponse (« Il est sur le CV envoyé » = diplôme, « codes valides » = expériences).
 - **Mémoire du dernier document** (`last_doc`) : texte lu (OCR / vision, en parallèle de l'analyse, sans latence en plus) + analyse + à qui il appartient. Les questions de suivi (« conseils pour l'améliorer », « le CV que tu as analysé ? ») sont répondues **sur ce document**.
