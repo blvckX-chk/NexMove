@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.93.0"
+VERSION         = "3.94.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -184,6 +184,11 @@ def _norm_statut(word: str) -> str:
     return _STATUT_ALIASES.get(w, "")
 CONTACT_EMAIL       = os.getenv("CONTACT_EMAIL", "")
 CONTACT_WHATSAPP    = os.getenv("CONTACT_WHATSAPP", "")     # ex : +229XXXXXXXX
+# Qui a créé NexMove (réponse FIXE, jamais inventée par l'IA). Faits publics : mentions légales.
+CREATOR_ORG         = os.getenv("CREATOR_ORG", "blvckUnlimited")
+CREATOR_CITY        = os.getenv("CREATOR_CITY", "Cotonou, Bénin")
+CREATOR_NAME        = os.getenv("CREATOR_NAME", "")             # optionnel : nom du fondateur, affiché si renseigné
+CREATOR_EMAIL       = os.getenv("CREATOR_EMAIL", "contact@blvckunlimited.space")
 CONTACT_CALENDAR    = os.getenv("CONTACT_CALENDAR", "")     # lien Calendly / prise de RDV
 # Sources d'emplois structurées (open data). arbeitnow = sans clé ; Adzuna = clés gratuites optionnelles.
 ADZUNA_APP_ID   = os.getenv("ADZUNA_APP_ID", "")
@@ -384,6 +389,8 @@ CONSEILLER_PERSONA = (
     "bienveillant, direct et concret, qui connaît les réalités des candidats d'Afrique de l'Ouest "
     "francophone (Bénin, etc.). Tu personnalises selon le profil, tu es HONNÊTE sur la faisabilité, "
     "et tu donnes toujours des étapes actionnables."
+    " Origine : tu as été conçu par l'équipe blvckUnlimited (Cotonou, Bénin) ; n'invente jamais d'autre "
+    "créateur ni entreprise (ni OpenAI, ni Google) ; pour joindre l'équipe : /contact."
     # ── Psychologie du conseiller d'orientation ──
     " PSYCHOLOGIE : un bon conseiller d'orientation écoute l'ÉMOTION avant de conseiller. Capte l'état de "
     "la personne (doute, peur, découragement, pression, fatigue, enthousiasme) et réponds-y d'abord, en une "
@@ -2987,6 +2994,8 @@ async def _preonboarding_reply(session: dict, t: str) -> str:
         "d'Afrique de l'Ouest (Bénin…). L'utilisateur n'a PAS encore créé son profil. Réponds DIRECTEMENT "
         "et honnêtement à sa question, quelle qu'elle soit, en français, en TUTOYANT, ton chaleureux et concret.\n"
         "Faits à connaître :\n"
+        "- Origine : NexMove est conçu par l'équipe blvckUnlimited (Cotonou, Bénin). N'invente JAMAIS d'autre "
+        "créateur, fondateur ou entreprise (ni OpenAI, ni Google…) ; pour joindre l'équipe : /contact.\n"
         "- Ce que tu fais : trouver de VRAIES opportunités (emplois, stages, bourses, fellowships · locales ET "
         "à l'étranger), préparer CV/lettre/projet d'études, guider pas à pas (Campus France, Canada, visa), "
         "coacher les entretiens.\n"
@@ -3934,6 +3943,32 @@ def _is_version_query(low: str) -> bool:
         return True
     return c.startswith("version ") or "version du bot" in c or "quelle version" in c
 
+_CREATOR_RE = re.compile(
+    r"(qui\s+(t'|t’|vous\s+)a(s|vez)?\s+(cr[ée]{1,2}|con[çc]u|d[ée]velopp[ée]|fait|programm[ée]|invent[ée]|lanc[ée])|"
+    r"qui\s+(est|sont)\s+(ton|ta|tes|votre|vos|le|la|les)\s+(cr[ée]ateur|cr[ée]atrice|fondat\w+|d[ée]veloppeur\w*|concepteur\w*|propri[ée]taire|patron)|"
+    r"qui\s+est\s+derri[èe]re\s+(toi|nexmove|ce\s+bot|le\s+bot)|"
+    r"qui\s+a\s+(cr[ée]{1,2}|con[çc]u|d[ée]velopp[ée]|fait|lanc[ée])\s+(nexmove|ce\s+bot|le\s+bot|cette\s+(app|appli|application))|"
+    r"(ton|ta|votre)\s+(cr[ée]ateur|cr[ée]atrice|fondat\w+)\s*(\?|$|c'est\s+qui)|"
+    r"c'?est\s+qui\s+(ton|ta|votre)\s+(cr[ée]ateur|cr[ée]atrice|fondat\w+|patron|d[ée]veloppeur))", re.I)
+
+def _is_creator_query(low: str) -> bool:
+    return bool(low) and len(low) <= 160 and bool(_CREATOR_RE.search(low))
+
+def _creator_reply() -> str:
+    """Réponse FIXE sur l'origine de NexMove (l'IA divaguait : « créé par OpenAI », noms inventés…)."""
+    qui = f"*{CREATOR_ORG}*" + (f", fondé par *{CREATOR_NAME}*" if CREATOR_NAME else "")
+    contact = ["/contact pour nous écrire directement ici"]
+    if CONTACT_WHATSAPP:
+        contact.append(f"WhatsApp : {CONTACT_WHATSAPP}")
+    if CREATOR_EMAIL:
+        contact.append(f"e-mail : {CREATOR_EMAIL}")
+    return (f"NexMove a été conçu et développé par {qui}, une structure basée à {CREATOR_CITY} 🇧🇯.\n\n"
+            "L'idée de départ : aider les jeunes d'Afrique de l'Ouest à trouver de *vraies* opportunités "
+            "(emploi, études, bourses, ici ou ailleurs) et à préparer des candidatures solides, sans se perdre.\n\n"
+            "_Côté technique, je m'appuie sur plusieurs modèles d'IA, mais NexMove (les conseils, le matching, "
+            "les règles anti-invention) est fait ici._\n\n"
+            "Pour joindre l'équipe : " + " · ".join(contact) + ".")
+
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
@@ -3981,6 +4016,12 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # Vaut dans N'IMPORTE QUEL état (onboarding, pré-onboarding, actif).
     if not session.get("sim_mode") and _is_version_query(low):
         t = "/version"; low = "/version"
+    # Question « qui t'a créé ? » -> réponse FIXE (l'IA inventait). Tout état, hors questionnaires.
+    if (not session.get("sim_mode") and _is_creator_query(low)
+            and session.get("etape") not in ("CVBUILD", "RECRUIT")):
+        msg = _creator_reply()
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
 
     # Garde-fou anti-flag coincé : si l'utilisateur lance une COMMANDE au lieu de répondre à une
     # question en attente (confirmation de suppression, reconversion, clarification, domaine), il a

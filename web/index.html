@@ -8,6 +8,7 @@
 <meta name="description" content="Conseiller IA emploi & mobilité sur Telegram et WhatsApp : analyse ton CV, trouve de vraies opportunités notées, prépare tes dossiers. En français, sans app.">
 <meta name="keywords" content="conseiller IA emploi, assistant IA emploi, recherche d'emploi Bénin, CV, lettre de motivation IA, offres d'emploi, bourse, études à l'étranger, Campus France, mobilité, Telegram, WhatsApp, Mobile Money, Afrique de l'Ouest">
 <meta name="author" content="blvckUnlimited">
+<meta name="nexmove-vitrine" content="3.94">
 <meta name="theme-color" content="#f7f9fc">
 <script>(function(){try{var t=localStorage.getItem('nex-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="canonical" href="https://nexmove.blvckunlimited.space/">
@@ -255,6 +256,9 @@
   @media (prefers-reduced-motion:reduce){.js .reveal{opacity:1;transform:none;transition:none}}
 
   /* Bandeau d'annonce (lancement Campus France) */
+  .contact-equipe{margin-top:1rem;display:flex;flex-direction:column;gap:.35rem}
+  .contact-equipe .contact-titre{font-family:'Geist Mono',ui-monospace,monospace;font-weight:700;font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--gris)}
+  .contact-equipe a{font-weight:600;color:var(--txt);text-decoration:underline;text-underline-offset:3px;text-decoration-thickness:1px}
   .skip{position:absolute;left:-999px;top:8px;z-index:100;background:var(--bleu);color:#fff;padding:8px 12px;border-radius:8px;font-weight:700}
   .skip:focus{left:12px}
   .annonce{background:var(--bleu);color:#fff}
@@ -295,6 +299,7 @@
       <a href="#testeurs">Testeurs</a>
       <a href="#recruteurs">Recruteurs</a>
       <a href="#soutenir">Soutenir</a>
+      <a href="#contact">Contact</a>
     </nav>
     <div class="nav-actions">
       <button class="theme-toggle" id="themeBtn" type="button" aria-label="Changer le thème clair/sombre" title="Thème clair / sombre">
@@ -686,7 +691,12 @@
     <div class="foot">
       <div>
         <div class="brand" style="font-size:1rem"><span class="logo" style="width:26px;height:26px"><svg viewBox="0 0 1471 1362" aria-hidden="true"><path fill="#FFFFFF" fill-rule="evenodd" d="M446,65 L33,474 L32,1325 L248,1325 L248,570 L451,371 L943,864 L946,1170 L938,1173 L455,697 L453,997 L786,1330 L1155,1329 L1159,765 Z"/><path fill="#E0A020" fill-rule="evenodd" d="M953,36 L955,196 L1163,205 L951,427 L955,445 L1051,539 L1068,536 L1270,343 L1282,485 L1437,484 L1433,32 Z"/></svg></span> NexMove</div>
-        <div style="margin-top:.5rem;color:var(--gris)">Un produit <strong style="color:var(--txt)">blvckUnlimited</strong>.</div>
+        <div style="margin-top:.5rem;color:var(--gris)">Un produit <strong style="color:var(--txt)">blvckUnlimited</strong> · Cotonou, Bénin.</div>
+        <div id="contact" class="contact-equipe">
+          <div class="contact-titre">Contacter l'équipe</div>
+          <a class="js-pay" data-msg="Bonjour, je souhaite contacter l'équipe NexMove :" href="https://wa.me/22994078765">WhatsApp de l'équipe</a>
+          <a href="mailto:contact@blvckunlimited.space">contact@blvckunlimited.space</a>
+        </div>
       </div>
       <div style="display:flex;gap:1.4rem;flex-wrap:wrap;align-items:center">
         <a href="guides.html">Guides</a>

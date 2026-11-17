@@ -273,3 +273,20 @@ def test_scn_repair_remainder_v391():
     assert main._REPAIR_RE.match("tu ne comprends pas")
     assert not main._REPAIR_RE.match("non")                     # « non » seul reste une réponse
     assert not main._REPAIR_RE.match("je voudrais une bourse")   # pas une correction
+
+
+# ── v3.94 : « qui t'a créé ? » -> réponse FIXE (l'IA divaguait) ──
+def test_scn_qui_t_a_cree_reponse_fixe(monkeypatch):
+    async def _boom(*a, **k):
+        raise AssertionError("le LLM ne doit pas être appelé pour cette question")
+    monkeypatch.setattr(main, "_gen_text", _boom)
+    for q in ("Qui t'a créé ?", "qui a créé nexmove", "c'est qui ton créateur", "qui est derrière ce bot ?",
+              "qui sont tes développeurs", "qui vous a conçu"):
+        s = _sess(channel="telegram")
+        msg, s = _run(main.process_text_message(s, q))
+        assert "blvckUnlimited" in msg and "Cotonou" in msg, q
+        assert "OpenAI" not in msg
+
+def test_creator_query_pas_de_faux_positif():
+    for q in ("je veux créer mon CV", "qui recrute à Cotonou ?", "créer un compte", "qui a créé cette bourse ?"):
+        assert not main._is_creator_query(q.lower()), q
