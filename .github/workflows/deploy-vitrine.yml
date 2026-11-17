@@ -32,6 +32,11 @@ jobs:
             exit 1
           fi
 
+      - name: Marqueur de version (vérifiable sur /version.txt)
+        run: |
+          printf "NexMove vitrine\ncommit %s\npublié le %s UTC\n" "${GITHUB_SHA::7}" "$(date -u '+%Y-%m-%d %H:%M')" > web/version.txt
+          cat web/version.txt
+
       - name: Publier sur Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
@@ -46,3 +51,4 @@ jobs:
           echo "Accueil : HTTP $code"
           [ "$code" = "200" ] || { echo "::error::Le site ne répond pas 200 après déploiement."; exit 1; }
           curl -s -o /dev/null -w "Page 404 de marque : HTTP %{http_code}\n" https://nexmove.blvckunlimited.space/page-inexistante
+          echo "Version en ligne :"; curl -s https://nexmove.blvckunlimited.space/version.txt

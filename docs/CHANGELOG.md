@@ -2,6 +2,11 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.94 — « Qui t'a créé ? » : réponse fixe · contact de l'équipe sur la vitrine · version vérifiable
+- **Bot** : « qui t'a créé / c'est qui ton créateur / qui est derrière ce bot… » reçoit une **réponse fixe** (blvckUnlimited, Cotonou, Bénin, moyens de contact) au lieu d'une réponse inventée par l'IA. Garde-fou ajouté dans la personnalité pour les variantes. Réglable dans `.env` : `CREATOR_NAME` (nom du fondateur, affiché si renseigné), `CREATOR_ORG`, `CREATOR_CITY`, `CREATOR_EMAIL`.
+- **Vitrine** : bloc « Contacter l'équipe » (WhatsApp de l'équipe + e-mail) dans le pied de page, lien « Contact » dans le menu.
+- **Vérifier une publication** : `/version.txt` indique le commit et l'heure de la dernière publication automatique ; balise `nexmove-vitrine` dans le code source.
+
 ## v3.93 — Déploiement automatique de la vitrine + supports imprimés (affiche, carte de visite)
 - **Vitrine publiée par GitHub Actions** (`.github/workflows/deploy-vitrine.yml`) à chaque merge sur `main` touchant `web/` : remplace le build Git intégré de Cloudflare, qui échouait en 0 s sans journal. Vérifie ensuite que le site répond. Requiert deux secrets du dépôt : `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 - **Affiche de découverte A4** et **carte de visite** 85×55 recto-verso : PDF vectoriels prêts à imprimer (fond perdu 3 mm, zone de sécurité, polices incorporées), QR codes WhatsApp / Telegram vérifiés par décodage. Coordonnées centralisées dans `brand/contact.json` (changer le numéro du bot = une ligne).
