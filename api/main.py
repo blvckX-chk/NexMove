@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.88.0"
+VERSION         = "3.89.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -524,6 +524,11 @@ def _is_admin(session: dict) -> bool:
     """Vrai si la session appartient à un administrateur (un des _ADMIN_IDS)."""
     if not _ADMIN_IDS:
         return False
+    # Sécurité (audit v3.89) : sur WhatsApp/Messenger, l'admin est identifié par son NUMÉRO (devinable).
+    # Sans META_APP_SECRET, les webhooks ne sont pas signés -> une requête forgée pourrait se faire
+    # passer pour l'admin. On refuse donc les droits admin sur ces canaux tant que le secret manque.
+    if session.get("channel") in ("whatsapp", "messenger") and not META_APP_SECRET:
+        return False
     return (str(session.get("chat_id") or "") in _ADMIN_IDS
             or str(session.get("user_id") or "") in _ADMIN_IDS)
 
@@ -691,19 +696,30 @@ _ROUTE_MISSES: deque = deque(maxlen=200)
 def _log_miss(session: dict, text: str, kind: str) -> None:
     """Enregistre un message que le bot n'a pas su router/comprendre (fallback générique, doc rejeté).
     Best-effort, jamais bloquant. Aucune donnée sensible au-delà du message lui-même."""
+    row = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "uid": str(session.get("user_id", "")),
+        "canal": session.get("channel", "?"),
+        "kind": kind,
+        "etape": session.get("etape", "?"),
+        "text": (text or "").strip()[:200],
+    }
     try:
-        _ROUTE_MISSES.append({
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "uid": str(session.get("user_id", "")),
-            "canal": session.get("channel", "?"),
-            "kind": kind,
-            "etape": session.get("etape", "?"),
-            "text": (text or "").strip()[:200],
-        })
+        _ROUTE_MISSES.append(row)
+    except Exception:
+        pass
+    try:
+        opp_store.add_miss(row)   # persistant : /retours ne repart plus à zéro à chaque redéploiement
     except Exception:
         pass
 
 def _misses_recent(n: int = 20) -> list:
+    try:
+        rows = opp_store.list_misses(n)
+        if rows:
+            return rows
+    except Exception:
+        pass
     return list(_ROUTE_MISSES)[-n:][::-1]
 
 def _retours_report(limit: int = 60) -> str:
@@ -747,7 +763,7 @@ def _retours_report(limit: int = 60) -> str:
             ml.append(f"• {kind} ({len(ms)}) — ex. « {ex} »")
         miss_blk = f"😕 *Incompris* ({len(misses)})\n" + "\n".join(ml)
     else:
-        miss_blk = "😕 *Incompris* — _aucun depuis le dernier redémarrage_"
+        miss_blk = "😕 *Incompris* — _aucun_"
     try:
         pos, neg = opp_store.feedback_counts()
     except Exception:
@@ -4843,7 +4859,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/contacts_log") or low.startswith("/contacts-log") or low.startswith("/messages_log"):
         # Historique des /contact · RÉSERVÉ à l'admin
-        if not ADMIN_CHAT_ID or str(session.get("chat_id") or "") != str(ADMIN_CHAT_ID):
+        if not _is_admin(session):
             msg = "🔒 Commande réservée à l'administrateur."
         else:
             rows = opp_store.list_contacts(20)
@@ -10748,6 +10764,22 @@ async def set_session(user_id: str, session_data: dict, _auth: bool = Depends(ve
     session_manager.set(user_id, session_data)
     return {"ok": True}
 
+def _already_seen(key: str) -> bool:
+    """Déduplication des événements entrants (audit v3.89) : Meta et Telegram peuvent livrer
+    deux fois le même message (relivraison). Sans ça : double analyse de CV, double quota,
+    double réponse. Cache partagé entre workers, fenêtre 1 h."""
+    if not key or key.endswith(":") or key.endswith(":None"):
+        return False
+    k = "evt:" + key
+    try:
+        if cache.get(k):
+            logger.info(f"[dedup] événement déjà traité : {key}")
+            return True
+        cache.set(k, 1, ttl=3600)
+    except Exception:
+        return False
+    return False
+
 async def _bg_route(channel, user_id, chat_id, username, update):
     """Traite un message en arrière-plan (le webhook a déjà répondu 200 à Telegram → pas de timeout/retry)."""
     try:
@@ -10766,6 +10798,8 @@ async def telegram_webhook(request: Request):
     try:
         update = await request.json()
     except Exception:
+        return {"ok": True}
+    if _already_seen(f"tg:{update.get('update_id')}"):
         return {"ok": True}
     cq = update.get("callback_query")
     src = (cq or {}).get("from", {}) if cq else ((update.get("message") or update.get("edited_message") or {}).get("from", {}) or {})
@@ -10810,7 +10844,7 @@ async def wa_webhook(request: Request):
                 names = {c.get("wa_id"): (c.get("profile", {}) or {}).get("name", "utilisateur") for c in val.get("contacts", [])}
                 for m in val.get("messages", []):
                     frm = m.get("from")
-                    if frm:
+                    if frm and not _already_seen(f"wa:{m.get('id')}"):
                         # Réponse immédiate à Meta, traitement en tâche de fond (évite timeouts/retries).
                         asyncio.create_task(_bg_route("whatsapp", frm, frm, names.get(frm, "utilisateur"), m))
     except Exception as e:
@@ -10835,7 +10869,8 @@ async def fb_webhook(request: Request):
         for entry in body.get("entry", []):
             for ev in entry.get("messaging", []):
                 psid = (ev.get("sender", {}) or {}).get("id")
-                if psid:
+                _mid = (ev.get("message") or {}).get("mid") or (ev.get("postback") or {}).get("mid")
+                if psid and not _already_seen(f"fb:{_mid}"):
                     asyncio.create_task(_bg_route("messenger", psid, psid, "utilisateur", ev))
     except Exception as e:
         logger.error(f"fb webhook: {e}")
@@ -10966,7 +11001,14 @@ async def _startup_alert():
     try:
         if (_ADMIN_IDS or ADMIN_CHAT_ID) and TELEGRAM_TOKEN and not cache.get("_startup_ping"):
             cache.set("_startup_ping", 1, ttl=90)   # évite le doublon entre les 2 workers uvicorn
-            await _alert_admin(f"✅ *NexMove en ligne* · v{VERSION} vient de démarrer.")
+            warn = []
+            if (WHATSAPP_TOKEN or MESSENGER_TOKEN) and not META_APP_SECRET:
+                warn.append("⚠️ `META_APP_SECRET` absent : webhooks WhatsApp/Messenger NON signés "
+                            "(droits admin désactivés sur ces canaux). Ajoute la *clé secrète* de l'app Meta.")
+            if not TELEGRAM_WEBHOOK_SECRET:
+                warn.append("⚠️ `TELEGRAM_WEBHOOK_SECRET` absent : webhook Telegram non authentifié.")
+            await _alert_admin(f"✅ *NexMove en ligne* · v{VERSION} vient de démarrer."
+                               + ("\n\n" + "\n".join(warn) if warn else ""))
     except Exception as e:
         logger.warning(f"startup alert: {e}")
 

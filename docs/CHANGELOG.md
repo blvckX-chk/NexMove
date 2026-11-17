@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.89 — Audit système : sécurité des webhooks, déduplication, incompris persistants
+- **Sécurité** : sur WhatsApp/Messenger, l'admin est reconnu à son *numéro* (devinable). Tant que `META_APP_SECRET` n'est pas configuré, les webhooks ne sont pas signés : les **droits admin sont désormais refusés sur ces canaux** (Telegram non concerné). Le message de démarrage avertit l'admin si `META_APP_SECRET` ou `TELEGRAM_WEBHOOK_SECRET` manque.
+- **Déduplication** des événements entrants (WhatsApp, Messenger, Telegram) : une relivraison ne déclenche plus une double analyse de CV / double quota / double réponse (cache partagé entre workers, 1 h).
+- **Incompris persistants** (table `misses`) : `/retours` ne repart plus à zéro à chaque redéploiement.
+- `/contacts_log` ouvert à tous les admins (`_is_admin`), comme `/retours`.
+
 ## v3.88 — Retour terrain Messenger : nom faux, récap tronqué, corrections ignorées
 - **Nom faux corrigé** : l'IA avait lu une *adresse* du CV comme nom (deux fois). Le nom extrait est maintenant **recoupé** avec le nom du fichier et le texte du CV : si le nom du fichier figure dans le CV et ne partage aucun mot avec celui de l'IA, c'est lui qui est retenu.
 - **Formations polluées** : le titre du CV (« Logistique · NOM PRÉNOM ») n'apparaît plus comme établissement.

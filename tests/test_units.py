@@ -4418,3 +4418,28 @@ def test_split_message_ne_tronque_plus_v388():
     parts = channels.split_message(longtxt, 1900)
     assert all(len(p) <= 1900 for p in parts)
     assert "".join(parts).replace("\n", "") == longtxt.replace("\n", "")   # rien de perdu
+
+
+# --- Audit système v3.89 : sécurité admin, déduplication, incompris persistants ---
+def test_admin_refuse_sur_meta_sans_secret_v389(monkeypatch):
+    monkeypatch.setattr(main, "_ADMIN_IDS", {"22900000000"})
+    monkeypatch.setattr(main, "META_APP_SECRET", "")
+    s = {"channel": "whatsapp", "chat_id": "22900000000", "user_id": "22900000000"}
+    assert main._is_admin(s) is False                 # webhook non signé -> pas de droits admin
+    monkeypatch.setattr(main, "META_APP_SECRET", "secret")
+    assert main._is_admin(s) is True
+    tg = {"channel": "telegram", "chat_id": "22900000000"}
+    monkeypatch.setattr(main, "META_APP_SECRET", "")
+    assert main._is_admin(tg) is True                 # Telegram non concerné
+
+def test_dedup_evenements_v389():
+    k = "wa:wamid.TEST-" + str(id(object()))
+    assert main._already_seen(k) is False
+    assert main._already_seen(k) is True               # relivraison ignorée
+    assert main._already_seen("wa:None") is False      # pas d'id -> jamais bloqué
+
+def test_incompris_persistants_v389():
+    main._log_miss({"user_id": "u-persist", "channel": "telegram", "etape": "X"}, "texte persistant", "nlu_fallback")
+    rows = main.opp_store.list_misses(5)
+    assert any(r["text"] == "texte persistant" for r in rows)
+    assert any(r.get("text") == "texte persistant" for r in main._misses_recent(5))

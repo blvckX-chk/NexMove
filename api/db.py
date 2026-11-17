@@ -337,6 +337,30 @@ class OppStore:
         con.close()
         return int(pos or 0), int(neg or 0)
 
+    # ---- journal des « incompris » (persistant : survit aux redéploiements, v3.89) ----
+    def _ensure_misses(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS misses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, uid TEXT, canal TEXT,
+            kind TEXT, etape TEXT, text TEXT)""")
+        con.commit(); con.close()
+
+    def add_miss(self, row: dict) -> None:
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("INSERT INTO misses(ts,uid,canal,kind,etape,text) VALUES(?,?,?,?,?,?)",
+                    (row.get("ts", ""), row.get("uid", ""), row.get("canal", ""),
+                     row.get("kind", ""), row.get("etape", ""), str(row.get("text", ""))[:200]))
+        # Rétention bornée : on garde les 2000 derniers.
+        con.execute("DELETE FROM misses WHERE id <= (SELECT MAX(id) FROM misses) - 2000")
+        con.commit(); con.close()
+
+    def list_misses(self, limit: int = 40) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT ts,uid,canal,kind,etape,text FROM misses ORDER BY id DESC LIMIT ?",
+                           (int(limit),)).fetchall()
+        con.close()
+        return [dict(zip(("ts", "uid", "canal", "kind", "etape", "text"), r)) for r in rows]
+
     # ---- journal /contact ----
     def _ensure_contacts(self):
         con = sqlite3.connect(self._path, timeout=10)
@@ -915,6 +939,7 @@ opp_store = OppStore()
 opp_store._ensure_feedback()
 opp_store._ensure_contacts()
 opp_store._ensure_broadcasts()
+opp_store._ensure_misses()
 profile_store = ProfileStore()
 usage_store = UsageStore()
 premium_store = PremiumStore()
