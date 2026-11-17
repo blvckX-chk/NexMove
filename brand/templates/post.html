@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Post de campagne 1080×1350 (4:5). Paramètres d'URL :
+     k = kicker (label mono) · t = titre (« | » = saut de ligne, *mot* = accent ambre) · b = texte · n = folio (ex. 01/03)
+     Ex. : post.html?k=Le%20constat&t=Tu%20postules%20partout.|*Personne*%20ne%20répond.&b=...&n=01/03 -->
+<html lang="fr"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=Instrument+Sans:wght@400;700&family=Geist+Mono:wght@400;700&display=block" rel="stylesheet">
+<link rel="stylesheet" href="_base.css">
+<style>
+html,body{width:1080px;height:1350px}
+.p{width:1080px;height:1350px}
+.head{position:absolute;left:84px;top:84px;right:84px;display:flex;align-items:baseline;justify-content:space-between;z-index:3}
+.head .wm{font-size:52px}
+.folio{font-size:20px;color:var(--mut)}
+.rule{position:absolute;left:84px;top:164px;width:150px}
+.kick{position:absolute;left:86px;top:430px;font-size:24px;color:var(--ambre)}
+.title{position:absolute;left:82px;top:478px;width:900px;font-size:118px;text-wrap:balance}
+.title em{font-style:normal;color:var(--ambre)}
+.body{position:absolute;left:86px;width:780px;font-size:34px;line-height:1.38;color:#C9D1E6;text-wrap:pretty}
+.foot{position:absolute;left:84px;right:84px;bottom:72px;display:flex;align-items:flex-end;justify-content:space-between}
+.foot .url{font-family:'Geist Mono',monospace;font-size:24px;color:var(--vert)}
+.foot .ch{font-family:'Geist Mono',monospace;font-size:20px;color:var(--mut);letter-spacing:.06em;margin-top:8px}
+.mark,.mark-slot{height:132px;width:132px}
+.mark{width:auto}
+.mark-slot{position:static;font-size:12px}
+</style></head><body>
+<div class="p">
+  <div class="motif"></div>
+  <div class="head"><div class="wm">Nex<b>Move</b></div><div class="folio mono" id="n"></div></div>
+  <div class="rule"></div>
+  <div class="kick mono" id="k"></div>
+  <div class="title display" id="t"></div>
+  <div class="body" id="b"></div>
+  <div class="foot">
+    <div><div class="url">nexmove.blvckunlimited.space</div><div class="ch">Telegram · WhatsApp · Conseiller IA</div></div>
+    <img class="mark" src="../assets/mark.png" alt="" onerror="this.outerHTML='<div class=&quot;mark-slot&quot;>MARQUE N</div>'">
+  </div>
+</div>
+<script>
+const q = new URLSearchParams(location.search);
+const esc = s => (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+document.getElementById('k').textContent = q.get('k') || '';
+document.getElementById('n').textContent = q.get('n') || '';
+document.getElementById('t').innerHTML = esc(q.get('t')).split('|').join('<br>').replace(/\*(.+?)\*/g, '<em>$1</em>');
+document.getElementById('b').textContent = q.get('b') || '';
+// Le texte se place sous le titre, quelle que soit sa hauteur.
+document.fonts.ready.then(() => {
+  const t = document.getElementById('t');
+  document.getElementById('b').style.top = (t.offsetTop + t.offsetHeight + 40) + 'px';
+});
+</script>
+</body></html>

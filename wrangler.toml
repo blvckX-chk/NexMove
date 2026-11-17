@@ -6,4 +6,6 @@ compatibility_date = "2025-01-01"
 
 [assets]
 directory = "./web"
+# Lien cassé -> page 404 de marque (web/404.html) au lieu de la page d'erreur générique.
+not_found_handling = "404-page"
 # Chaque fichier est servi par son chemin : / -> web/index.html, /admin.html, /cgu.html, etc.

@@ -2,6 +2,35 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.90 — Système visuel « Mobilité éditoriale » + vitrine revue (landing-page-design)
+- **Identité versionnée** (`brand/`) : charte écrite, gabarits HERO v2 (1080×1080), posts de campagne 4:5 paramétrables, image de partage `og` (1200×630), et `brand/tools/render.sh` qui génère tout le set en une commande. Fini les visuels perdus avec un dossier temporaire. Le logo officiel se dépose dans `brand/assets/mark.png` (emplacement signalé tant qu'il manque, jamais de faux logo).
+- **Vitrine alignée sur la charte** : Big Shoulders (titres et chiffres), Instrument Sans (texte), Geist Mono (labels) à la place d'Inter, sur l'accueil, les pages légales, les guides et l'admin.
+- **Liens jamais morts** : les 22 boutons remplis par script (Telegram, WhatsApp, paiement) ont une vraie adresse par défaut.
+- **Contenu toujours visible** : les animations d'apparition ne masquent plus rien si le script ne se charge pas (sections auparavant vides).
+- **Promesse exacte** : les noms de modèles non garantis (« GPT-4o, Claude, Gemini Pro ») et le « jamais de panne » sont remplacés par une formulation vraie.
+- **Page 404** de marque (`web/404.html`, `not_found_handling` Cloudflare), lien « Aller au contenu » pour la navigation clavier, bandeau à fond plat dont la croix ne chevauche plus le texte sur mobile.
+
+## v3.89 — Audit système : sécurité des webhooks, déduplication, incompris persistants
+- **Sécurité** : sur WhatsApp/Messenger, l'admin est reconnu à son *numéro* (devinable). Tant que `META_APP_SECRET` n'est pas configuré, les webhooks ne sont pas signés : les **droits admin sont désormais refusés sur ces canaux** (Telegram non concerné). Le message de démarrage avertit l'admin si `META_APP_SECRET` ou `TELEGRAM_WEBHOOK_SECRET` manque.
+- **Déduplication** des événements entrants (WhatsApp, Messenger, Telegram) : une relivraison ne déclenche plus une double analyse de CV / double quota / double réponse (cache partagé entre workers, 1 h).
+- **Incompris persistants** (table `misses`) : `/retours` ne repart plus à zéro à chaque redéploiement.
+- `/contacts_log` ouvert à tous les admins (`_is_admin`), comme `/retours`.
+
+## v3.88 — Retour terrain Messenger : nom faux, récap tronqué, corrections ignorées
+- **Nom faux corrigé** : l'IA avait lu une *adresse* du CV comme nom (deux fois). Le nom extrait est maintenant **recoupé** avec le nom du fichier et le texte du CV : si le nom du fichier figure dans le CV et ne partage aucun mot avec celui de l'IA, c'est lui qui est retenu.
+- **Formations polluées** : le titre du CV (« Logistique · NOM PRÉNOM ») n'apparaît plus comme établissement.
+- **Compétences** : repli sur les autres listes extraites, et plus de ligne « Compétences : » vide.
+- **Messages tronqués** : Messenger coupait les messages à boutons à 640 caractères (« Ces informations sont-elles correctes » sans « ? », puis juste « Ce »), WhatsApp à 1000, et tous les canaux coupaient les longs textes. Les messages longs sont désormais **découpés** proprement (paragraphes), les boutons restent sur la dernière partie avec la question.
+- **Correction du nom en langage libre** (« X le nom », « mon nom c'est X », « je m'appelle X ») : **réellement enregistrée** (avant : l'IA répondait « je note » sans rien sauver, puis demandait de renvoyer un CV corrigé).
+- **« Créer un nouveau »** lance directement la création de CV au lieu de répondre « tape /creercv ».
+- **Gras** : les `**x**` des réponses IA sont convertis en `*x*` (plus d'astérisques visibles sur Messenger/WhatsApp).
+- Tests de non-régression ajoutés.
+
+## v3.87 — Recueil des retours : panel admin unique /retours
+- Nouvelle commande admin **`/retours`** : un seul endroit pour voir tous les retours testeurs — 🐞 **bugs**, 🌟 **avis/témoignages**, 📨 **contacts**, 😕 **incompris** (messages non routés, groupés par type), et le compteur 👍/👎 des **votes sur offres**. Agrège `contacts` (tags `[BUG]`/`[AVIS]`) + le journal des incompris + `feedback_counts`.
+- S'appuie sur l'existant (chaque `/bug`, `/avis`, `/contact` est déjà remonté à l'admin et stocké) : rien à faire côté testeur, tout remonte et se consulte d'un coup.
+- `db.py` : `feedback_counts()` (nb signaux aimés / rejetés).
+
 ## v3.86 — Noter CHAQUE offre (feedback par offre, sans liste mono-sélection)
 - **Retour terrain** : *« on doit pouvoir cocher les deux, dire si chaque offre est bonne ou pas »*. Le picker WhatsApp/Messenger s'affichait en **liste mono-sélection** (elle se ferme au 1er choix) → impossible de noter plusieurs offres.
 - **Telegram** : les boutons sont désormais présentés clairement **par offre** (`👍 1 | 👎 1`, `👍 2 | 👎 2`…), persistants — on en note autant qu'on veut (c'était déjà techniquement possible, c'est maintenant explicite).

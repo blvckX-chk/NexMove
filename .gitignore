@@ -15,3 +15,6 @@ api/data/
 # OS / éditeurs
 .DS_Store
 *.swp
+
+# Rendus de la marque (régénérables : brand/tools/render.sh)
+brand/out/
