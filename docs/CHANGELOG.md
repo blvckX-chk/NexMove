@@ -2,6 +2,17 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.91 — Compréhension du contexte : CV d'un tiers, suivi ancré, questionnaires qui ne piègent plus
+Retour terrain Telegram : un conseiller envoie le CV d'une candidate (« pour que je lui fasse un retour »), puis « conseils pour améliorer le CV » -> le bot lançait la **création de CV**, puis prenait chaque message comme une réponse (« Il est sur le CV envoyé » = diplôme, « codes valides » = expériences).
+- **Mémoire du dernier document** (`last_doc`) : texte lu (OCR / vision, en parallèle de l'analyse, sans latence en plus) + analyse + à qui il appartient. Les questions de suivi (« conseils pour l'améliorer », « le CV que tu as analysé ? ») sont répondues **sur ce document**.
+- **Rôle compris** : « en tant que conseiller », « pour lui / elle », « le CV de ma fille »… -> le bot parle du candidat à la 3e personne et donne des retours à transmettre. Un CV de tiers envoyé en PDF **n'écrase plus** le profil de la personne qui écrit.
+- **Améliorer ≠ créer** : « améliorer / conseils / retour sur le CV » ne lance plus `/creercv` ; sans document, le bot demande le CV.
+- **Questionnaires non piégeants** : une réponse doit ressembler à une réponse (nom, diplôme, langues…). Sinon le bot redemande une fois, puis met le questionnaire en pause ; une commande ou un « laisse tomber » en sort directement (fini « tape /annuler »).
+- **Réparation de conversation** : « non, je voulais… », « c'est pas ce que j'ai demandé », « tu ne comprends pas » -> sortie du questionnaire et reprise sur la vraie intention (ou une question de clarification précise).
+- **Analyse d'image naturelle** : fin du gabarit « Contexte / Réponse / Et après » ; pour un CV : impression, points forts, corrections prioritaires avec reformulations, priorité n°1. Plus de menu collé après l'analyse.
+- **« Pas besoin de me proposer des options »** est retenu : plus de menus pour cette personne.
+- 9 scénarios de conversation rejoués en tests (dont celui du retour terrain).
+
 ## v3.90 — Système visuel « Mobilité éditoriale » + vitrine revue (landing-page-design)
 - **Identité versionnée** (`brand/`) : charte écrite, gabarits HERO v2 (1080×1080), posts de campagne 4:5 paramétrables, image de partage `og` (1200×630), et `brand/tools/render.sh` qui génère tout le set en une commande. Fini les visuels perdus avec un dossier temporaire. Le logo officiel se dépose dans `brand/assets/mark.png` (emplacement signalé tant qu'il manque, jamais de faux logo).
 - **Vitrine alignée sur la charte** : Big Shoulders (titres et chiffres), Instrument Sans (texte), Geist Mono (labels) à la place d'Inter, sur l'accueil, les pages légales, les guides et l'admin.

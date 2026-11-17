@@ -186,3 +186,90 @@ def test_scn_message_vide_ou_emoji_pas_de_crash():
         s = _sess()
         msg, s = _run(main.process_text_message(s, weird))
         assert isinstance(msg, str)   # toujours une réponse, jamais une exception
+
+
+# ── Scénario v3.91 : conseiller qui fait relire le CV d'une candidate (retour terrain Telegram) ──
+def _doc_tiers(s):
+    main._remember_doc(s, "cv", "Prénom Candidate — Apprentie ingénieure en efficacité énergétique. "
+                       "Licence 3 Sciences pour l'ingénieur. Expériences : technicienne maintenance CVC.",
+                       caption="En tant que conseiller d'orientation senior, analyse moi ce CV que je lui fasse un retour",
+                       summary="Analyse : CV bien structuré, ajouter des réalisations chiffrées.")
+    return s
+
+def test_scn_conseiller_cv_tiers_conseils_sans_questionnaire(monkeypatch):
+    vus = {}
+    async def _fake_gen(system, user, **k):
+        vus["system"], vus["user"] = system, user
+        return "Voici 5 conseils concrets pour améliorer son CV."
+    monkeypatch.setattr(main, "_gen_text", _fake_gen)
+    s = _doc_tiers(_sess(channel="telegram"))
+    assert s["last_doc"]["owner"] == "tiers"
+    msg, s = _run(main.process_text_message(
+        s, "Conseils pour améliorer le CV de manière générale. Pas besoin de me proposer des options"))
+    assert s.get("etape") != "CVBUILD"                          # plus de questionnaire lancé à tort
+    assert "conseils concrets" in msg
+    assert "AUTRE personne" in vus["system"]                    # rôle conseiller -> 3e personne
+    assert "efficacité énergétique" in vus["user"]              # réponse ANCRÉE sur le document
+    assert s["profil"]["profil_plus"].get("no_menu") is True    # « pas besoin d'options » retenu
+
+def test_scn_reference_au_cv_analyse_sort_du_questionnaire(monkeypatch):
+    async def _fake_gen(system, user, **k):
+        return "Oui, je parle du CV que je viens d'analyser."
+    monkeypatch.setattr(main, "_gen_text", _fake_gen)
+    s = _doc_tiers(_sess(channel="telegram", etape="CVBUILD", cvbuild_step=1, cvbuild_data={}))
+    msg, s = _run(main.process_text_message(s, "Le CV que tu as analysé ?"))
+    assert s["etape"] != "CVBUILD"
+    assert "CV que je viens d'analyser" in msg
+
+def test_scn_questionnaire_ne_piege_plus(monkeypatch):
+    s = _sess(channel="telegram", etape="CVBUILD", cvbuild_step=0, cvbuild_data={})
+    msg, s = _run(main.process_text_message(s, "Ketsia Mensah"))          # vrai nom -> accepté
+    assert s["cvbuild_data"].get("nom") == "Ketsia Mensah" and s["cvbuild_step"] == 1
+    msg, s = _run(main.process_text_message(s, "Il est sur le CV envoyé"))   # pas un diplôme
+    assert "formation" not in s["cvbuild_data"] and s["etape"] == "CVBUILD"
+    assert "pas sûr" in msg
+    msg, s = _run(main.process_text_message(s, "Je veux les codes valide"))  # 2e incohérence -> on sort
+    assert s["etape"] != "CVBUILD"
+    assert "pause" in msg
+
+def test_scn_ameliorer_cv_sans_document_demande_le_cv():
+    s = _sess(channel="telegram", onboarding_complete=False, etape="ATTENTE_CV")
+    msg, s = _run(main.process_text_message(s, "je veux des conseils pour améliorer mon CV"))
+    assert s.get("etape") != "CVBUILD"
+    assert "Envoie-moi le CV" in msg
+
+def test_scn_creer_cv_reste_route():
+    s = _sess(channel="telegram", onboarding_complete=False, etape="ATTENTE_CV")
+    msg, s = _run(main.process_text_message(s, "je veux créer mon CV"))
+    assert s.get("etape") == "CVBUILD"
+
+
+# ── v3.91 : réparation de conversation et sortie naturelle des questionnaires ──
+def test_scn_non_je_voulais_des_conseils(monkeypatch):
+    async def _fake_gen(system, user, **k):
+        return "Voici mes conseils pour son CV."
+    monkeypatch.setattr(main, "_gen_text", _fake_gen)
+    s = _doc_tiers(_sess(channel="telegram", etape="CVBUILD", cvbuild_step=0, cvbuild_data={}))
+    msg, s = _run(main.process_text_message(s, "Non, je voulais des conseils pour le CV, pas en créer un"))
+    assert s["etape"] != "CVBUILD" and "conseils pour son CV" in msg
+
+def test_scn_tu_ne_comprends_pas_repare(monkeypatch):
+    async def _fake_gen(system, user, **k):
+        assert "mal comprise" in system
+        return "Je suis parti sur une mauvaise piste : tu voulais un avis sur le CV, c'est bien ça ?"
+    monkeypatch.setattr(main, "_gen_text", _fake_gen)
+    s = _sess(channel="telegram", etape="CVBUILD", cvbuild_step=2, cvbuild_data={"nom": "X"})
+    msg, s = _run(main.process_text_message(s, "tu ne comprends pas"))
+    assert s["etape"] != "CVBUILD" and "mauvaise piste" in msg
+
+def test_scn_laisse_tomber_sort_sans_annuler():
+    s = _sess(channel="telegram", etape="CVBUILD", cvbuild_step=1, cvbuild_data={"nom": "X"})
+    msg, s = _run(main.process_text_message(s, "laisse tomber"))
+    assert s["etape"] != "CVBUILD" and "/annuler" not in msg
+
+def test_scn_repair_remainder_v391():
+    assert main._repair_remainder("Non, je voulais des conseils pour le CV") == "des conseils pour le CV"
+    assert main._repair_remainder("c'est pas ce que j'ai demandé") == ""
+    assert main._REPAIR_RE.match("tu ne comprends pas")
+    assert not main._REPAIR_RE.match("non")                     # « non » seul reste une réponse
+    assert not main._REPAIR_RE.match("je voudrais une bourse")   # pas une correction

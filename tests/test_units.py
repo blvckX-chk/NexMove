@@ -1921,7 +1921,9 @@ def test_creercv_routage_deterministe():
     assert main._free_text_to_command("créercv", "Créercv") == "/creercv"
     assert main._free_text_to_command("créer mon cv", "x") == "/creercv"
     assert main._free_text_to_command("tu peux faire mon cv professionnel", "x") == "/creercv"
-    assert main._free_text_to_command("améliore mon cv", "x") == "/creercv"
+    # v3.91 : « améliore mon cv » = demande de CONSEILS sur un CV existant, plus une création
+    # (traitée en amont par _is_doc_followup ; retour terrain : questionnaire lancé à tort).
+    assert main._free_text_to_command("améliore mon cv", "x") != "/creercv"
     # Enchaînement -> on laisse l'orchestrateur LLM (pas de routage direct).
     assert main._free_text_to_command("mon statut puis crée un cv", "x") != "/creercv"
     # Pas de faux positif sur une recherche.
@@ -4443,3 +4445,23 @@ def test_incompris_persistants_v389():
     rows = main.opp_store.list_misses(5)
     assert any(r["text"] == "texte persistant" for r in rows)
     assert any(r.get("text") == "texte persistant" for r in main._misses_recent(5))
+
+
+# --- v3.91 : rôle (tiers), plausibilité des réponses du questionnaire, préférence sans menu ---
+def test_doc_owner_v391():
+    assert main._doc_owner("En tant que conseiller d'orientation senior, analyse moi ce CV que je lui fasse un retour") == "tiers"
+    assert main._doc_owner("voici le CV de ma fille, ton avis ?") == "tiers"
+    assert main._doc_owner("analyse mon CV stp") == "self"
+
+def test_cvbuild_plausible_v391():
+    P = main._cvbuild_plausible
+    assert P("nom", "Ketsia Mensah") and not P("nom", "Conseils pour améliorer le CV de manière générale")
+    assert P("formation", "Licence 3 SPI, ENSIATE, 2026") and not P("formation", "Il est sur le CV envoyé")
+    assert P("experience", "aucune") and P("experience", "Aide-comptable chez Sobebra, 2023")
+    assert not P("competences", "Je veux les codes valide")
+    assert P("langues", "français natif, anglais B2") and not P("langues", "Version")
+
+def test_pref_no_menu_v391():
+    assert main._PREF_NO_MENU.search("pas besoin de me proposer des options")
+    assert main._PREF_NO_MENU.search("arrête les menus stp")
+    assert not main._PREF_NO_MENU.search("quelles options de bourse ?")
