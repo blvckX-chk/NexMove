@@ -1,6 +1,7 @@
 <!doctype html>
 <html lang="fr">
 <head>
+<script>document.documentElement.classList.add('js')</script>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NexMove · Études, emploi, ici ou ailleurs</title>
@@ -35,7 +36,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "NexMove, c'est quoi exactement ?", "acceptedAnswer": {"@type": "Answer", "text": "Un conseiller IA emploi & mobilité que tu utilises dans ta messagerie (Telegram ou WhatsApp). Il analyse ton profil, trouve des opportunités notées, prépare tes dossiers et t'accompagne pas à pas."}}, {"@type": "Question", "name": "Est-ce que c'est gratuit ?", "acceptedAnswer": {"@type": "Answer", "text": "Oui, tu commences gratuitement et tu découvres chaque fonction. L'illimité passe par un abonnement Premium abordable, ou par des packs de crédits à la carte."}}, {"@type": "Question", "name": "Faut-il installer une application ?", "acceptedAnswer": {"@type": "Answer", "text": "Non. Tout se passe dans Telegram ou WhatsApp. Tu peux même interagir à la voix et démarrer sans CV."}}, {"@type": "Question", "name": "Comment le score de compatibilité est-il calculé ?", "acceptedAnswer": {"@type": "Answer", "text": "NexMove compare ton profil (compétences, niveau, langues, objectif) à chaque offre et lui donne une note expliquée : tes points forts, et ce qu'il reste à renforcer. Tu sais pourquoi une offre te correspond, pas juste un chiffre."}}, {"@type": "Question", "name": "D'où viennent les offres ?", "acceptedAnswer": {"@type": "Answer", "text": "De sources locales (Bénin / UEMOA) et internationales : sites carrières, job boards et programmes d'études ou bourses. Les liens morts et les offres hors de ta zone sont écartés avant la notation."}}, {"@type": "Question", "name": "Pas de CV ? Puis-je quand même l'utiliser ?", "acceptedAnswer": {"@type": "Answer", "text": "Oui. Réponds à quelques questions ou dicte ton parcours : NexMove te rédige un CV clair, sans rien inventer, uniquement à partir de ce que tu indiques."}}, {"@type": "Question", "name": "Vous garantissez un visa, une bourse ou un emploi ?", "acceptedAnswer": {"@type": "Answer", "text": "Non, et personne ne peut l'honnêtement. NexMove maximise tes chances et t'évite les erreurs : la décision revient aux écoles, organismes et employeurs."}}, {"@type": "Question", "name": "Que deviennent mes données ?", "acceptedAnswer": {"@type": "Answer", "text": "Elles servent uniquement à t'accompagner, ne sont pas revendues, et tu peux tout effacer à tout moment avec la commande /supprimer. Voir notre politique de confidentialité."}}, {"@type": "Question", "name": "Comment payer ?", "acceptedAnswer": {"@type": "Answer", "text": "Par Mobile Money, en 3 étapes : tu nous écris sur WhatsApp (bouton Payer sur WhatsApp), tu fais le dépôt, on te renvoie un code que tu actives dans le bot (/premium ou /credits), ton accès démarre aussitôt."}}]}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=Geist+Mono:wght@500;700&display=swap" rel="stylesheet">
 <style>
   /* THÈME CLAIR (par défaut) */
   :root{
@@ -67,7 +68,7 @@
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
   body{margin:0;background:var(--bg);color:var(--txt);
-    font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+    font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
   a{color:inherit;text-decoration:none}
   .wrap{max-width:1120px;margin:0 auto;padding:0 20px}
   @media(max-width:560px){.wrap{padding:0 16px}}
@@ -132,10 +133,10 @@
   .hero .wrap{position:relative;z-index:1}
   .hgrid{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center}
   @media(max-width:920px){.hgrid{grid-template-columns:1fr;gap:28px}}
-  .eyebrow{display:inline-flex;align-items:center;gap:.5rem;font-weight:700;font-size:.76rem;letter-spacing:.08em;
+  .eyebrow{font-family:'Geist Mono',ui-monospace,monospace;display:inline-flex;align-items:center;gap:.5rem;font-weight:700;font-size:.76rem;letter-spacing:.08em;
     color:var(--bleu2);text-transform:uppercase}
   .eyebrow::before{content:"";width:8px;height:8px;border-radius:3px;background:var(--or)}
-  h1{font-size:clamp(2.3rem,5.6vw,3.7rem);line-height:1.04;margin:1rem 0 .7rem;font-weight:900;letter-spacing:-.025em}
+  h1{font-family:'Big Shoulders',sans-serif;font-size:clamp(3rem,7.2vw,4.75rem);line-height:.94;margin:1rem 0 .9rem;font-weight:800;letter-spacing:-.01em;text-wrap:balance}
   h1 .accent{color:var(--bleu);position:relative}
   h1 .accent::after{content:"";position:absolute;left:0;right:8%;bottom:-.08em;height:.09em;border-radius:3px;background:var(--bleu);opacity:.5}
   .lead{font-size:clamp(1.02rem,2.1vw,1.18rem);color:var(--gris);max-width:540px}
@@ -176,7 +177,7 @@
   .stat{padding:26px 20px;border-right:1px solid var(--bord)}
   .stat:last-child{border-right:0}
   @media(max-width:760px){.stat{border-right:1px solid var(--bord);border-bottom:1px solid var(--bord)}.stat:nth-child(2n){border-right:0}}
-  .stat .v{font-size:1.5rem;font-weight:900;color:var(--txt)}
+  .stat .v{font-family:'Big Shoulders',sans-serif;font-size:1.75rem;font-weight:800;color:var(--txt)}
   .stat .v .u{color:var(--bleu2)}
   .stat .k{color:var(--gris);font-size:.86rem;margin-top:.25rem}
 
@@ -184,14 +185,14 @@
   section{padding:88px 0}
   .kicker{color:var(--bleu2);font-weight:700;letter-spacing:.09em;text-transform:uppercase;font-size:.76rem}
   .kicker::before{content:"\25C6";color:var(--or);margin-right:.45rem;font-size:.82em}
-  h2{font-size:clamp(1.7rem,3.8vw,2.4rem);margin:.6rem 0 .6rem;font-weight:800;letter-spacing:-.02em}
+  h2{font-family:'Big Shoulders',sans-serif;font-size:clamp(2.1rem,4.8vw,3.1rem);line-height:1;margin:.6rem 0 .7rem;font-weight:800;letter-spacing:-.005em;text-wrap:balance}
   .sub{color:var(--gris);max-width:620px;font-size:1.02rem;line-height:1.6}
 
   /* Feature rows */
   .feat{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:center;padding:46px 0;border-top:1px solid var(--bord)}
   .feat:nth-child(even) .fimg{order:-1}
   @media(max-width:860px){.feat{grid-template-columns:1fr;gap:22px}.feat:nth-child(even) .fimg{order:0}}
-  .fnum{font-size:2.3rem;font-weight:900;color:var(--bleu);line-height:1}
+  .fnum{font-family:'Big Shoulders',sans-serif;font-size:2.6rem;font-weight:800;color:var(--bleu);line-height:1}
   .ftag{color:var(--gris);font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-left:.6rem}
   .feat h3{font-size:1.4rem;margin:.5rem 0 .4rem;font-weight:800}
   .feat p{color:var(--gris);margin:.2rem 0 1rem}
@@ -221,7 +222,7 @@
   .plan.pop{border-color:var(--bleu);box-shadow:var(--ombre)}
   .plan .tag{position:absolute;top:-12px;right:18px;background:var(--ambre);color:#0b1226;font-weight:800;font-size:.72rem;padding:.25rem .7rem;border-radius:999px}
   .plan h3{margin:0 0 .3rem;font-size:1.15rem}
-  .plan .p{font-size:2rem;font-weight:900;margin:.2rem 0}
+  .plan .p{font-family:'Big Shoulders',sans-serif;font-size:2.4rem;font-weight:800;margin:.2rem 0}
   .plan .p small{font-size:.86rem;color:var(--gris);font-weight:600}
   .plan ul{list-style:none;padding:0;margin:1rem 0 1.4rem}
   .plan li{padding:.34rem 0;color:var(--gris);display:flex;gap:.5rem;font-size:.95rem}
@@ -249,18 +250,20 @@
   .foot a:hover{color:var(--txt)}
   .disc{font-size:.8rem;color:#6b7695;margin-top:16px;line-height:1.5}
 
-  .reveal{opacity:0;transform:translateY(16px);transition:opacity .6s ease,transform .6s ease}
-  .reveal.in{opacity:1;transform:none}
-  @media (prefers-reduced-motion:reduce){.reveal{opacity:1;transform:none;transition:none}}
+  .js .reveal{opacity:0;transform:translateY(32px);transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1)}
+  .js .reveal.in{opacity:1;transform:none}
+  @media (prefers-reduced-motion:reduce){.js .reveal{opacity:1;transform:none;transition:none}}
 
   /* Bandeau d'annonce (lancement Campus France) */
-  .annonce{background:linear-gradient(90deg,var(--bleu),#1e3a8a);color:#fff}
+  .skip{position:absolute;left:-999px;top:8px;z-index:100;background:var(--bleu);color:#fff;padding:8px 12px;border-radius:8px;font-weight:700}
+  .skip:focus{left:12px}
+  .annonce{background:var(--bleu);color:#fff}
   .annonce .wrap{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;justify-content:center;padding:10px 20px;font-size:.92rem;text-align:center}
   .annonce strong{color:#fff}
   .annonce a{color:#fff;font-weight:800;white-space:nowrap;border-bottom:2px solid rgba(255,255,255,.6)}
   .annonce a:hover{border-color:#fff}
   .pill-new{background:var(--ambre);color:#06281a;font-weight:800;font-size:.7rem;letter-spacing:.04em;text-transform:uppercase;padding:.15rem .55rem;border-radius:999px;flex:0 0 auto}
-  .annonce .wrap{position:relative}
+  .annonce .wrap{position:relative;padding-right:48px;padding-left:48px}
   .annonce-close{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:#fff;font-size:1.4rem;line-height:1;cursor:pointer;opacity:.8;padding:.1rem .3rem}
   .annonce-close:hover{opacity:1}
   .annonce.is-hidden{display:none}
@@ -274,13 +277,14 @@
     .cta-row .btn{flex:1 1 100%;justify-content:center}
     .price{gap:16px}
     .feat{padding:30px 0}
-    h1{font-size:clamp(2rem,8.5vw,2.6rem)}
+    h1{font-size:clamp(2.6rem,11vw,3.2rem)}
     .mock,.fimg{box-shadow:var(--ombre-sm)}
   }
 </style>
 </head>
 <!-- data-wa = numero du BOT WhatsApp (reponses auto) · data-pay = numero PERSO qui recoit les paiements -->
 <body data-bot="nex_move_bot" data-wa="22962118761" data-pay="22994078765">
+<a class="skip" href="#top">Aller au contenu</a>
 <div class="motif" aria-hidden="true"></div>
 <header>
   <div class="wrap nav">
@@ -312,7 +316,7 @@
     <div class="wrap">
       <span class="pill-new">Nouveau</span>
       <span>Campagne <strong>Études en France</strong> : prépare ton dossier Campus France, ta lettre et ton entretien avec NexMove.</span>
-      <a class="js-start" href="#">Démarrer gratuitement →</a>
+      <a class="js-start" href="https://t.me/nex_move_bot">Démarrer gratuitement →</a>
       <button class="annonce-close" id="annonceClose" type="button" aria-label="Masquer ce bandeau" title="Masquer">×</button>
     </div>
   </div>
@@ -326,8 +330,8 @@
           <h1>Postule moins au hasard.<br><span class="accent">Décroche plus : emploi, études, mobilité.</span></h1>
           <p class="lead">NexMove lit ton CV, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), les <strong>note selon ton profil</strong> et prépare chaque dossier : lettre, CV adapté, entretien. Dans ta messagerie, sans app.</p>
           <div class="cta-row">
-            <a class="btn btn-amb js-start" href="#">Démarrer sur Telegram</a>
-            <a class="btn js-wa" href="#" style="background:#25D366;color:#06281a;border:none;font-weight:700">Ouvrir sur WhatsApp</a>
+            <a class="btn btn-amb js-start" href="https://t.me/nex_move_bot">Démarrer sur Telegram</a>
+            <a class="btn js-wa" href="https://wa.me/22962118761" style="background:#25D366;color:#06281a;border:none;font-weight:700">Ouvrir sur WhatsApp</a>
           </div>
           <div style="margin-top:.5rem"><a class="btn btn-ghost" href="#comment" style="padding:.3rem 0;background:none;border:none;color:var(--gris)">Voir comment ça marche ↓</a></div>
           <div class="trust">
@@ -465,7 +469,7 @@
         <div class="plan"><div class="fnum">2</div><h3 style="margin-top:.4rem">Envoie ton CV</h3><p style="color:var(--gris)">Ou dis-nous ton parcours. Pas de CV ? NexMove t'en crée un.</p></div>
         <div class="plan"><div class="fnum">3</div><h3 style="margin-top:.4rem">Avance, accompagné·e</h3><p style="color:var(--gris)">Opportunités notées, dossiers prêts, entretiens, jusqu'au départ.</p></div>
       </div>
-      <div style="margin-top:26px"><a class="btn btn-amb js-start" href="#">Essayer maintenant, c'est gratuit</a></div>
+      <div style="margin-top:26px"><a class="btn btn-amb js-start" href="https://t.me/nex_move_bot">Essayer maintenant, c'est gratuit</a></div>
     </div>
   </section>
 
@@ -480,7 +484,7 @@
         <div class="plan"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" style="margin-bottom:.3rem"><path d="M4 5h16v11H9l-5 4V5z" stroke="var(--bleu2)" stroke-width="2" stroke-linejoin="round"/></svg><p style="color:var(--txt);margin:.4rem 0"><em>« Prépare ma lettre pour cette offre »</em></p><p style="color:var(--gris)">Lettre + CV adaptés aux mots-clés du poste, prêts à relire.</p></div>
         <div class="plan"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" style="margin-bottom:.3rem"><path d="M4 5h16v11H9l-5 4V5z" stroke="var(--bleu2)" stroke-width="2" stroke-linejoin="round"/></svg><p style="color:var(--txt);margin:.4rem 0"><em>« Mes chances pour une bourse au Canada ? »</em></p><p style="color:var(--gris)">Il évalue, explique ce qui manque et te donne les étapes.</p></div>
       </div>
-      <div style="margin-top:22px"><a class="btn js-wa" href="#" style="background:#25D366;color:#06281a;border:none;font-weight:700">Essayer sur WhatsApp</a></div>
+      <div style="margin-top:22px"><a class="btn js-wa" href="https://wa.me/22962118761" style="background:#25D366;color:#06281a;border:none;font-weight:700">Essayer sur WhatsApp</a></div>
     </div>
   </section>
 
@@ -494,23 +498,23 @@
         <div class="plan">
           <h3>Gratuit</h3><div class="p">0 <small>FCFA</small></div>
           <ul><li>Analyse de CV</li><li>Découverte des opportunités</li><li>Guides &amp; conseils de base</li><li>Un aperçu de chaque fonction</li></ul>
-          <a class="btn btn-ghost js-start" href="#" style="width:100%;justify-content:center">Démarrer</a>
+          <a class="btn btn-ghost js-start" href="https://t.me/nex_move_bot" style="width:100%;justify-content:center">Démarrer</a>
         </div>
         <div class="plan pop">
           <span class="tag">Le plus choisi</span>
           <h3>Premium</h3><div class="p">3 500 <small>FCFA / mois</small></div>
           <ul><li>Opportunités &amp; matching illimités</li><li>Score, compatibilité &amp; simulations</li><li>Dossiers complets (CV + lettre + projet)</li><li>Alertes personnalisées &amp; suivi</li></ul>
-          <a class="btn btn-blue js-pay" href="#" data-msg="Bonjour, je veux passer au Premium NexMove (3 500 FCFA/mois). Comment faire le paiement ?" style="width:100%;justify-content:center">Passer au Premium</a>
+          <a class="btn btn-blue js-pay" href="https://wa.me/22994078765" data-msg="Bonjour, je veux passer au Premium NexMove (3 500 FCFA/mois). Comment faire le paiement ?" style="width:100%;justify-content:center">Passer au Premium</a>
         </div>
         <div class="plan">
           <h3>Pro</h3><div class="p">8 900 <small>FCFA / mois</small></div>
           <ul><li>Tout le Premium</li><li>Priorité &amp; volumes élevés</li><li>Accompagnement mobilité renforcé</li><li>Idéal candidatures intensives</li></ul>
-          <a class="btn btn-ghost js-pay" href="#" data-msg="Bonjour, je veux l'offre Pro NexMove (8 900 FCFA/mois). Comment faire le paiement ?" style="width:100%;justify-content:center">Choisir Pro</a>
+          <a class="btn btn-ghost js-pay" href="https://wa.me/22994078765" data-msg="Bonjour, je veux l'offre Pro NexMove (8 900 FCFA/mois). Comment faire le paiement ?" style="width:100%;justify-content:center">Choisir Pro</a>
         </div>
       </div>
       <div class="creditbox">
         <div class="txt"><b>Pas envie d'abonnement ?</b> Prends un <b>pack de crédits</b> : 1 crédit = 1 action (analyse CV, score, simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas. <span style="color:var(--gris)">Écris-nous sur WhatsApp, fais le dépôt Mobile Money, reçois ton code.</span></div>
-        <a class="btn js-pay" href="#" data-msg="Bonjour, je veux acheter un pack de crédits NexMove. Comment faire le paiement ?" style="background:#25D366;color:#06281a;border:none;font-weight:700">Payer sur WhatsApp</a>
+        <a class="btn js-pay" href="https://wa.me/22994078765" data-msg="Bonjour, je veux acheter un pack de crédits NexMove. Comment faire le paiement ?" style="background:#25D366;color:#06281a;border:none;font-weight:700">Payer sur WhatsApp</a>
       </div>
       <div class="creditbox" style="margin-top:16px">
         <div class="txt">
@@ -519,8 +523,8 @@
           <span style="color:var(--gris)">
           Ce qui change, c'est le <b>moteur IA</b> derrière :
           en <b>Gratuit</b>, on utilise des modèles rapides et solides (Cerebras, Groq, Google Gemini) ;
-          en <b>Premium / Pro</b>, tes documents clés (CV, lettre, projet d'études) et les analyses sont rédigés par nos <b>modèles premium</b> (GPT-4o, Claude, Gemini Pro) — plus fins, plus naturels, meilleure qualité du livrable que tu envoies.
-          Dans tous les cas, repli automatique : jamais de panne.</span>
+          en <b>Premium / Pro</b>, tes documents clés (CV, lettre, projet d'études) et les analyses sont rédigés par nos <b>modèles premium</b> (plus puissants) : plus fins, plus naturels, meilleure qualité du livrable que tu envoies.
+          Dans tous les cas, repli automatique sur un autre modèle si l'un est indisponible.</span>
         </div>
       </div>
       <p class="disc">NexMove <strong>accompagne</strong> ta démarche : il augmente tes chances, mais l'admission, la bourse, le visa ou l'emploi restent la décision des organismes et employeurs.</p>
@@ -535,7 +539,7 @@
       <div style="margin-top:22px">
         <details open><summary>NexMove, c'est quoi exactement ?</summary><p>Un conseiller IA emploi & mobilité que tu utilises dans ta messagerie (Telegram ou WhatsApp). Il analyse ton profil, trouve des opportunités notées, prépare tes dossiers et t'accompagne pas à pas.</p></details>
         <details><summary>Est-ce que c'est gratuit ?</summary><p>Oui, tu commences gratuitement et tu découvres chaque fonction. L'illimité passe par un abonnement Premium abordable, ou par des packs de crédits à la carte.</p></details>
-        <details><summary>Quelle différence IA entre le Gratuit et le Premium ?</summary><p>La <strong>logique</strong> est la même pour tous : analyse, matching noté, rédaction sans invention, lecture d'images. Ce qui change, c'est le moteur : en <strong>Gratuit</strong>, des modèles rapides et solides (Cerebras, Groq, Google Gemini) ; en <strong>Premium / Pro</strong>, tes documents clés et analyses passent par des <strong>modèles premium</strong> (GPT-4o, Claude, Gemini Pro) pour une meilleure qualité du livrable. Repli automatique dans tous les cas : jamais de panne.</p></details>
+        <details><summary>Quelle différence IA entre le Gratuit et le Premium ?</summary><p>La <strong>logique</strong> est la même pour tous : analyse, matching noté, rédaction sans invention, lecture d'images. Ce qui change, c'est le moteur : en <strong>Gratuit</strong>, des modèles rapides et solides (Cerebras, Groq, Google Gemini) ; en <strong>Premium / Pro</strong>, tes documents clés et analyses passent par des <strong>modèles premium</strong> (plus puissants) pour une meilleure qualité du livrable. Repli automatique sur un autre modèle si l'un est indisponible.</p></details>
         <details><summary>Faut-il installer une application ?</summary><p>Non. Tout se passe dans Telegram ou WhatsApp. Tu peux même interagir à la voix et démarrer sans CV.</p></details>
         <details><summary>Comment le score de compatibilité est-il calculé ?</summary><p>NexMove compare ton profil (compétences, niveau, langues, objectif) à chaque offre et lui donne une note expliquée : tes points forts, et ce qu'il reste à renforcer. Tu sais <strong>pourquoi</strong> une offre te correspond, pas juste un chiffre.</p></details>
         <details><summary>D'où viennent les offres ?</summary><p>De sources locales (Bénin / UEMOA) et internationales : sites carrières, job boards et programmes d'études/bourses. Les liens morts et les offres hors de ta zone sont écartés avant la notation.</p></details>
@@ -571,7 +575,7 @@
         </div>
         <div class="plan" style="display:flex;flex-direction:column;justify-content:center;text-align:center;border-style:dashed">
           <p style="color:var(--gris);font-size:1rem;line-height:1.5">Les prochains retours s'afficheront ici.<br>Ton expérience peut aider d'autres candidats.</p>
-          <div style="margin-top:1rem"><a class="btn btn-ghost js-pay" data-msg="Bonjour, je veux laisser un témoignage sur mon expérience NexMove :" href="#">Laisser mon témoignage</a></div>
+          <div style="margin-top:1rem"><a class="btn btn-ghost js-pay" data-msg="Bonjour, je veux laisser un témoignage sur mon expérience NexMove :" href="https://wa.me/22994078765">Laisser mon témoignage</a></div>
         </div>
       </div>
     </div>
@@ -593,12 +597,12 @@
           <span class="tag">Premium offert</span>
           <h3>2. Demande ton code</h3>
           <p style="color:var(--gris)">Écris-nous en message privé : on t'envoie ton code Premium et on t'explique comment tester.</p>
-          <a class="btn btn-blue js-pay" data-msg="Bonjour, je veux devenir testeur NexMove et obtenir mon code Premium. J'ai rejoint le groupe des testeurs." href="#" style="width:100%;justify-content:center">Demander mon code Premium</a>
+          <a class="btn btn-blue js-pay" data-msg="Bonjour, je veux devenir testeur NexMove et obtenir mon code Premium. J'ai rejoint le groupe des testeurs." href="https://wa.me/22994078765" style="width:100%;justify-content:center">Demander mon code Premium</a>
         </div>
         <div class="plan">
           <h3>3. Donne ton retour</h3>
           <p style="color:var(--gris)">Dans le bot, tape <code>/bug</code> pour signaler un souci ou <code>/contact</code> pour une idée. Chaque retour compte.</p>
-          <a class="btn btn-ghost js-start" href="#" style="width:100%;justify-content:center">Ouvrir le bot</a>
+          <a class="btn btn-ghost js-start" href="https://t.me/nex_move_bot" style="width:100%;justify-content:center">Ouvrir le bot</a>
         </div>
       </div>
       <p class="sub" style="margin-top:18px;font-size:.92rem">En devenant testeur, tu t'engages simplement à utiliser le bot et à partager tes retours honnêtes (bugs, idées, et si tu le souhaites, un témoignage). Les codes sont en nombre limité.</p>
@@ -615,18 +619,18 @@
         <div class="plan">
           <h3>1. Dépose ton offre</h3>
           <p style="color:var(--gris)">Dans le bot, tape <code>/publier</code> (ou écris « je veux publier une offre »). On te pose quelques questions et c'est prêt.</p>
-          <a class="btn btn-ghost js-start" href="#" style="width:100%;justify-content:center">Ouvrir le bot</a>
+          <a class="btn btn-ghost js-start" href="https://t.me/nex_move_bot" style="width:100%;justify-content:center">Ouvrir le bot</a>
         </div>
         <div class="plan pop">
           <span class="tag">Crédits de diffusion</span>
           <h3>2. Achète tes crédits</h3>
           <p style="color:var(--gris)">Écris-nous sur WhatsApp : on te remet un code de crédits et on règle le paiement ensemble. 1 diffusion = quelques crédits selon l'audience.</p>
-          <a class="btn btn-blue js-pay" data-msg="Bonjour, je suis recruteur et je veux acheter des crédits de diffusion d'offres sur NexMove." href="#" style="width:100%;justify-content:center">Acheter des crédits</a>
+          <a class="btn btn-blue js-pay" data-msg="Bonjour, je suis recruteur et je veux acheter des crédits de diffusion d'offres sur NexMove." href="https://wa.me/22994078765" style="width:100%;justify-content:center">Acheter des crédits</a>
         </div>
         <div class="plan">
           <h3>3. On diffuse</h3>
           <p style="color:var(--gris)">Ton offre est vérifiée puis envoyée aux candidats correspondants. Tu reçois une confirmation avec le nombre de candidats touchés.</p>
-          <a class="btn btn-ghost js-pay" data-msg="Bonjour, j'ai une question sur la diffusion d'offres NexMove." href="#" style="width:100%;justify-content:center">Nous écrire</a>
+          <a class="btn btn-ghost js-pay" data-msg="Bonjour, j'ai une question sur la diffusion d'offres NexMove." href="https://wa.me/22994078765" style="width:100%;justify-content:center">Nous écrire</a>
         </div>
       </div>
       <p class="sub" style="margin-top:18px;font-size:.92rem">Les offres sont vérifiées avant diffusion. Paiement par mobile money / contact WhatsApp. Le coût exact d'une diffusion dépend de l'audience visée (candidats ciblés ou diffusion large).</p>
@@ -643,18 +647,18 @@
         <div class="plan">
           <h3>Proposer une idée</h3>
           <p style="color:var(--gris)">Une fonction qui te manque, un retour, un bug repéré ? Dis-le-nous : on construit NexMove avec ses utilisateurs.</p>
-          <a class="btn btn-ghost js-pay" data-msg="Bonjour, j'ai une idée ou un retour pour améliorer NexMove :" href="#" style="width:100%;justify-content:center">Partager mon idée</a>
+          <a class="btn btn-ghost js-pay" data-msg="Bonjour, j'ai une idée ou un retour pour améliorer NexMove :" href="https://wa.me/22994078765" style="width:100%;justify-content:center">Partager mon idée</a>
         </div>
         <div class="plan pop">
           <span class="tag">Merci</span>
           <h3>Soutenir le projet</h3>
           <p style="color:var(--gris)">Tu veux aider NexMove à grandir (coup de main, financement, mentorat, visibilité) ? Parlons-en directement.</p>
-          <a class="btn btn-blue js-pay" data-msg="Bonjour, je souhaite soutenir le projet NexMove. Voici comment je peux aider :" href="#" style="width:100%;justify-content:center">Je soutiens</a>
+          <a class="btn btn-blue js-pay" data-msg="Bonjour, je souhaite soutenir le projet NexMove. Voici comment je peux aider :" href="https://wa.me/22994078765" style="width:100%;justify-content:center">Je soutiens</a>
         </div>
         <div class="plan">
           <h3>Devenir partenaire</h3>
           <p style="color:var(--gris)">École, ONG, entreprise ou ambassadeur·rice : collaborons pour accompagner plus de jeunes vers leur prochain move.</p>
-          <a class="btn btn-ghost js-pay" data-msg="Bonjour, je représente une structure et je souhaite un partenariat avec NexMove." href="#" style="width:100%;justify-content:center">Devenir partenaire</a>
+          <a class="btn btn-ghost js-pay" data-msg="Bonjour, je représente une structure et je souhaite un partenariat avec NexMove." href="https://wa.me/22994078765" style="width:100%;justify-content:center">Devenir partenaire</a>
         </div>
       </div>
     </div>
@@ -668,8 +672,8 @@
         <h2>Ton prochain move commence maintenant</h2>
         <p>Études, emploi, ici ou ailleurs : ton conseiller pour ton prochain move. Gratuit pour démarrer.</p>
         <div class="cta-row" style="justify-content:center">
-          <a class="btn btn-amb js-start" href="#">Démarrer sur Telegram</a>
-          <a class="btn js-wa" href="#" style="background:#25D366;color:#06281a;border:none;font-weight:700">Ouvrir sur WhatsApp</a>
+          <a class="btn btn-amb js-start" href="https://t.me/nex_move_bot">Démarrer sur Telegram</a>
+          <a class="btn js-wa" href="https://wa.me/22962118761" style="background:#25D366;color:#06281a;border:none;font-weight:700">Ouvrir sur WhatsApp</a>
         </div>
       </div>
     </div>
@@ -689,8 +693,8 @@
         <a href="cgu.html">CGU</a>
         <a href="confidentialite.html">Confidentialité</a>
         <a href="mentions.html">Mentions légales</a>
-        <a class="js-start" href="#">Telegram</a>
-        <a class="js-wa" href="#">WhatsApp</a>
+        <a class="js-start" href="https://t.me/nex_move_bot">Telegram</a>
+        <a class="js-wa" href="https://wa.me/22962118761">WhatsApp</a>
       </div>
     </div>
     <p class="disc">NexMove est un conseiller conversationnel basé sur l'IA. NexMove n'est pas affilié à Campus France, à IRCC, aux ambassades ni à aucun organisme officiel ; il aide à préparer les démarches, sans s'y substituer. © <span id="y"></span> blvckUnlimited. Tous droits réservés.</p>

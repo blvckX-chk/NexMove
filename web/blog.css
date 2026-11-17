@@ -21,7 +21,7 @@
 *{box-sizing:border-box}
 html{scroll-behavior:smooth}
 body{margin:0;background:var(--bg);color:var(--txt);line-height:1.7;
-  font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+  font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased}
 a{color:var(--bleu)}
 .wrap{max-width:760px;margin:0 auto;padding:0 20px}
 @media(max-width:560px){.wrap{padding:0 16px}}
@@ -43,7 +43,7 @@ main{padding:14px 0 56px}
 .crumb a:hover{color:var(--txt)}
 .kicker{color:var(--bleu2);font-weight:700;letter-spacing:.09em;text-transform:uppercase;font-size:.74rem;margin-top:14px}
 .kicker::before{content:"\25C6";color:var(--or);margin-right:.45rem;font-size:.82em}
-h1{font-size:clamp(1.9rem,4.6vw,2.6rem);line-height:1.12;letter-spacing:-.02em;margin:.4rem 0 .5rem;font-weight:900}
+h1{font-family:'Big Shoulders',sans-serif;font-size:clamp(2.5rem,6vw,3.4rem);line-height:1;letter-spacing:-.005em;margin:.4rem 0 .6rem;font-weight:800;text-wrap:balance}
 .lead{color:var(--gris);font-size:1.12rem;margin:.2rem 0 1.4rem}
 article h2{font-size:1.4rem;margin:2.2rem 0 .6rem;letter-spacing:-.01em;font-weight:800}
 article h3{font-size:1.1rem;margin:1.5rem 0 .4rem;font-weight:700}

@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.90 — Système visuel « Mobilité éditoriale » + vitrine revue (landing-page-design)
+- **Identité versionnée** (`brand/`) : charte écrite, gabarits HERO v2 (1080×1080), posts de campagne 4:5 paramétrables, image de partage `og` (1200×630), et `brand/tools/render.sh` qui génère tout le set en une commande. Fini les visuels perdus avec un dossier temporaire. Le logo officiel se dépose dans `brand/assets/mark.png` (emplacement signalé tant qu'il manque, jamais de faux logo).
+- **Vitrine alignée sur la charte** : Big Shoulders (titres et chiffres), Instrument Sans (texte), Geist Mono (labels) à la place d'Inter, sur l'accueil, les pages légales, les guides et l'admin.
+- **Liens jamais morts** : les 22 boutons remplis par script (Telegram, WhatsApp, paiement) ont une vraie adresse par défaut.
+- **Contenu toujours visible** : les animations d'apparition ne masquent plus rien si le script ne se charge pas (sections auparavant vides).
+- **Promesse exacte** : les noms de modèles non garantis (« GPT-4o, Claude, Gemini Pro ») et le « jamais de panne » sont remplacés par une formulation vraie.
+- **Page 404** de marque (`web/404.html`, `not_found_handling` Cloudflare), lien « Aller au contenu » pour la navigation clavier, bandeau à fond plat dont la croix ne chevauche plus le texte sur mobile.
+
 ## v3.89 — Audit système : sécurité des webhooks, déduplication, incompris persistants
 - **Sécurité** : sur WhatsApp/Messenger, l'admin est reconnu à son *numéro* (devinable). Tant que `META_APP_SECRET` n'est pas configuré, les webhooks ne sont pas signés : les **droits admin sont désormais refusés sur ces canaux** (Telegram non concerné). Le message de démarrage avertit l'admin si `META_APP_SECRET` ou `TELEGRAM_WEBHOOK_SECRET` manque.
 - **Déduplication** des événements entrants (WhatsApp, Messenger, Telegram) : une relivraison ne déclenche plus une double analyse de CV / double quota / double réponse (cache partagé entre workers, 1 h).
