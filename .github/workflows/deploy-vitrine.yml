@@ -1,14 +1,12 @@
 name: Déploiement vitrine (Cloudflare)
 
-# Publie la vitrine statique (web/) sur Cloudflare Workers à chaque merge sur main.
-# Remplace le build Git intégré de Cloudflare, qui échouait en 0 s sans journal.
+# Publication de SECOURS de la vitrine (web/) sur Cloudflare Workers, lancée à la main
+# (onglet Actions > Run workflow). La publication normale est faite par le build Git
+# intégré de Cloudflare à chaque merge sur main.
 # Secrets requis (Settings > Secrets and variables > Actions) :
 #   CLOUDFLARE_API_TOKEN   jeton API avec le modèle « Edit Cloudflare Workers »
 #   CLOUDFLARE_ACCOUNT_ID  identifiant du compte (visible dans l'URL du tableau de bord)
 on:
-  push:
-    branches: [main]
-    paths: ["web/**", "wrangler.toml", ".github/workflows/deploy-vitrine.yml"]
   workflow_dispatch:
 
 concurrency:

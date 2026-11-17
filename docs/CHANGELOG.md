@@ -6,6 +6,7 @@ Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'
 - **Clé API** : l'ancienne valeur d'exemple `forge_nex_secret_2026` (publiée dans le dépôt public) est désormais **refusée** par l'API ; sans clé, `/api/*` est fermé dès qu'un canal est configuré. Alerte admin au démarrage si la clé est absente, publique ou trop courte. `.env.example`, docs et workflows n8n ne contiennent plus de valeur (les workflows lisent `{{ $env.FORGE_NEX_KEY }}`).
 - **Panneau admin** : échappement de toutes les valeurs issues des utilisateurs (sources marketing, répartitions) — fermait une injection HTML possible via `/start src_…` ; clé gardée pour l'onglet seulement (sessionStorage).
 - **Vitrine** : en-têtes de sécurité `web/_headers` (HSTS, CSP, anti-iframe, nosniff, Referrer/Permissions-Policy, admin non indexé et non mis en cache). Vérifié : aucune page ne casse sous la CSP.
+- **Publication de la vitrine** : le build Git intégré de Cloudflare fonctionne de nouveau et reste la voie normale. Le workflow GitHub devient une publication de secours lancée à la main (plus d'e-mails d'échec à chaque merge). `version.txt` affiche 3.95.
 - Fiche `docs/SECURITE.md` : ce qui est public, ce qui ne doit pas l'être, comment changer la clé et vérifier.
 
 ## v3.94 — « Qui t'a créé ? » : réponse fixe · contact de l'équipe sur la vitrine · version vérifiable
