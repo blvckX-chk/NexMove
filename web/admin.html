@@ -136,7 +136,7 @@
 
   <div class="foot">
     Données agrégées (aucune info personnelle). Version <span id="ver">—</span> · maj <span id="ts">—</span>.<br>
-    API : <code id="api-url"></code>. La clé reste dans ce navigateur (localStorage), elle n'est jamais partagée.
+    API : <code id="api-url"></code>. La clé reste dans cet onglet (sessionStorage) : elle est oubliée à sa fermeture et n’est jamais partagée.
   </div>
 </div>
 
@@ -150,7 +150,7 @@
 
   var keyInput = document.getElementById("key");
   var msg = document.getElementById("msg");
-  try { keyInput.value = localStorage.getItem("nexmove_admin_key") || ""; } catch(e){}
+  try { keyInput.value = sessionStorage.getItem("nexmove_admin_key") || ""; } catch(e){}
 
   function setMsg(html){ msg.innerHTML = html || ""; }
   function num(n){ return (n===undefined||n===null) ? "—" : n; }
@@ -158,7 +158,7 @@
   async function load(){
     var key = keyInput.value.trim();
     if(!key){ setMsg('<div class="err">Entre ta clé admin.</div>'); return; }
-    try { localStorage.setItem("nexmove_admin_key", key); } catch(e){}
+    try { sessionStorage.setItem("nexmove_admin_key", key); localStorage.removeItem("nexmove_admin_key"); } catch(e){}
     setMsg('<div class="muted">Chargement…</div>');
     try{
       var r = await fetch(API, { headers: { "X-Forge-Nex-Key": key } });
@@ -181,7 +181,7 @@
       var chart = document.getElementById("chart"); chart.innerHTML = "";
       serie.forEach(function(p){
         var col = document.createElement("div");
-        col.title = p.date+" : "+p.n;
+        col.title = String(p.date)+" : "+Number(p.n);
         col.style.cssText = "flex:1;background:var(--bleu);border-radius:4px 4px 0 0;min-height:3px;height:"+Math.round(100*p.n/maxN)+"%";
         chart.appendChild(col);
       });
@@ -192,7 +192,7 @@
         entries.forEach(function(kv){
           var row = document.createElement("div");
           row.style.cssText = "display:flex;justify-content:space-between;padding:.3rem 0;border-bottom:1px solid var(--bord)";
-          row.innerHTML = "<span>"+kv[0]+"</span><strong>"+kv[1]+"</strong>";
+          row.innerHTML = "<span>"+esc(kv[0])+"</span><strong>"+esc(kv[1])+"</strong>";
           el.appendChild(row);
         });
       }
@@ -206,7 +206,7 @@
       var body = document.getElementById("src-body"); body.innerHTML = "";
       (d.sources_marketing||[]).forEach(function(s){
         var tr = document.createElement("tr");
-        tr.innerHTML = "<td><code>"+s.source+"</code></td><td>"+s.total+"</td><td>"+s.onboarded+"</td><td>"+s.paid+"</td>";
+        tr.innerHTML = "<td><code>"+esc(s.source)+"</code></td><td>"+esc(s.total)+"</td><td>"+esc(s.onboarded)+"</td><td>"+esc(s.paid)+"</td>";
         body.appendChild(tr);
       });
       document.getElementById("src-count").textContent = (d.sources_marketing||[]).length + " sources";
@@ -270,7 +270,7 @@
 
   document.getElementById("load").addEventListener("click", load);
   document.getElementById("logout").addEventListener("click", function(){
-    try{ localStorage.removeItem("nexmove_admin_key"); }catch(e){} keyInput.value=""; setMsg('<div class="muted">Clé oubliée.</div>');
+    try{ sessionStorage.removeItem("nexmove_admin_key"); localStorage.removeItem("nexmove_admin_key"); }catch(e){} keyInput.value=""; setMsg('<div class="muted">Clé oubliée.</div>');
   });
   keyInput.addEventListener("keydown", function(e){ if(e.key==="Enter") load(); });
   if(keyInput.value) load();

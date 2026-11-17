@@ -90,7 +90,7 @@ CEREBRAS_API_KEY=
 GEMINI_API_KEY=AIza...          # recommandé (fallback + embeddings sémantiques)
 
 # --- Sécurité API ---
-FORGE_NEX_API_KEY=forge_nex_secret_2026   # header X-Forge-Nex-Key
+FORGE_NEX_API_KEY=<clé aléatoire, 32+ caractères>   # header X-Forge-Nex-Key
 
 # --- Telegram (token ACTUEL du bot) ---
 TELEGRAM_TOKEN=123456:AA...
@@ -152,7 +152,7 @@ jamais un tunnel éphémère (c'était la cause du bug « Provided secret is not
   - texte / bouton → `POST http://host.docker.internal:8000/api/chat` (JSON : `user_id`, `chat_id`,
     `username`, `text`, `message_type`, `callback_data`, `callback_id`, `message_id`).
 - **Pas de node d'envoi** : c'est FastAPI qui répond directement à Telegram.
-- Header sur chaque requête : `X-Forge-Nex-Key: forge_nex_secret_2026`.
+- Header sur chaque requête : `X-Forge-Nex-Key: $FORGE_NEX_API_KEY`.
 - Le JSON du workflow est dans `workflows/WF1_Onboarding_Telegram.json`.
 
 > Règle d'or : **un seul** workflow avec Telegram Trigger actif (WF1). Ne jamais relancer `setWebhook` à la
@@ -177,7 +177,7 @@ curl -s http://localhost:8000/health | python3 -m json.tool | grep version
 
 # Bot : sur Telegram, /start → envoyer un CV PDF → répondre Oui → voir le bilan + 3 pistes
 # Veille manuelle
-curl -s -X POST http://localhost:8000/api/collect -H "X-Forge-Nex-Key: forge_nex_secret_2026" | python3 -m json.tool
+curl -s -X POST http://localhost:8000/api/collect -H "X-Forge-Nex-Key: $FORGE_NEX_API_KEY" | python3 -m json.tool
 
 # Embeddings actifs ?
 docker exec forge-nex-api python -c "import asyncio,main; print('vecteur' if asyncio.run(main.embed_text('test')) else 'lexical')"

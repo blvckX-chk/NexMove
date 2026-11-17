@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.94.0"
+VERSION         = "3.95.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -215,10 +215,33 @@ def check_rate_limit(user_id: str, max_calls: int = 20, window_sec: int = 60) ->
 
 api_key_header = APIKeyHeader(name="X-Forge-Nex-Key", auto_error=False)
 
+# Valeurs d'exemple publiées dans le dépôt public (docs, .env.example, anciens workflows n8n) :
+# n'importe qui les connaît, elles ne doivent JAMAIS ouvrir l'API.
+_PUBLIC_API_KEYS = {"forge_nex_secret_2026", "change-me", "changeme", "test", "secret"}
+
+def _api_key_problem() -> str:
+    """Raison pour laquelle la clé API n'est pas sûre ('' si elle l'est)."""
+    k = FORGE_NEX_API_KEY
+    if not k:
+        return "absente"
+    if k.lower() in _PUBLIC_API_KEYS:
+        return "publique (valeur d'exemple du dépôt)"
+    if len(k) < 24:
+        return "trop courte (< 24 caractères)"
+    return ""
+
+def _is_production() -> bool:
+    return bool(TELEGRAM_TOKEN or WHATSAPP_TOKEN or MESSENGER_TOKEN)
+
 async def verify_api_key(api_key: str = Security(api_key_header)):
     if not FORGE_NEX_API_KEY:
+        if _is_production():
+            # Fermé par défaut : sans clé, un bot en ligne exposerait les sessions et le broadcast.
+            raise HTTPException(status_code=503, detail="Clé API non configurée")
         logger.warning("FORGE_NEX_API_KEY non configurée · mode dev")
         return True
+    if FORGE_NEX_API_KEY.lower() in _PUBLIC_API_KEYS:
+        raise HTTPException(status_code=503, detail="Clé API à changer (valeur publique)")
     if not api_key or not secrets.compare_digest(api_key, FORGE_NEX_API_KEY):
         raise HTTPException(status_code=401, detail="Clé API invalide")
     return True
@@ -4202,7 +4225,8 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         if arg.lower().startswith("src_"):
             # Attribution marketing : on garde la PREMIÈRE source vue (ne pas écraser).
             if not session.get("source"):
-                session["source"] = arg[:64]
+                # Texte libre tapé par l'utilisateur : on ne garde que [A-Za-z0-9_-] (affiché dans l'admin).
+                session["source"] = re.sub(r"[^A-Za-z0-9_-]", "", arg)[:64]
         elif arg:
             arg = arg.replace("ref_", "").replace("ref-", "")
             try:
@@ -11324,6 +11348,12 @@ async def _startup_alert():
                             "(droits admin désactivés sur ces canaux). Ajoute la *clé secrète* de l'app Meta.")
             if not TELEGRAM_WEBHOOK_SECRET:
                 warn.append("⚠️ `TELEGRAM_WEBHOOK_SECRET` absent : webhook Telegram non authentifié.")
+            kp = _api_key_problem()
+            if kp:
+                warn.append(f"🚨 `FORGE_NEX_API_KEY` {kp} : les routes /api/* sont *bloquées* tant qu'elle "
+                            "n'est pas remplacée par une clé longue et aléatoire (voir docs/SECURITE.md).")
+            if "nexmove_verify" in (WHATSAPP_VERIFY_TOKEN, MESSENGER_VERIFY_TOKEN):
+                warn.append("ℹ️ Verify token Meta par défaut (`nexmove_verify`, public) : à personnaliser.")
             await _alert_admin(f"✅ *NexMove en ligne* · v{VERSION} vient de démarrer."
                                + ("\n\n" + "\n".join(warn) if warn else ""))
     except Exception as e:

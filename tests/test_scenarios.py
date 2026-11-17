@@ -290,3 +290,10 @@ def test_scn_qui_t_a_cree_reponse_fixe(monkeypatch):
 def test_creator_query_pas_de_faux_positif():
     for q in ("je veux créer mon CV", "qui recrute à Cotonou ?", "créer un compte", "qui a créé cette bourse ?"):
         assert not main._is_creator_query(q.lower()), q
+
+
+# ── v3.95 : une source marketing piégée (HTML) est nettoyée avant stockage ──
+def test_scn_start_source_nettoyee():
+    s = _sess(etape="ATTENTE_CV", onboarding_complete=False)
+    msg, s = _run(main.process_text_message(s, '/start src_<img src=x onerror=alert(1)>'))
+    assert s.get("source") == "src_imgsrcxonerroralert1"

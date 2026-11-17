@@ -26,6 +26,7 @@ services:
       # --- Autoriser {{ $env.* }} dans les nœuds (WF1 lit TELEGRAM_BOT_TOKEN)
       - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - FORGE_NEX_KEY=${FORGE_NEX_KEY}       # lue par les workflows ({{ $env.FORGE_NEX_KEY }})
       - GENERIC_TIMEZONE=${GENERIC_TIMEZONE}
       # --- Divers
       - N8N_RUNNERS_ENABLED=true
