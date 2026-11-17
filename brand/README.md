@@ -46,3 +46,19 @@ Produit dans `brand/out/` : `HERO_v2.png` (1080×1080), `og.png` (1200×630) et 
 
 Nouveau post : ajouter une ligne `post …` dans `tools/render.sh`
 (`*mot*` = accent ambre, `|` = saut de ligne dans le titre).
+
+## Supports imprimés
+| Fichier | Format | Usage |
+|---|---|---|
+| `exports/print/affiche-a4.pdf` | A4 + 3 mm de fond perdu (216×303 mm) | affiche / flyer de découverte, 2 QR (WhatsApp, Telegram) |
+| `exports/print/carte-visite.pdf` | 85×55 mm + 3 mm de fond perdu, recto-verso | carte produit, QR WhatsApp |
+
+PDF vectoriels (texte et QR nets à toute taille), polices incorporées, en RVB : demander à
+l'imprimeur s'il accepte le RVB, sinon conversion CMJN avec son profil (vérifier le bleu).
+Le trait de coupe est à 3 mm du bord du fichier ; tout le texte est dans la zone de sécurité.
+**Coordonnées** (numéro du bot, site) : une seule source, `contact.json`, puis `tools/render.sh`.
+Ambre sur fond clair : `#B57A00` (variante foncée de l'ambre, pour rester lisible).
+
+## Canva (modifiable)
+`exports/canva/*.pdf` : HERO, posts et og en PDF à texte vectoriel. Dans Canva : *Créer un design
+→ Importer un fichier* → choisir le PDF : il devient un design dont les textes sont modifiables.
