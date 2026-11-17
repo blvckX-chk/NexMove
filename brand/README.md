@@ -24,15 +24,25 @@ vont dans `out/` (non versionné) ; l'image de partage de la vitrine est copiée
 - redessiner le logo : on utilise **toujours le fichier officiel**.
 
 ## Logo
-Le symbole officiel (N maison + flèche ambre) va dans **`assets/mark.png`** (fond transparent).
-Sans ce fichier, les gabarits affichent un emplacement « MARQUE N » au lieu d'un faux logo.
+- `assets/mark.png` : symbole (N maison + flèche ambre) détouré, fond transparent.
+- `assets/mark.svg` : le même en **vectoriel**, obtenu par **tracé des contours** de l'affiche (pas un redessin).
+- `assets/source/affiche-base.png` : l'affiche d'origine dont il est extrait.
+
+⚠️ **Version provisoire** extraite d'une capture de l'affiche (Canva) : fidèle et nette jusqu'à ~1500 px,
+mais deux angles du SVG sont très légèrement biseautés. Dès que le fichier source final existe, le
+déposer ici (mêmes noms) puis relancer `brand/tools/render.sh` : tout le set et la vitrine se mettent à jour.
+Réextraction depuis une nouvelle affiche : `python3 brand/tools/extract_mark.py <recadrage.png> mark.png mark.svg`.
+
+Sans `mark.png`, les gabarits affichent un emplacement « MARQUE N » au lieu d'un faux logo.
+**Règle** : le logo n'est jamais coupé par le bord, jamais redessiné, jamais accompagné d'une lueur.
 
 ## Générer le set
 ```bash
 brand/tools/render.sh
 ```
-Produit dans `brand/out/` : `HERO_v2.png` (1080×1080), `og.png` (1200×630, copié dans
-`web/og.png` si le logo est présent) et les posts `POST_0x_*.png` (1080×1350, format 4:5).
+Produit dans `brand/out/` : `HERO_v2.png` (1080×1080), `og.png` (1200×630) et les posts `POST_0x_*.png`
+(1080×1350, format 4:5). Avec le logo présent, met aussi à jour la vitrine : `web/og.png`, `favicon.svg/.png/.ico`,
+`apple-touch-icon.png` et `logo-nexmove.png`.
 
 Nouveau post : ajouter une ligne `post …` dans `tools/render.sh`
 (`*mot*` = accent ambre, `|` = saut de ligne dans le titre).

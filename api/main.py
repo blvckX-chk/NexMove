@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.90.0"
+VERSION         = "3.92.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1158,6 +1158,182 @@ def _wants_create_cv(low: str, session: dict) -> bool:
     return ("creercv" in str(last_bot).lower() and len(low) <= 30 and "compte" not in low
             and bool(re.search(r"\b(nouveau|nouvelle|un|mon)\b", low)))
 
+# ── Mémoire du DERNIER DOCUMENT vu (v3.91) ────────────────────────────────────────────────
+# Retour terrain : un conseiller envoie le CV d'une candidate, puis « conseils pour améliorer le CV »
+# -> le bot lançait la CRÉATION de CV (il ne gardait que sa propre réponse, pas le document).
+_DOC_TIERS_RE = re.compile(
+    r"\b(lui|elle|son\s+(cv|profil|dossier)|sa\s+(candidature|lettre)|ma\s+candidate|mon\s+candidat|"
+    r"mon\s+client|ma\s+cliente|mes\s+candidats|un\s+ami|une\s+amie|mon\s+fr[èe]re|ma\s+s(œ|oe)ur|mon\s+fils|"
+    r"ma\s+fille|en\s+tant\s+que\s+conseill\w*|pour\s+quelqu'un|d'un\s+(candidat|[ée]tudiant|ami)|"
+    r"d'une\s+(candidate|[ée]tudiante|amie))\b", re.I)
+
+def _doc_owner(caption: str) -> str:
+    """'tiers' si la personne aide quelqu'un d'autre (conseiller, proche), sinon 'self'."""
+    return "tiers" if _DOC_TIERS_RE.search(caption or "") else "self"
+
+def _remember_doc(session: dict, kind: str, text: str, caption: str = "", summary: str = "", owner: str = "") -> None:
+    session["last_doc"] = {"kind": kind, "text": (text or "")[:6000], "caption": (caption or "")[:300],
+                           "summary": (summary or "")[:2500], "owner": owner or _doc_owner(caption),
+                           "ts": datetime.now(timezone.utc).isoformat()}
+
+def _recent_doc(session: dict, max_hours: float = 48):
+    d = session.get("last_doc") or {}
+    if not d.get("ts") or not (d.get("text") or d.get("summary")):
+        return None
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(d["ts"])).total_seconds()
+    except Exception:
+        return None
+    return d if age <= max_hours * 3600 else None
+
+# Renvoi EXPLICITE à un document déjà envoyé / analysé.
+_DOC_REF_RE = re.compile(
+    r"(que\s+tu\s+(as|viens\s+d'|venais\s+d')\s*(analys|lu|vu|re[çc]u|corrig|regard)\w*|"
+    r"\bcv\s+(envoy|analys|pr[ée]c[ée]dent|d'avant|de\s+tout\s+[àa]\s+l'heure|ci-dessus|plus\s+haut)\w*|"
+    r"\b(sur|dans)\s+(le|ce|mon|son|sa)\s+(cv|document)\b|d[ée]j[àa]\s+(envoy|donn|fourni)\w*)", re.I)
+_DOC_ADVICE_RE = re.compile(
+    r"\b(conseils?|am[ée]lior\w*|retours?|feedback|avis|corrig\w*|corrections?|points?\s+(faibles?|forts?)|"
+    r"penses|analys\w*|reformul\w*|r[ée][ée]cri\w*|optimis\w*|renforc\w*|critiques?|recommandations?|"
+    r"suggestions?|erreurs?|manque\w*)\b", re.I)
+_DOC_WORD_RE = re.compile(r"\b(cv|curriculum|document|lettre|profil)\b", re.I)
+
+def _is_doc_followup(low: str, session: dict) -> bool:
+    """Vrai si le message porte sur le DERNIER document vu (et qu'on en a un, récent)."""
+    if not _recent_doc(session):
+        return False
+    low = (low or "").strip().lower()
+    if not low or low.startswith("/") or len(low) > 400:
+        return False
+    if _DOC_REF_RE.search(low):
+        return True
+    return bool(_DOC_ADVICE_RE.search(low) and _DOC_WORD_RE.search(low))
+
+async def _answer_doc_followup(session: dict, t: str) -> str:
+    """Réponse de SUIVI ancrée sur le dernier document (texte lu + analyse précédente + dialogue)."""
+    d = _recent_doc(session) or {}
+    qui = ("Ce document appartient à une AUTRE personne : celle qui t'écrit l'accompagne (conseiller, proche). "
+           "Parle du candidat à la 3e personne et formule des conseils qu'elle pourra lui transmettre."
+           if d.get("owner") == "tiers" else
+           "Ce document est celui de la personne qui t'écrit : parle-lui de SON document.")
+    system = (CONSEILLER_PERSONA +
+              " Tu réponds à une question de SUIVI sur un document que tu as DÉJÀ analysé. " + qui +
+              " Appuie-toi UNIQUEMENT sur le texte du document et ton analyse précédente ; n'invente aucune "
+              "information (si elle n'y est pas, dis-le). Si on te demande des conseils pour l'améliorer : 4 à 6 "
+              "conseils concrets, du plus important au moins important, chacun illustré par un exemple tiré du "
+              "document (« avant → après »). Réponds DIRECTEMENT : pas de menu, pas de liste d'options, ne lance "
+              "aucun questionnaire, ne redemande pas le document. Aère : une idée par ligne.")
+    user = (f"DOCUMENT ({d.get('kind', 'document')}) — texte lu :\n{d.get('text') or '(non transcrit)'}\n\n"
+            f"TON ANALYSE PRÉCÉDENTE :\n{d.get('summary') or '(aucune)'}\n\n"
+            f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 4)}\n\nNOUVEAU MESSAGE : {t}")
+    rep = await _gen_text(system, user, max_tokens=900, temperature=0.35, tier="smart")
+    return rep or ("Je n'arrive pas à générer le retour pour l'instant. Renvoie le document et je reprends "
+                   "l'analyse tout de suite.")
+
+def _leave_flow(session: dict) -> None:
+    """Sort proprement d'un questionnaire guidé (comme /annuler), sans perdre les réponses déjà données."""
+    if session.get("etape") == "CVBUILD":
+        session["etape"] = "ACTIF" if session.get("onboarding_complete") else "ATTENTE_CV"
+    elif session.get("etape") == "RECRUIT":
+        session["etape"] = "ACTIF"
+    session["cvbuild_miss"] = 0
+
+def _ensure_doc_from_profile(session: dict) -> bool:
+    """Pas de document récent mais un CV déjà analysé -> on reconstitue le document depuis le profil."""
+    if _recent_doc(session):
+        return True
+    if not session.get("cv_parsed"):
+        return False
+    brief = _cv_brief(session.get("profil") or {})
+    if not brief:
+        return False
+    _remember_doc(session, "cv", brief, owner="self")
+    return True
+
+# ── Réparation de conversation (v3.91) : la personne signale qu'on l'a mal comprise ──
+# « non je voulais des conseils, pas créer un CV », « c'est pas ce que j'ai demandé »,
+# « tu ne comprends pas »… -> on SORT du questionnaire et on reprend sur sa vraie intention.
+_REPAIR_RE = re.compile(
+    r"^\s*(non\b[\s,!.]*)?(?P<cue>je\s+(parlais|voulais(\s+dire)?|demandais|ne\s+veux\s+pas|veux\s+pas)|"
+    r"(ce\s+n'?est|c'?est)\s+pas\s+(ce\s+que\s+j\S*\s+(ai\s+)?(demand|dit|voulu)\w*|[çc]a\b)|"
+    r"tu\s+(ne\s+)?(comprends|m'?[ée]coutes|captes|suis)\s+pas|pas\s+[çc]a\b|mauvaise\s+r[ée]ponse|"
+    r"hors\s+sujet|t'?as\s+rien\s+compris|tu\s+te\s+trompes)", re.I)
+
+def _repair_remainder(t: str) -> str:
+    """Ce que la personne voulait VRAIMENT, après la formule de correction (« non je voulais [des conseils] »)."""
+    m = _REPAIR_RE.match(t or "")
+    if not m:
+        return ""
+    rest = (t or "")[m.end():]
+    rest = re.sub(r"^\s*(dire|parler\s+(de|du|des|d'))\b\s*", "", rest, flags=re.I)
+    rest = re.sub(r"^[\s,:;.!-]+", "", rest).strip()
+    return rest if len(rest) >= 6 else ""
+
+async def _repair_reply(session: dict, t: str) -> str:
+    system = (CONSEILLER_PERSONA + " La personne te signale que tu l'as mal comprise. Reconnais-le en UNE "
+              "courte phrase (sans t'excuser trois fois), reformule en UNE phrase ce qu'elle semblait vouloir "
+              "d'après le dialogue, puis pose UNE seule question précise pour confirmer. Pas de menu, pas de "
+              "liste d'options, pas de questionnaire.")
+    rep = await _gen_text(system, f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 6)}\n\nMESSAGE : {t}",
+                          max_tokens=260, temperature=0.3, tier="smart")
+    return rep or "Pardon, je suis parti sur une mauvaise piste. Dis-moi en une phrase ce que tu veux, je m'en occupe."
+
+_FLOW_CANCEL_ONLY_RE = re.compile(r"^\s*(ok\s+|bon\s+)?(laisse\s+tomb\w*|j'annule|annule(\s+tout)?|on\s+arr[êe]te(\s+tout)?|"
+                                  r"je\s+veux\s+(annuler|arr[êe]ter)|stop\s+le\s+cv)\s*[.!]*\s*$", re.I)
+
+async def _flow_interrupt(session: dict, t: str, low: str, kind: str, now: str):
+    """Interruption d'un questionnaire (commande, changement d'avis) : on SORT et on traite la demande,
+    au lieu de répondre « tape /annuler » (retour terrain : la personne restait coincée)."""
+    _leave_flow(session)
+    if kind == "command":
+        return await process_text_message(session, t)
+    if _FLOW_CANCEL_ONLY_RE.match(low):
+        _push(session, "user", t)
+        msg = "OK, on laisse ça de côté 🙂 Dis-moi ce que tu veux faire maintenant."
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+    rest = re.sub(r"^\s*(en\s+fait|finalement|plut[ôo]t|non)[\s,]*", "", t, flags=re.I).strip()
+    return await process_text_message(session, rest or t)
+
+_CVBUILD_LABELS = {"nom": "ton nom", "formation": "ton diplôme", "experience": "une expérience",
+                   "competences": "tes compétences", "langues": "tes langues"}
+
+_ADVICE_NO_DOC_MSG = ("Avec plaisir 🙂 Envoie-moi le CV (PDF, Word ou photo) et dis-moi s'il est à toi ou à quelqu'un "
+                      "que tu accompagnes : je te fais un retour précis, point par point.\n"
+                      "_Pas encore de CV ? Tape /creercv et on le construit ensemble._")
+
+# ── Garde-fou des questionnaires (v3.91) : une réponse doit RESSEMBLER à une réponse ──
+# Retour terrain : pendant /creercv, « Conseils pour améliorer le CV » est devenu le NOM,
+# « Il est sur le CV envoyé » le DIPLÔME, « codes valides » les EXPÉRIENCES.
+_REQUEST_RE = re.compile(r"^\s*(je\s+veux|j'?aimerais|je\s+voudrais|donne[- ]moi|montre[- ]moi|envoie[- ]moi|"
+                         r"peux[- ]tu|tu\s+peux|conseils?|explique|comment|pourquoi|c'est\s+quoi|version|"
+                         r"codes?|stats?)\b", re.I)
+_LANG_WORDS = ("fran", "angl", "english", "espag", "allem", "arabe", "fon", "yoruba", "bariba", "dendi", "mina",
+               "goun", "wolof", "bambara", "mooré", "moore", "haoussa", "hausa", "peul", "dioula", "lingala",
+               "portug", "italien", "chinois", "natimba", "adja", "langue", "natif", "maternel", "courant")
+
+def _cvbuild_plausible(field: str, val: str) -> bool:
+    """La réponse a-t-elle l'air d'une réponse à CETTE question ? (heuristique, sans IA)."""
+    v = (val or "").strip()
+    low = v.lower()
+    if not v:
+        return False
+    if _DOC_REF_RE.search(low) or (_DOC_ADVICE_RE.search(low) and _DOC_WORD_RE.search(low)):
+        return False
+    if field == "nom":
+        mots = re.findall(r"[A-Za-zÀ-ÿ'’\-]+", v)
+        if not (1 <= len(mots) <= 5) or re.search(r"\d|[?!]", v):
+            return False
+        return not ({m.lower().strip("'’") for m in mots} & (_NOM_STOP | {"pour", "de", "du", "des", "les", "cv",
+                    "conseil", "conseils", "je", "tu", "veux", "codes", "code", "version", "aide", "bonjour",
+                    "salut", "merci", "oui", "non", "ok"}))
+    if field == "experience" and re.search(r"\b(aucun\w*|rien|pas\s+encore|d[ée]butant\w*|non)\b", low):
+        return True
+    if field == "langues":
+        return any(w in low for w in _LANG_WORDS)
+    if _REQUEST_RE.search(low):
+        return False
+    return len(v) >= 2
+
 # Marqueurs déictiques : la personne parle d'opportunités DÉJÀ affichées (portail/offres listées)
 # et non d'une nouvelle recherche. Ex. « parmi ces bourses… », « les 4 citées plus haut », « lesquelles ».
 _REFER_PRIOR_RE = re.compile(
@@ -1350,13 +1526,14 @@ def _free_text_to_command(low: str, t: str) -> str:
     if _ir:
         return _ir
     # Créer / refaire son CV — routage DÉTERMINISTE (ne pas dépendre du LLM, qui ratait « Créercv »).
-    # « améliorer/retravailler mon CV » tombe aussi ici : _cvbuild_start génère depuis le profil s'il existe.
+    # « améliorer / conseils sur le CV » n'est PLUS ici (v3.91) : c'est une demande de CONSEILS sur un
+    # document existant, traitée en amont par _is_doc_followup (retour terrain : questionnaire lancé à tort).
     _nolow = low.translate(str.maketrans("àâäéèêëïîôöùûüç", "aaaeeeeiioouuuc")).replace(" ", "")
     # Pas de routage direct si la phrase ENCHAÎNE deux intentions (« mon statut PUIS crée un cv ») :
     # on laisse l'orchestrateur LLM gérer la séquence.
     _sequence = bool(re.search(r"\b(puis|ensuite|apr[èe]s|d'abord|aussi)\b", low))
     if not _sequence and (re.search(r"\b(cr[ée]er?|cr[ée]e|faire|r[ée]dige\w*|monte\w*|g[ée]n[èe]re\w*|refaire|refais|"
-                 r"am[ée]liore\w*|retravaille\w*|peaufine\w*)\b[^.?!]{0,25}\b(cv|curriculum)\b", low)
+                 r"refai\w*)\b[^.?!]{0,25}\b(cv|curriculum)\b", low)
             or _nolow in ("creercv", "creationcv", "nouveaucv", "creemoncv", "creeruncv", "fairemoncv")):
         return "/creercv"
     # Suppression de compte/profil/données (RGPD) — routage DÉTERMINISTE (sinon le LLM demandait « quoi ? »
@@ -3563,6 +3740,8 @@ _PREF_STYLE_CV_GRAPH = re.compile(r"\b(cv\s+graphique|version\s+graphique|cv\s+(
 _PREF_STYLE_CV_ATS = re.compile(r"\b(cv\s+ats|version\s+ats|format\s+ats|je\s+pr[ée]f[èe]re\s+(l'|un\s+)?ats)\b", re.I)
 _PREF_LANG_EN = re.compile(r"\b(en\s+anglais|in\s+english|version\s+anglaise|documents?\s+en\s+anglais|cv\s+en\s+anglais)\b", re.I)
 _PREF_LANG_FR = re.compile(r"\b(en\s+fran[çc]ais|version\s+fran[çc]aise|documents?\s+en\s+fran[çc]ais)\b", re.I)
+_PREF_NO_MENU = re.compile(r"(pas\s+besoin\s+de\s+(me\s+)?(proposer|mettre|montrer|afficher)\s+(des\s+|les\s+)?(options|menus?|boutons)|"
+                           r"sans\s+(les\s+)?(options|menus?|boutons)|arr[êe]te\s+(de\s+(me\s+)?(proposer|mettre|montrer)\s+)?(les\s+|des\s+)?(options|menus?|boutons))", re.I)
 _PREF_CONCIS = re.compile(r"\b(sois\s+(bref|concis|court)|r[ée]ponses?\s+courtes?|va\s+(droit\s+)?(à|a)\s+l'essentiel|"
                           r"droit\s+au\s+but|pas\s+(de\s+)?blabla|fais\s+court)\b", re.I)
 _PREF_CONTR = re.compile(r"\b(je\s+ne\s+peux\s+pas\s+d[ée]m[ée]nager|pas\s+de\s+d[ée]m[ée]nagement|je\s+reste\s+(à|a)\s+\w+|"
@@ -6122,6 +6301,44 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    # Réparation (v3.91) : « non je voulais… », « c'est pas ce que j'ai demandé », « tu ne comprends pas ».
+    # (Hors étapes d'onboarding, qui ont leur propre gestion du « non ».)
+    if (not low.startswith("/") and not session.get("sim_mode") and _REPAIR_RE.match(low)
+            and session.get("etape") not in ("CV_RECU", "CONFIRMATION", "PREFERENCES", "PREF_TYPE_EMPLOI")):
+        if session.get("etape") in ("CVBUILD", "RECRUIT"):
+            _leave_flow(session)
+        _rest = _repair_remainder(t)
+        if _rest:
+            return await process_text_message(session, _rest)
+        _push(session, "user", t)
+        rep = await _repair_reply(session, t)
+        _push(session, "assistant", rep); session["derniere_activite"] = now
+        return rep, session
+    # Préférence « pas de menus / pas d'options » (v3.91) : retenue pour tous, onboardé ou non.
+    if _PREF_NO_MENU.search(low):
+        session.setdefault("profil", {}).setdefault("profil_plus", {})["no_menu"] = True
+    # Suivi d'un DOCUMENT déjà vu (v3.91) : « conseils pour améliorer le CV », « le CV que tu as
+    # analysé ? »… -> réponse ANCRÉE sur ce document, prioritaire sur les questionnaires et sur le
+    # routage par mots-clés (qui lançait la création de CV).
+    if not low.startswith("/") and not session.get("sim_mode"):
+        _adv_cv = bool(_DOC_ADVICE_RE.search(low) and re.search(r"\b(cv|curriculum)\b", low)) and len(low) <= 400
+        if _is_doc_followup(low, session) or (_adv_cv and _ensure_doc_from_profile(session)):
+            _was_flow = session.get("etape") in ("CVBUILD", "RECRUIT")
+            if _was_flow:
+                _leave_flow(session)
+            _push(session, "user", t)
+            rep = await _answer_doc_followup(session, t)
+            if (_recent_doc(session) or {}).get("owner") == "self" and session.get("cv_parsed"):
+                rep += "\n\n👉 Tape */cv* et je te génère directement la version corrigée."
+            if _was_flow:
+                rep = "_(Je mets la création de CV de côté : /creercv pour la reprendre.)_\n\n" + rep
+            _push(session, "assistant", rep); session["derniere_activite"] = now
+            return rep, session
+        if _adv_cv and re.search(r"\b(am[ée]lior\w*|conseils?|retours?|avis|corrig\w*)\b", low):
+            _push(session, "user", t)
+            _push(session, "assistant", _ADVICE_NO_DOC_MSG); session["derniere_activite"] = now
+            return _ADVICE_NO_DOC_MSG, session
+
     etape = session.get("etape", "WELCOME")
 
     if etape == "CVBUILD":
@@ -6131,12 +6348,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             field = CVBUILD_STEPS[step][0]
             val = t.strip()
             kind = _flow_input_kind(val)
-            if kind in ("command", "switch"):
-                _push(session, "user", t)
-                q = ("📝 Tu es en pleine *création de CV*. Pour faire autre chose ou lancer une commande, "
-                     "tape */annuler*.\nSinon, réponds simplement à la question 👇\n\n" + CVBUILD_STEPS[step][1])
-                _push(session, "assistant", q); session["derniere_activite"] = now
-                return q, session
+            if kind in ("command", "switch") or _REPAIR_RE.match(low):
+                return await _flow_interrupt(session, t, low, kind if kind != "answer" else "switch", now)
             if kind == "question":
                 _push(session, "user", t)
                 q = ("🙂 Bonne question — on y revient juste après. D'abord, réponds à ça (ou */annuler* pour sortir) 👇\n\n"
@@ -6148,6 +6361,30 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 q = "🤔 Donne un peu plus de détail 🙂\n\n" + CVBUILD_STEPS[step][1]
                 _push(session, "assistant", q); session["derniere_activite"] = now
                 return q, session
+            # Garde-fou (v3.91) : le message ne ressemble pas à une réponse à CETTE question.
+            if not _cvbuild_plausible(field, val):
+                _cmd = _free_text_to_command(low, t) if len(val) <= 80 else ""
+                if _cmd and not _cmd.startswith("/creercv"):
+                    _leave_flow(session); _push(session, "user", t)
+                    return await process_text_message(session, _cmd)
+                if _DOC_REF_RE.search(low) and session.get("cv_parsed"):
+                    _leave_flow(session); _push(session, "user", t)
+                    q = ("Tu as raison 🙂 j'ai déjà ton CV, inutile de tout retaper. Je pars de celui-là : "
+                         "tape */cv* pour récupérer la version optimisée, ou dis-moi ce que tu veux y changer.")
+                    _push(session, "assistant", q); session["derniere_activite"] = now
+                    return q, session
+                session["cvbuild_miss"] = session.get("cvbuild_miss", 0) + 1
+                _push(session, "user", t)
+                if session["cvbuild_miss"] >= 2:
+                    _leave_flow(session)
+                    q = ("Je mets la création de CV en pause : on dirait que tu as autre chose en tête. "
+                         "Dis-moi simplement ce dont tu as besoin 🙂\n_(Pour reprendre le CV plus tard : /creercv.)_")
+                else:
+                    q = (f"🤔 Je ne suis pas sûr que ce soit {_CVBUILD_LABELS.get(field, 'la réponse')}.\n\n"
+                         + CVBUILD_STEPS[step][1] + "\n_(Autre chose en tête ? Dis-le-moi, ou tape /annuler.)_")
+                _push(session, "assistant", q); session["derniere_activite"] = now
+                return q, session
+            session["cvbuild_miss"] = 0
             data[field] = val
             session["cvbuild_data"] = data
         _push(session, "user", t)
@@ -6165,12 +6402,8 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
             field = RECRUIT_STEPS[step][0]
             val = t.strip()
             kind = _flow_input_kind(val)
-            if kind in ("command", "switch"):
-                _push(session, "user", t)
-                q = ("📢 Tu es en plein *dépôt d'offre*. Pour faire autre chose ou lancer une commande, "
-                     "tape */annuler*.\nSinon, réponds simplement à la question 👇\n\n" + RECRUIT_STEPS[step][1])
-                _push(session, "assistant", q); session["derniere_activite"] = now
-                return q, session
+            if kind in ("command", "switch") or _REPAIR_RE.match(low):
+                return await _flow_interrupt(session, t, low, kind if kind != "answer" else "switch", now)
             if kind == "question":
                 _push(session, "user", t)
                 q = ("🙂 Bonne question — on y revient juste après. D'abord, réponds à ça (ou */annuler* pour sortir) 👇\n\n"
@@ -7469,6 +7702,8 @@ def _norm_md(text: str) -> str:
 async def deliver_text(session, text, with_menu=False, options=None):
     # `options` = boutons attachés à CE message (confirmation, choix d'onboarding…), prioritaires sur le menu.
     text = _norm_md(_scrub_outbound(text))
+    if with_menu and ((session.get("profil") or {}).get("profil_plus") or {}).get("no_menu"):
+        with_menu = False   # la personne a demandé qu'on arrête les menus (v3.91)
     ch = session.get("channel", "telegram"); to = session.get("chat_id")
     if ch == "whatsapp":
         if options:
@@ -7752,19 +7987,46 @@ async def _process_general_screenshot(session, img_bytes, filename, caption):
     if not ok:
         await deliver_text(session, _quota_exceeded_msg("l'analyse d'image"))
         return
+    # Le RÔLE de la personne compte : un conseiller qui fait relire le CV d'une candidate n'attend pas
+    # la même réponse que la candidate elle-même (v3.91).
+    owner = _doc_owner(caption)
+    question = (caption or "Analyse cette image.") + (
+        "\n[Note : la personne qui écrit accompagne quelqu'un d'autre ; le document n'est pas le sien.]"
+        if owner == "tiers" else "")
+
+    async def _read_text() -> str:
+        # Texte du document, gardé en mémoire pour les questions de SUIVI (en parallèle de l'analyse).
+        try:
+            txt = await asyncio.to_thread(extract_text_image, img_bytes)
+        except Exception:
+            txt = ""
+        if len((txt or "").strip()) < 200:
+            try:
+                txt = await extract_text_vision(img_bytes, mime) or txt
+            except Exception:
+                pass
+        return txt or ""
+
     try:
-        rep = await analyze_image_question(img_bytes, mime, caption or "")
+        rep, doc_txt = await asyncio.gather(analyze_image_question(img_bytes, mime, question), _read_text())
     except Exception as e:
-        logger.error(f"[img-q] {e}"); rep = ""
+        logger.error(f"[img-q] {e}"); rep, doc_txt = "", ""
     if not rep:
         await deliver_text(session, "😕 Je n'arrive pas à lire cette image (ou le service vision est momentanément "
                                     "indisponible). Reprends une capture *nette*, ou colle le *texte* directement.")
         return
     _quota_bump(session, "guide")
     session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+    _kind = "cv" if re.search(r"\b(cv|curriculum)\b", (caption or "").lower()) else "image"
+    _remember_doc(session, _kind, doc_txt, caption=caption or "", summary=rep, owner=owner)
+    if caption:
+        _push(session, "user", f"[image envoyée] {caption}")
     _push(session, "assistant", rep)
-    logger.info(f"[img-q] {session.get('channel')} image analysée à la demande")
-    await deliver_text(session, "🔎 " + rep, with_menu=True)
+    session_manager.set(session.get("user_id"), session)
+    logger.info(f"[img-q] {session.get('channel')} image analysée à la demande ({_kind}, {owner}, "
+                f"{len(doc_txt)} car. lus)")
+    # Pas de menu générique collé après une analyse : la conversation continue naturellement.
+    await deliver_text(session, rep)
 
 async def _process_guide_screenshot(session, img_bytes, filename="capture.jpg"):
     """Mode /guide : analyse une capture d'écran (vision Gemini) et renvoie un guidage concret."""
@@ -7998,6 +8260,19 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
         else:
             await deliver_text(session, "❌ Impossible de lire ce PDF, même après OCR.\n\nVérifie que le document est lisible (bonne qualité) ou envoie un PDF avec texte sélectionnable.")
         return
+    # CV d'une AUTRE personne (« le CV de ma fille », « en tant que conseiller… ») : on le RELIT et on
+    # conseille, SANS écraser le profil de celle ou celui qui écrit (v3.91).
+    if caption and _doc_owner(caption) == "tiers" and cv_text and len(cv_text.strip()) >= 50:
+        _remember_doc(session, "cv", cv_text, caption=caption, owner="tiers")
+        _push(session, "user", f"[document envoyé] {caption}")
+        rep = await _answer_doc_followup(session, caption)
+        session["last_doc"]["summary"] = rep[:2500]
+        _push(session, "assistant", rep)
+        session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
+        session_manager.set(session.get("user_id"), session)
+        logger.info(f"[cv] {session.get('channel')} CV d'un tiers relu (profil NON modifié)")
+        await deliver_text(session, rep)
+        return
     system = ("Tu es expert en analyse de CV ET " + CONSEILLER_PERSONA + " D'abord détermine si le document EST "
               "un CV/résumé professionnel (identité + parcours/formation/expérience/compétences). Si ce n'est PAS "
               "un CV (facture, article, cours, lettre, relevé, capture, texte quelconque), mets \"est_cv\": false "
@@ -8171,6 +8446,7 @@ Document: {cv_text[:6000]}"""
         profil["preferences"] = {**(profil.get("preferences") or {}), **_prev_prefs}   # l'existant gagne
     session["profil"] = profil
     session["cv_parsed"] = True
+    _remember_doc(session, "cv", cv_text or _cv_brief(profil), caption=caption or "", summary=message, owner="self")
     session["last_cv_filename"] = (filename or "").strip().lower()   # anti re-analyse du MÊME fichier
     session["last_cv_size"] = len(pdf_bytes) if pdf_bytes else 0      # + taille (évite les faux positifs)
     _quota_bump(session, "cv")   # analyse réussie -> décompte le quota (admin exclu)

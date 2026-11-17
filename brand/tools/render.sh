@@ -24,4 +24,10 @@ post POST_02_testeurs.png "Programme testeurs · places limitées" \
 post POST_03_score.png    "Comment ça marche" \
   "Ton CV, noté|*offre par offre*." \
   "Pour chaque offre : un score expliqué, tes points forts et ce qu'il reste à renforcer. Puis la lettre et le CV adaptés, prêts à envoyer." "03 / 03"
-if [ -f assets/mark.png ]; then cp out/og.png ../web/og.png && echo "web/og.png mis à jour"; else echo "⚠️  assets/mark.png absent : web/og.png NON remplacé"; fi
+if [ -f assets/mark.png ]; then
+  cp out/og.png ../web/og.png && echo "web/og.png mis à jour"
+  TRANSPARENT=1 DSF=1 node tools/shot.js "$B/icon.html" out/icon-1000.png 1000 1000
+  python3 tools/make_icons.py
+else
+  echo "⚠️  assets/mark.png absent : og.png et icônes de la vitrine NON remplacés"
+fi

@@ -18,8 +18,8 @@ a{color:var(--bleu)}
 header{border-bottom:1px solid var(--bord);position:sticky;top:0;background:color-mix(in srgb,var(--fond) 88%,transparent);backdrop-filter:blur(8px)}
 .nav{display:flex;align-items:center;justify-content:space-between;height:60px}
 .brand{display:flex;align-items:center;gap:.55rem;font-weight:800;color:var(--texte);text-decoration:none}
-.logo{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--bleu),var(--nuit));display:grid;place-items:center}
-.logo svg{width:18px;height:18px}
+.logo{width:30px;height:30px;border-radius:9px;background:#0B1326;display:grid;place-items:center}
+.logo svg{width:21px;height:20px}
 .nav a.back{color:var(--gris);font-weight:600;text-decoration:none;font-size:.95rem}
 .nav a.back:hover{color:var(--texte)}
 main{padding:36px 0 60px}
