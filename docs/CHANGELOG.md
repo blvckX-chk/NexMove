@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.96 — Orientation professionnelle : un vrai conseiller d'orientation + routage du langage naturel
+- **Diagnostic** : sur 40 phrases réelles, 11 étaient mal routées (« je m'appelle Koffi » → recours, « mon visage » → visa, « je veux changer de carrière mais je sais pas vers quoi » → recherche d'offres, « quelle formation après le bac pour devenir pilote » → formations en ligne, « l'école c'est pas pour moi » → écoles…), et toutes les vraies questions d'orientation tombaient dans le chat générique. Après : 40/40.
+- **Nouveau `/orientation`** (déclenché aussi en langage naturel : choisir un métier ou une filière, hésiter entre deux voies, débouchés, salaire d'un métier, reconversion, échec à un concours, pression des parents, pas les moyens d'étudier, entrepreneuriat…). Démarche de conseiller : si l'essentiel manque, une seule question ciblée ; sinon 2-3 pistes argumentées (pourquoi pour toi, chemin et voie courte, réalisme du marché) et une prochaine étape. Aucun chiffre ni école inventés.
+- **Nouveau `/testorientation`** : test d'intérêts en 6 questions (modèle RIASEC, équilibré : chaque dimension 4 fois), boutons ou réponse 1-4, résultat + familles de métiers adaptées au marché local. Si la situation est connue, le résultat est aussitôt transformé en pistes concrètes.
+- **Mémoire d'orientation** (`profil_plus.orientation`) : niveau, série du bac, poste et années d'expérience (détectés sans IA), intérêts, forces, contraintes, pistes évoquées ; réutilisée par le conseiller et par la conversation générale.
+- **Continuité** : pendant 30 min, les messages de suite (« et ça dure combien ? », « et la formation pour infirmier ? ») restent dans la démarche d'orientation au lieu de repartir sur une recherche.
+- **Routeur durci** : mots entiers pour visa/recours, récit d'une expérience passée (« j'ai fait un stage… ») n'est plus une recherche d'offres. Un lycéen qui s'oriente ne reçoit plus de relance « envoie ton CV ».
+- Code isolé dans `api/orientation.py` (pur, testable) ; 44 tests dédiés.
+
 ## v3.95 — Audit sécurité : clé API publique neutralisée, admin durci, en-têtes vitrine
 - **Clé API** : l'ancienne valeur d'exemple `forge_nex_secret_2026` (publiée dans le dépôt public) est désormais **refusée** par l'API ; sans clé, `/api/*` est fermé dès qu'un canal est configuré. Alerte admin au démarrage si la clé est absente, publique ou trop courte. `.env.example`, docs et workflows n8n ne contiennent plus de valeur (les workflows lisent `{{ $env.FORGE_NEX_KEY }}`).
 - **Panneau admin** : échappement de toutes les valeurs issues des utilisateurs (sources marketing, répartitions) — fermait une injection HTML possible via `/start src_…` ; clé gardée pour l'onglet seulement (sessionStorage).

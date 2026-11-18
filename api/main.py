@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.95.0"
+VERSION         = "3.96.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -336,6 +336,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
                  GROQ_API_KEY, CEREBRAS_API_KEY, TCHAVI_API_KEY)  # noqa: F401
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
+import orientation as ori   # orientation professionnelle (module pur, testable)
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
                 profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store,
                 link_store, recruiter_offer_store)
@@ -1574,6 +1575,13 @@ def _free_text_to_command(low: str, t: str) -> str:
                                "supprime mon profil", "supprimer mon compte", "supprime tout", "efface tout",
                                "supprimer mes données", "supprimer mes donnees", "me désinscrire", "me desinscrire"):
         return "/supprimer"
+    # ORIENTATION (v3.96) : choisir un métier / une filière, reconversion, débouchés, test d'intérêts.
+    # AVANT les mots-clés « formation / école / métier », qui envoyaient ces questions vers une recherche
+    # de formations en ligne ou d'offres d'emploi (« quelle formation après le bac pour devenir pilote »).
+    if ori.is_test_request(t):
+        return "/testorientation"
+    if ori.is_orientation_query(t):
+        return "/orientation " + t
     if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
         return "/formations " + t
     if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")):
@@ -1590,9 +1598,12 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/ecandidat"
     if "dap" in low.split() or "demande d'admission" in low:
         return "/dap"
-    if "visa" in low or "capago" in low or "vfs" in low or "consulat" in low or "consulaire" in low:
+    # Mots ENTIERS (v3.96) : « visage » n'est pas un visa ; « je m'appelle », « rappelle-moi »,
+    # « je refuse » ne sont pas des recours.
+    if re.search(r"\b(visas?|capago|vfs|consulat|consulaire)\b", low):
         return "/visa"
-    if "recours" in low or "refus" in low or "contestation" in low or "appel" in low:
+    if re.search(r"\brecours\b|\brefus\b|\bcontest\w*|\bfaire\s+appel\b|\b(visa|admission|demande|dossier)\b[^.?!]{0,20}\brefus\w*"
+                 r"|\brefus\w*\b[^.?!]{0,25}\b(visa|admission|demande|dossier|inscription)\b|\b(on\s+m'?a|j'?ai\s+(été|ete))\s+refus\w*", low):
         return "/recours"
     if low in ("version", "quelle version", "c'est quelle version", "numero de version") or "version du bot" in low:
         return "/version"
@@ -1611,7 +1622,11 @@ def _free_text_to_command(low: str, t: str) -> str:
                        "chômage", "chomage", "chômeur", "chomeur", "sans emploi", "fellowship", "bourse",
                        "opportunit", "taf", "taff", "boulot", "cdi", "cdd", "alternance", "apprentissage",
                        "gagner ma vie", "gagner sa vie", "activité génératrice", "stage", "emploi")
-        if any(k in low for k in _JOB_STRONG):
+        # Récit d'une expérience PASSÉE (« j'ai fait un stage en banque ») sans demande de recherche :
+        # ce n'est pas une recherche d'offres -> on laisse la conversation (ou l'orientation) répondre.
+        _past = bool(re.search(r"\bj'?ai\s+(fait|eu|effectu[ée]\w*|termin[ée]\w*|fini|quitt[ée]\w*)\b", low))
+        _search = bool(re.search(r"\b(cherche|recherche|trouve|trouver|veux|voudrais|besoin|aimerais|postuler)\b", low))
+        if any(k in low for k in _JOB_STRONG) and not (_past and not _search):
             return "/mobilite " + t
         _JOB_AMBIG = ("travail", "travailler", "bosser", "poste", "métier", "metier", "carrière",
                       "carriere", "job", "débouché", "debouche")
@@ -1632,20 +1647,22 @@ _VALID_INTENTS = {"veille", "mobilite", "formations", "ecoles", "logement", "ent
                   # Commandes plus récentes : accessibles aussi en langage naturel.
                   "chances", "compatibilite", "simulation", "creercv", "outils", "extraire",
                   "compresserimage", "enimages", "cv1page", "anonymiser", "mescandidatures",
-                  "timeline", "parrainage", "offres", "credits", "commentpostuler"}
+                  "timeline", "parrainage", "offres", "credits", "commentpostuler",
+                  "orientation", "testorientation"}
 
 # Actions SÛRES à enchaîner en 2e pas d'une boucle d'agent (conseil/lecture seule, pas d'état
 # lourd, pas de coût caché, pas de confirmation requise). Volontairement restreint.
 _CHAINABLE_ACTIONS = {"chances", "compatibilite", "commentpostuler", "formations", "ecoles",
                       "budget", "eligibilite", "logement", "entretien", "parcours", "status",
-                      "campusfrance", "canada", "procedure", "profil", "mescandidatures"}
+                      "campusfrance", "canada", "procedure", "profil", "mescandidatures", "orientation"}
 
 # Intentions informatives SÛRES à exécuter même avant d'avoir un profil (pas de CV requis).
 _PREONB_DIRECT = {"campusfrance", "canada", "procedure", "ecoles", "formations", "budget", "logement",
                   "parcours", "parcoursup", "monmaster", "ecandidat", "dap", "visa", "recours",
                   "entretien", "aide", "contact", "offres", "credits", "parrainage", "version",
                   "mobilite",   # mobilite = recherche d'opportunités GROUNDED (web réel), jamais de l'invention
-                  "creercv"}    # créer un CV : utile direct même sans profil (lance le questionnaire)
+                  "creercv",    # créer un CV : utile direct même sans profil (lance le questionnaire)
+                  "orientation", "testorientation"}   # un lycéen n'a pas de CV : l'orientation passe avant
 
 def _progress_bar(done: int, total: int, taille: int = 8) -> str:
     total = max(total, 1)
@@ -2497,6 +2514,8 @@ def valider_pref(field: str, value: str) -> tuple[bool, str]:
     return True, ""
 
 AIDE_TXT = ("🧭 *NexMove · que veux-tu faire ?*\n\n"
+            "🧭 *Trouver ta voie (orientation)*\n"
+            "/orientation <ta question> (métier, filière, reconversion, débouchés) · /testorientation (6 questions, 2 min)\n\n"
             "🔎 *Trouver des opportunités*\n"
             "/veille · /mobilite <pays ou domaine> · 🔔 /alerte <mot-clé>\n\n"
             "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
@@ -3738,6 +3757,19 @@ def _conversation_context(session: dict) -> str:
     _nvus = len(_mem(session).get("vus", []) or [])
     if _nvus:
         lignes.append(f"- {_nvus} opportunité(s) déjà montrée(s) auparavant (les recherches en proposent de NOUVELLES).")
+    _om = ((profil.get("profil_plus") or {}).get("orientation") or {})
+    if isinstance(_om, dict) and _om:
+        _ob = []
+        if _om.get("niveau"):
+            _ob.append(str(_om["niveau"]) + (f" (bac {_om['serie']})" if _om.get("serie") else ""))
+        if _om.get("riasec"):
+            _ob.append("intérêts : " + " – ".join(ori.RIASEC[l][0] for l in _om["riasec"] if l in ori.RIASEC))
+        if _om.get("interets"):
+            _ob.append("attiré par : " + ", ".join(map(str, _om["interets"][:4])))
+        if _om.get("pistes"):
+            _ob.append("pistes évoquées : " + ", ".join(map(str, _om["pistes"][:4])))
+        if _ob:
+            lignes.append("- Orientation : " + " · ".join(_ob))
     return "\n".join(lignes) if lignes else "(aucune info encore · l'utilisateur débute)"
 
 def _recent_dialogue(session: dict, n: int = 4) -> str:
@@ -3992,6 +4024,206 @@ def _creator_reply() -> str:
             "les règles anti-invention) est fait ici._\n\n"
             "Pour joindre l'équipe : " + " · ".join(contact) + ".")
 
+# ══ ORIENTATION PROFESSIONNELLE (v3.96) ════════════════════════════════════════════════════════
+# Démarche de conseiller d'orientation : situer la personne, comprendre ce qui compte pour elle,
+# proposer 2-3 pistes argumentées et UNE prochaine étape. Mémoire dans profil_plus["orientation"].
+_ORIENT_TTL_MIN = 30           # durée pendant laquelle les messages de suite restent « en orientation »
+_ORIENT_LIST_KEYS = ("interets", "forces", "contraintes", "valeurs", "pistes")
+_ORIENT_ACK_RE = re.compile(r"^\s*(merci\w*|ok+|d'?accord|cool|super|top|parfait|g[ée]nial|bien\s+re[çc]u)\b[\s!.👍🙏]*$", re.I)
+
+ORIENT_METHOD = (
+    " Tu es ici en posture de CONSEILLER D'ORIENTATION (lycéens, étudiants, diplômés, actifs en reconversion, "
+    "Afrique de l'Ouest francophone : Bénin d'abord). MÉTHODE :"
+    " (1) Si l'essentiel manque pour conseiller (où il en est : classe/série/diplôme/métier actuel, OU ce qui "
+    "l'attire), ne déverse pas une liste : reformule son besoin en une phrase, donne UN repère utile tout de "
+    "suite, puis pose UNE seule question, la plus utile pour avancer."
+    " (2) Sinon propose 2 ou 3 pistes (métiers ou filières). Pour chacune : pourquoi elle lui correspond "
+    "(relie à ce qu'IL a dit : goûts, forces, résultats au test), le chemin (type de diplôme, durée typique, "
+    "et une voie plus courte quand elle existe : BTS, licence pro, formation qualifiante, apprentissage), et "
+    "le réalisme du marché local/régional en termes qualitatifs."
+    " (3) Termine par UNE prochaine étape concrète (une action, ou une commande NexMove parmi : /testorientation, "
+    "/ecoles <domaine>, /formations <domaine>, /mobilite <domaine>, /compatibilite <poste>, /creercv)."
+    " POSTURE : respecte ses choix et ses contraintes (argent, famille, ville, durée) ; ne juge jamais "
+    "(« l'école c'est pas pour moi » -> valorise les voies pro, l'apprentissage, l'artisanat qualifié) ; après un "
+    "échec (concours, année ratée), normalise en une phrase puis donne des plans B concrets ; en cas de "
+    "désaccord avec les parents, aide-le à construire un argumentaire et un compromis, sans le monter contre eux ; "
+    "en reconversion, pars de ses compétences transférables. Si deux voies s'opposent, compare-les honnêtement "
+    "(durée, coût, débouchés, ce que ça demande au quotidien) au lieu de trancher à sa place."
+    " VÉRITÉ : aucun chiffre inventé (salaire, taux d'insertion, frais) : si on te demande un salaire, donne au "
+    "plus des repères qualitatifs et dis comment vérifier ; ne cite aucune école, bourse, entreprise ou URL "
+    "précise (renvoie vers /ecoles ou /mobilite qui cherchent sur le web réel) ; si tu ne sais pas, dis-le."
+    " FORME : tutoie, chaleureux et direct, 170 mots max, puces « • » simples, *gras* avec une seule étoile, "
+    "pas de titre, pas d'emoji en rafale, pas de « en tant qu'IA »."
+)
+
+def _orient_memo(session: dict) -> dict:
+    pp = session.setdefault("profil", {}).setdefault("profil_plus", {})
+    memo = pp.get("orientation")
+    if not isinstance(memo, dict):
+        memo = {}
+        pp["orientation"] = memo
+    return memo
+
+def _orient_active(session: dict) -> bool:
+    try:
+        return datetime.fromisoformat(session.get("orient_until") or "") > datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        return False
+
+def _orient_touch(session: dict) -> None:
+    session["orient_until"] = (datetime.now(timezone.utc) + timedelta(minutes=_ORIENT_TTL_MIN)).isoformat()
+
+def _orient_memo_text(session: dict) -> str:
+    """Ce que le conseiller sait déjà (orientation + CV + préférences), en lignes courtes."""
+    memo = _orient_memo(session)
+    profil = session.get("profil") or {}
+    prefs = profil.get("preferences") or {}
+    lignes = []
+    sit = memo.get("niveau")
+    if sit:
+        extra = []
+        if memo.get("serie"):
+            extra.append(f"bac série {memo['serie']}")
+        if memo.get("poste"):
+            extra.append(f"poste : {memo['poste']}")
+        if memo.get("experience_ans"):
+            extra.append(f"{memo['experience_ans']} ans d'expérience")
+        lignes.append(f"- Situation : {sit}" + (f" ({', '.join(extra)})" if extra else ""))
+    elif memo.get("serie"):
+        lignes.append(f"- Bac série {memo['serie']}")
+    code = memo.get("riasec")
+    if code:
+        lignes.append("- Test d'intérêts : " + " – ".join(ori.RIASEC[l][0] for l in code if l in ori.RIASEC))
+    labels = {"interets": "Ce qui l'attire", "forces": "Ses points forts", "contraintes": "Ses contraintes",
+              "valeurs": "Ce qui compte pour lui/elle", "pistes": "Pistes déjà évoquées"}
+    for k in _ORIENT_LIST_KEYS:
+        v = [str(x) for x in (memo.get(k) or []) if str(x).strip()]
+        if v:
+            lignes.append(f"- {labels[k]} : {', '.join(v[:6])}")
+    brief = _cv_brief(profil) if session.get("cv_parsed") else ""
+    if brief:
+        lignes.append(f"- CV : {brief}")
+    if prefs.get("objectif"):
+        lignes.append(f"- Objectif déclaré : {prefs['objectif']}")
+    if prefs.get("pays_cibles"):
+        lignes.append(f"- Pays visés : {prefs['pays_cibles']}")
+    return "\n".join(lignes)
+
+def _orient_merge(session: dict, upd) -> None:
+    """Fusionne ce que l'IA a relevé (UNIQUEMENT ce que la personne a dit) dans la mémoire d'orientation."""
+    if not isinstance(upd, dict):
+        return
+    memo = _orient_memo(session)
+    for k in _ORIENT_LIST_KEYS:
+        vals = upd.get(k)
+        if isinstance(vals, str):
+            vals = [vals]
+        if not isinstance(vals, list):
+            continue
+        cur = [str(x) for x in (memo.get(k) or [])]
+        for v in vals:
+            v = re.sub(r"\s+", " ", str(v)).strip(" .")[:60]
+            if v and v.lower() not in _ONBOARD_VIDES and v.lower() not in (c.lower() for c in cur):
+                cur.append(v)
+        if cur:
+            memo[k] = cur[-8:]
+    for k in ("niveau", "serie"):
+        v = str(upd.get(k) or "").strip()[:40]
+        if v and not memo.get(k) and v.lower() not in _ONBOARD_VIDES:
+            memo[k] = v
+
+async def _orientation_reply(session: dict, question: str) -> str:
+    """Un tour de conseil d'orientation : situe, argumente, propose une étape. Met à jour la mémoire."""
+    memo = _orient_memo(session)
+    for k, v in ori.detect_situation(question).items():
+        memo[k] = v
+    known = _orient_memo_text(session)
+    user = (f"CE QUE TU SAIS DÉJÀ DE LA PERSONNE (ne le redemande pas) :\n{known or '(rien pour l’instant)'}\n\n"
+            f"DIALOGUE RÉCENT :\n{_recent_dialogue(session, 6)}\n\nSON MESSAGE : {question}")
+    system = (CONSEILLER_PERSONA + ORIENT_METHOD +
+              ' Réponds en JSON STRICT : {"reponse":"<ton message>","memo":{"niveau":"","serie":"","interets":[],'
+              '"forces":[],"contraintes":[],"valeurs":[],"pistes":[]}}. Dans "memo", ne mets QUE ce que la personne '
+              'a dit elle-même dans SON MESSAGE (mots courts) ; dans "pistes", les métiers/filières que TU viens de proposer.')
+    rep = ""
+    try:
+        r = await call_groq(system, user, temperature=0.4, max_tokens=900, json_mode=True, tier="smart")
+        if isinstance(r, dict):
+            rep = str(r.get("reponse") or "").strip()
+            _orient_merge(session, r.get("memo"))
+    except Exception as e:
+        logger.warning(f"[orientation] {e}")
+    if not rep or _looks_truncated(rep):
+        rep = await _gen_text(CONSEILLER_PERSONA + ORIENT_METHOD, user, max_tokens=700, temperature=0.4, tier="smart") or rep
+    _orient_touch(session)
+    return rep or ("Je veux bien t'aider à y voir clair 🙂 Dis-moi où tu en es (classe, diplôme ou métier actuel) "
+                   "et ce qui t'attire, même vaguement. Tu peux aussi faire le /testorientation (6 questions, 2 min).")
+
+def _orient_test_start(session: dict) -> str:
+    session["orient_test"] = {"qi": 0, "answers": []}
+    session["sim_mode"] = False; session["tool_mode"] = None; session["guide_mode"] = False
+    txt, kb = ori.format_question(0)
+    session["_kb_options"] = kb
+    return ("🧭 *Test d'orientation · 6 questions, 2 minutes*\n"
+            "Il n'y a ni bonne ni mauvaise réponse : choisis ce qui te ressemble *vraiment*.\n\n" + txt)
+
+async def _orient_test_feed(session: dict, letter: str) -> str:
+    st = session.get("orient_test") or {"qi": 0, "answers": []}
+    st["answers"] = (st.get("answers") or []) + [letter]
+    st["qi"] = int(st.get("qi", 0)) + 1
+    if st["qi"] < len(ori.TEST_QUESTIONS):
+        session["orient_test"] = st
+        txt, kb = ori.format_question(st["qi"])
+        session["_kb_options"] = kb
+        return txt
+    session.pop("orient_test", None)
+    code = ori.score_test(st["answers"])
+    memo = _orient_memo(session)
+    memo["riasec"] = code
+    _orient_touch(session)
+    msg = ori.format_result(code)
+    if memo.get("niveau") or memo.get("interets") or session.get("cv_parsed"):
+        # On connaît déjà sa situation : on transforme tout de suite le résultat en pistes concrètes.
+        perso = await _orientation_reply(session, "Je viens de finir le test d'orientation. À partir de mon résultat "
+                                         "et de ma situation, quelles pistes concrètes me conseilles-tu ?")
+        return msg + "\n\n" + perso
+    return (msg + "\n\n👉 *Pour aller plus loin :* dis-moi où tu en es (classe et série, diplôme, ou métier actuel) "
+            "et ce qui compte pour toi (budget, ville, durée des études). Je transforme ces pistes en parcours concret.")
+
+async def _orient_test_answer(session: dict, t: str, now: str):
+    """Réponse tapée pendant le test. None = ce n'est pas une réponse (on sort du test, traitement normal)."""
+    st = session.get("orient_test") or {}
+    qi = int(st.get("qi", 0))
+    letter = ori.parse_test_answer(t, qi)
+    if letter:
+        _push(session, "user", t)
+        msg = await _orient_test_feed(session, letter)
+        _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+    if len(t) > 25 or _flow_input_kind(t) == "switch":
+        session.pop("orient_test", None)   # autre demande : on sort du test sans bloquer la personne
+        return None
+    _push(session, "user", t)
+    txt, kb = ori.format_question(qi)
+    session["_kb_options"] = kb
+    msg = "Réponds simplement *1, 2, 3 ou 4* 🙂 (ou /annuler pour arrêter le test)\n\n" + txt
+    _push(session, "assistant", msg); session["derniere_activite"] = now
+    return msg, session
+
+def _orient_followup(session: dict, low: str, t: str) -> bool:
+    """Message de SUITE d'une conversation d'orientation (« et pour le dessin ? », « ça dure combien ? ») :
+    on reste en orientation tant qu'aucune autre intention claire n'apparaît."""
+    if not _orient_active(session) or low.startswith("/") or _ORIENT_ACK_RE.match(t) or len(t) > 500:
+        return False
+    cmd = _free_text_to_command(low, t)
+    if not cmd:
+        return True
+    base = cmd.split()[0]
+    # « formation / école / métier » dans une suite d'orientation = on parle du parcours, pas d'une recherche.
+    if base in ("/formations", "/ecoles") and not re.search(r"\b(cherche|trouve|liste|donne|envoie|montre)\b", low):
+        return True
+    return base == "/orientation"
+
+
 async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
@@ -4009,6 +4241,14 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if session.get("sim_mode") and not low.startswith("/"):
         _push(session, "user", t)
         return await _simulation_turn(session, t)
+
+    # Test d'orientation en cours : capte « 1..4 » / le libellé ; toute autre demande fait sortir du test.
+    if session.get("orient_test") and not low.startswith("/"):
+        _r = await _orient_test_answer(session, t, now)
+        if _r:
+            return _r
+    elif session.get("orient_test") and low.startswith("/") and not low.startswith("/testorientation"):
+        session.pop("orient_test", None)
 
     # ADMIN en langage naturel : « stats », « les annonces », « valide 3 », « diffuser … » -> commande.
     # Réservé au compte admin, hors flux guidés (pour qu'il puisse aussi tester les parcours candidats).
@@ -4369,6 +4609,30 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         except Exception as e:
             logger.error(f"campusfrance: {e}")
             msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith(("/testorientation", "/test-orientation", "/quiz")):
+        msg = _orient_test_start(session)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith(("/orientation", "/orienter", "/orientepro")):
+        q = t.split(maxsplit=1)[1].strip() if len(t.split(maxsplit=1)) > 1 else ""
+        memo = _orient_memo(session)
+        if not q and not (memo.get("niveau") or memo.get("riasec") or memo.get("interets") or session.get("cv_parsed")):
+            msg = ("🧭 *On va trouver ta voie ensemble.*\n\n"
+                   "Dis-moi en une phrase où tu en es et ce qui t'attire, même vaguement. Par exemple :\n"
+                   "• « j'ai mon bac D et j'aime la santé, mais pas 7 ans d'études »\n"
+                   "• « je suis comptable depuis 8 ans, je veux changer »\n"
+                   "• « j'hésite entre droit et économie »\n\n"
+                   "Pas d'idée du tout ? Le /testorientation (6 questions, 2 min) donne des premières pistes.")
+            session["_kb_options"] = [("🧭 Faire le test", "act:ori_test")]
+            _orient_touch(session)
+        else:
+            msg = await _orientation_reply(session, q or "Fais-moi un point d'orientation à partir de ce que tu sais de moi.")
+            if not memo.get("riasec"):
+                session["_kb_options"] = [("🧭 Test (2 min)", "act:ori_test")]
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4804,6 +5068,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         session["tool_mode"] = None; session.pop("split_spec", None); session.pop("compress_target", None)
         session["guide_mode"] = False; session.pop("guide_context", None)
         session["sim_mode"] = False
+        session.pop("orient_test", None); session.pop("orient_until", None)
         if session.get("etape") in ("CVBUILD", "RECRUIT"):
             session["etape"] = "ATTENTE_CV" if session.get("etape") == "CVBUILD" else "ACTIF"
         session["recruit_step"] = None
@@ -6804,12 +7069,17 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 msg, session = await process_text_message(session, intent_cmd)
                 # Nudge CV contextuel : seulement s'il manque ET qu'on ne l'a pas déjà montré récemment
                 # (évite le « envoie ton CV » collé à chaque message, qui lasse).
-                if not session.get("cv_parsed") and _cv_nudge_due(session):
+                if (not session.get("cv_parsed") and _cv_nudge_due(session)
+                        and base not in ("orientation", "testorientation")):   # un lycéen qui s'oriente n'a pas besoin d'un CV
                     msg += "\n\n📄 _Envoie ton CV (PDF, Word ou image) · ou tape /creercv · pour que je personnalise tout ça à ton profil._"
                 session["derniere_activite"] = now
                 return msg, session
             if len(t) > 3:
                 session["pending_intent"] = intent_cmd   # intention nécessitant le profil : relancée après l'onboarding
+        # Suite d'une conversation d'orientation (lycéen sans CV…) : on reste en conseil (v3.96).
+        if _orient_followup(session, low, t):
+            session["historique"] = (session.get("historique") or [])[:-1]   # le handler re-pousse le message
+            return await process_text_message(session, "/orientation " + t)
         # 3) Sinon, on répond VRAIMENT à sa question (RGPD, prix, « c'est quoi »…) via l'IA, puis on nudge le CV.
         msg = await _preonboarding_reply(session, t)
         _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -6962,6 +7232,10 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    # Suite d'une conversation d'orientation : on reste dans la démarche de conseil (v3.96).
+    if _orient_followup(session, low, t):
+        return await process_text_message(session, "/orientation " + t)
+
     _followup_liste = _refers_to_prior_list(low, session)
     if not _followup_liste:
         cmd = _free_text_to_command(low, t)
@@ -6990,7 +7264,7 @@ L'utilisateur écrit librement. Deux cas :
 1) Il veut une ACTION → renvoie la commande + son argument (champ "action" + "argument").
 2) C'est une conversation (salutation, question ouverte, remerciement) → réponds toi-même (champ "message"), sans action.
 RÈGLE CLÉ : dès qu'il demande de TROUVER/CHERCHER des opportunités, bourses, offres, emplois, stages ou programmes → renvoie TOUJOURS action="mobilite" (recherche sur sources web RÉELLES) avec son argument. Ne liste JAMAIS d'opportunités toi-même dans "message".
-COMMANDES: veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
+COMMANDES: orientation <question> (CHOISIR un métier/une filière/des études, reconversion, débouchés, hésitation entre deux voies) · testorientation (test d'intérêts en 6 questions) · veille (offres adaptées) · mobilite <domaine/pays> (offres/bourses/emplois ciblés, LOCAUX ou à l'étranger) · formations <domaine> · ecoles <domaine> · logement <ville> · entretien <type> · campusfrance · canada · procedure <pays> · budget <ville> · eligibilite <cible> · chances <cible> (évaluer ses chances d'admission/visa/bourse/emploi) · compatibilite <poste> (score par compétence) · simulation (entretien blanc) · dossier <cible> · postuler <cible> · commentpostuler <cible> (comment candidater : e-mail/formulaire prêt à copier) · creercv (créer un CV) · mescandidatures (suivi) · outils (boîte à outils PDF/docs) · extraire (texte d'un scan/photo) · compresser · compresserimage · enimages · parrainage · offres · credits · traduire <texte> · status · profil · parcours · aide.
 REGLES du "message": français, TUTOIE (jamais « vous » ni « Bonjour »). INTERDIT de redemander une info déjà dans CE QUE TU SAIS DÉJÀ (ni le CV, ni l'objectif, ni le pays s'ils y figurent). Raisonne comme un conseiller d'orientation : appuie tes conseils sur ses POINTS FORTS, ses AXES à renforcer, son SAVOIR-ÊTRE et ses CONTRAINTES quand ils sont connus (réponse logique et personnalisée). Avance : propose UNE SEULE action concrète suivante — la PROCHAINE ÉTAPE LA PLUS UTILE indiquée dans CE QUE TU SAIS (pas un menu, pas une liste de 4 options ; au bon niveau pour là où il en est). Max 90 mots. Ne PRÉTENDS JAMAIS avoir lu un lien/URL : invite à le coller pour l'analyser. ANTI-INVENTION ABSOLUE : ne cite JAMAIS de bourse, programme, université, entreprise, concours ou URL précis de ta mémoire (les opportunités viennent UNIQUEMENT de la recherche web via mobilite/veille). Pas de noms inventés.
 MULTI-ÉTAPES : si la demande contient DEUX besoins enchaînés (ex. « cherche X ET dis-moi mes chances », « trouve une bourse PUIS prépare mon dossier »), renseigne aussi "then" avec la 2e action (sinon laisse "then" vide). Max 2 actions.
 JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"action":"","argument":""}},"message":"<réponse si pas d'action>"}}"""
@@ -7868,6 +8142,17 @@ async def handle_action(session, data, callback_id=None):
     if callback_id:
         await answer_callback(callback_id)
     # Confirmation / choix d'onboarding / clarification d'objectif cliquables : on rejoue comme si tapé.
+    if data.startswith("ori:"):
+        # Bouton du test d'orientation : ori:<question>:<1-4>. Clic périmé (autre question) -> ignoré.
+        try:
+            _, qi, n = data.split(":", 2)
+            qi, n = int(qi), int(n)
+        except ValueError:
+            return session
+        st = session.get("orient_test") or {}
+        if not st or int(st.get("qi", -1)) != qi or not (1 <= n <= 4):
+            return session
+        data = "onb:" + str(n)
     if data.startswith(("onb:", "pref:", "obj:")):
         val = data.split(":", 1)[1]
         txt = "/start" if val == "reset" else val
@@ -7890,6 +8175,10 @@ async def handle_action(session, data, callback_id=None):
             cmd = session.pop("pending_intent", "") or "/veille"
             msg, session = await process_text_message(session, cmd)
             await deliver_text(session, msg, with_menu=True)
+            return session
+        if act == "ori_test":
+            msg, session = await process_text_message(session, "/testorientation")
+            await deliver_text(session, msg, options=session.pop("_kb_options", None))
             return session
         if act in ("cv_ats", "cv_graphique", "cv_deux"):
             style = {"cv_ats": "ats", "cv_graphique": "graphic", "cv_deux": "deux"}[act]
