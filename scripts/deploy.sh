@@ -22,7 +22,12 @@ BRANCH="${DEPLOY_BRANCH:-main}"
 HEALTH_URL="${HEALTH_URL:-https://api-nexmove.blvckunlimited.space/health}"
 
 # Fichiers de code à synchroniser (ceux que le Dockerfile COPIE) — JAMAIS .env ni data/.
-CODE_FILES=(main.py db.py llm.py http_client.py channels.py requirements.txt Dockerfile)
+# TOUS les modules Python (*.py) sont pris automatiquement : un nouveau module (ex. orientation.py)
+# n'a plus besoin d'être ajouté à la main ici — l'oubli cassait le démarrage de l'API.
+CODE_FILES=(requirements.txt Dockerfile)
+for _py in "$SRC_API"/*.py; do
+  [ -f "$_py" ] && CODE_FILES+=("$(basename "$_py")")
+done
 
 echo "➤ 1/4  Mise à jour du code (origin/$BRANCH)…"
 git fetch origin "$BRANCH"
