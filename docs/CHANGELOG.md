@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.99 — La CI teste enfin le vrai chemin de déploiement (audit N-03)
+- **Le constat** : la CI construisait l'image depuis `api/` en direct, alors qu'en production `deploy.sh` **recopie** d'abord les fichiers ailleurs. Cet écart a mis l'API à terre en v3.96 (`orientation.py` jamais copié) : tous les tests passaient, la production plantait au démarrage.
+- `deploy.sh` accepte deux interrupteurs — `NEXMOVE_SKIP_GIT=1` et `NEXMOVE_SKIP_BUILD=1` — pour que la CI rejoue **exactement** la synchronisation de production sans toucher à git. Comportement inchangé en usage normal.
+- Nouveau job CI **`deploy-path`** : simule un serveur, rejoue la copie, construit l'image **depuis les fichiers déployés** et vérifie que `/health` répond.
+- `tests/test_deploy.py` (5 tests, moins d'une seconde, sans Docker) : tout module de `api/` est copié, aucun import local ne manque après déploiement, `Dockerfile` et `requirements.txt` sont présents, le Dockerfile n'oublie aucun module, et `deploy.sh` n'écrase jamais `.env` ni `data/`. Vérifié : en retirant `orientation.py`, le test échoue bien — il attrape la panne historique.
+
 ## v3.98 — Sauvegardes chiffrées avec restauration testée (audit A-05)
 - **Le constat** : aucun script de sauvegarde n'existait. Un disque perdu = toutes les données utilisateurs perdues définitivement. C'était le seul incident sans retour en arrière possible.
 - `scripts/backup.sh` : copie **cohérente** de la base via l'API `backup()` de SQLite — fiable même pendant que le bot écrit, là où un simple `cp` produit parfois une archive corrompue. Archive chiffrée AES-256 (elle contient `.env`, donc tous les secrets), rétention configurable, et **auto-vérification** : l'archive est rouverte, l'intégrité SQLite contrôlée et les sessions comptées. Sans phrase secrète, le script **refuse** de s'exécuter plutôt que d'écrire les secrets en clair.

@@ -72,3 +72,51 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f nexmove-ci || true
+
+  # ─── Test du CHEMIN DE DÉPLOIEMENT RÉEL (audit N-03) ───────────────────────────────
+  # docker-smoke construit l'image depuis api/ en direct. Or en production, deploy.sh
+  # RECOPIE d'abord les fichiers vers un autre dossier : c'est cet écart qui a mis l'API
+  # à terre en v3.96 (orientation.py absent de la liste copiée). Ce job rejoue la copie
+  # puis construit l'image depuis le dossier synchronisé — le vrai chemin.
+  deploy-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Simuler un serveur de production
+        run: |
+          mkdir -p "$RUNNER_TEMP/prod/data"
+          echo "FORGE_NEX_API_KEY=ci-test-key-assez-longue-pour-passer" > "$RUNNER_TEMP/prod/.env"
+          printf 'services:\n  api:\n    build: .\n' > "$RUNNER_TEMP/prod/docker-compose.yml"
+
+      - name: Rejouer la synchronisation de deploy.sh
+        env:
+          NEXMOVE_SKIP_GIT: "1"
+          NEXMOVE_SKIP_BUILD: "1"
+        run: |
+          NEXMOVE_DEPLOY_DIR="$RUNNER_TEMP/prod" ./scripts/deploy.sh
+          echo "— fichiers réellement déployés —"; ls -1 "$RUNNER_TEMP/prod"
+
+      - name: Construire l'image depuis les fichiers DÉPLOYÉS
+        run: docker build -t nexmove-deploy "$RUNNER_TEMP/prod"
+
+      - name: L'API démarre-t-elle vraiment ?
+        run: |
+          docker run -d --name nexmove-deploy -p 8001:8000 \
+            -e FORGE_NEX_API_KEY=ci-test-key-assez-longue-pour-passer nexmove-deploy
+          for i in $(seq 1 20); do
+            sleep 1
+            if curl -sSf http://127.0.0.1:8001/health >/dev/null 2>&1; then
+              echo "✅ /health répond après ${i}s (chemin de déploiement réel)"
+              curl -s http://127.0.0.1:8001/health; exit 0
+            fi
+          done
+          echo "❌ L'API déployée ne démarre pas — c'est la panne de la v3.96. Logs :"
+          docker logs nexmove-deploy --tail 80
+          exit 1
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f nexmove-deploy || true
