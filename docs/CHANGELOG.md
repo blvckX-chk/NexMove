@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.98 — Sauvegardes chiffrées avec restauration testée (audit A-05)
+- **Le constat** : aucun script de sauvegarde n'existait. Un disque perdu = toutes les données utilisateurs perdues définitivement. C'était le seul incident sans retour en arrière possible.
+- `scripts/backup.sh` : copie **cohérente** de la base via l'API `backup()` de SQLite — fiable même pendant que le bot écrit, là où un simple `cp` produit parfois une archive corrompue. Archive chiffrée AES-256 (elle contient `.env`, donc tous les secrets), rétention configurable, et **auto-vérification** : l'archive est rouverte, l'intégrité SQLite contrôlée et les sessions comptées. Sans phrase secrète, le script **refuse** de s'exécuter plutôt que d'écrire les secrets en clair.
+- `scripts/restore.sh` : inspection sans effet de bord par défaut ; `--oui` pour restaurer. Refuse si le conteneur tourne encore (restaurer sous une base ouverte la corromprait), met l'état courant de côté avant d'écraser, et nettoie les journaux WAL orphelins.
+- `tests/test_backup.py` : le cycle **sauvegarde → base détruite → restauration → données vérifiées** est rejoué en CI. Une sauvegarde jamais restaurée n'est pas une sauvegarde.
+- `docs/SAUVEGARDE.md` : mise en place, planification, et la règle qui compte — sortir l'archive du serveur.
+
 ## v3.97 — Droit à l'effacement : /supprimer efface vraiment (audit A-01)
 - **Le constat** : `/supprimer` ne vidait que le blob de session. Le **profil portable** (`/moncode`), les candidatures, les retours, les messages à l'équipe, les opportunités, les compteurs d'usage et les **fichiers déposés sur le disque** survivaient. Le CV restait donc **restaurable avec `/moi <code>` après une « suppression »**, alors que la page confidentialité promettait l'effacement.
 - **Correctif** : `delete_user_data()` (api/db.py) efface 13 tables en **une transaction** (tout ou rien), plus les fichiers du disque. Les lignes à garder pour l'anti-fraude (code promo déjà consommé) et pour ne pas amputer les données d'autrui (parrainage d'un autre) sont **anonymisées**, pas supprimées.
