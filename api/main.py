@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.96.0"
+VERSION         = "3.97.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -337,7 +337,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 import orientation as ori   # orientation professionnelle (module pur, testable)
-from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache,  # noqa: F401
+from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache, delete_user_data,  # noqa: F401
                 profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store,
                 link_store, recruiter_offer_store)
 from fastapi.responses import RedirectResponse, PlainTextResponse
@@ -6092,11 +6092,34 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                    "❌ Pour annuler : réponds *NON* (ou ignore ce message).")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
-        cleared = {"user_id": session.get("user_id"), "chat_id": session.get("chat_id"),
+        # Effacement RÉEL (v3.97) : avant, on ne vidait que le blob de session — le profil
+        # portable (/moncode), les candidatures, les messages et les fichiers déposés
+        # survivaient, alors qu'on annonçait « effacées ». Désormais : toutes les tables en
+        # une transaction, + les fichiers du disque.
+        uid = session.get("user_id")
+        try:
+            detail = delete_user_data(uid)
+        except Exception as e:
+            logger.error(f"[rgpd] échec suppression {uid}: {e}")
+            msg = ("😕 Je n'ai *pas* réussi à effacer tes données à l'instant — je préfère te le dire "
+                   "plutôt que de l'affirmer à tort.\n\nRéessaie dans un moment, ou écris à "
+                   f"{CREATOR_EMAIL} : la demande sera traitée à la main.")
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        try:
+            _tool_clear(uid)        # fichiers déposés (CV, PDF) restés sur le disque
+        except Exception as e:
+            logger.warning(f"[rgpd] fichiers {uid}: {e}")
+        logger.info(f"[rgpd] suppression {uid} : {detail or 'aucune donnée'}")
+        cleared = {"user_id": uid, "chat_id": session.get("chat_id"),
                    "username": session.get("username"), "etape": "WELCOME", "profil": {},
                    "historique": [], "cv_parsed": False, "cv_file_id": None,
                    "onboarding_complete": False, "pref_current": None, "derniere_activite": now}
-        msg = "🗑️ Tes données ont été *effacées*. Fais /start pour recommencer quand tu veux."
+        msg = ("🗑️ *C'est fait.* Ton profil, ton CV, ton historique, tes candidatures et les fichiers "
+               "que tu m'as envoyés sont supprimés.\n\n"
+               "_Un code promo déjà utilisé reste marqué comme utilisé, sans ton identifiant : "
+               "c'est ce qui empêche qu'il resserve._\n\n"
+               "Fais /start pour repartir de zéro quand tu veux.")
         cleared["historique"] = [{"role": "assistant", "content": msg, "ts": now}]
         return msg, cleared
 

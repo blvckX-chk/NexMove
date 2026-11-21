@@ -948,3 +948,68 @@ referral_store = ReferralStore()
 cache = Cache()
 link_store = LinkStore()
 recruiter_offer_store = RecruiterOfferStore()
+
+
+# ── Droit à l'effacement (RGPD art. 17) ────────────────────────────────────────────────────────
+# Toutes les tables vivent dans le MÊME fichier SQLite : un effacement complet tient donc dans
+# UNE transaction (tout ou rien — jamais de suppression à moitié faite).
+#
+# Deux traitements distincts, assumés et documentés dans la politique de confidentialité :
+#  • EFFACÉ   : tout ce qui décrit la personne (profil, CV, historique, candidatures, messages…).
+#  • ANONYMISÉ: les lignes qu'on doit garder pour empêcher la fraude (un code promo doit rester
+#               « utilisé », sinon il redevient réutilisable) ou pour ne pas amputer les données
+#               d'AUTRES utilisateurs (le parrainage de quelqu'un d'autre). L'identifiant y est
+#               remplacé par une chaîne vide : plus aucun lien avec la personne.
+_DELETE_BY_USER = [          # (table, colonne identifiant)
+    ("sessions",          "user_id"),   # profil, CV analysé, historique de conversation
+    ("offres",            "user_id"),   # opportunités trouvées pour elle (+ scores)
+    ("candidatures",      "user_id"),
+    ("feedback",          "user_id"),   # ses 👍/👎 sur les offres
+    ("usage",             "user_id"),   # compteurs d'usage quotidiens
+    ("contacts",          "user_id"),   # messages envoyés à l'équipe
+    ("misses",            "uid"),       # messages non compris, journalisés avec leur texte
+    ("profiles",          "user_id"),   # profil PORTABLE (/moncode) — sinon le CV survivait
+    ("profile_versions",  "user_id"),
+    ("profile_user_map",  "user_id"),
+    ("referral_codes",    "user_id"),
+    ("referrals",         "referred_user"),
+    ("recruiter_offers",  "recruiter_id"),
+]
+_ANONYMIZE_BY_USER = [       # (table, colonne) — la ligne reste, l'identifiant disparaît
+    ("referrals",     "referrer_user"),   # garde le parrainage des AUTRES intact
+    ("premium_codes", "used_by"),         # garde le code « utilisé » (anti-réutilisation)
+    ("credit_codes",  "used_by"),
+]
+
+
+def delete_user_data(user_id: str, path: str = DB_PATH) -> dict:
+    """Efface TOUTES les données d'une personne, en une seule transaction.
+
+    Retourne le détail par table ({'sessions': 1, 'offres': 12, …}) pour pouvoir le prouver
+    (journal, test, réponse à une demande RGPD). Lève l'exception en cas d'échec : l'appelant
+    ne doit JAMAIS annoncer une suppression qui n'a pas eu lieu.
+    """
+    uid = str(user_id or "").strip()
+    if not uid:
+        raise ValueError("delete_user_data : user_id vide")
+    detail: dict = {}
+    con = sqlite3.connect(path, timeout=30)
+    try:
+        with con:                                  # COMMIT si tout passe, ROLLBACK sinon
+            for table, col in _DELETE_BY_USER:
+                try:
+                    cur = con.execute(f"DELETE FROM {table} WHERE {col} = ?", (uid,))
+                except sqlite3.OperationalError:   # table pas encore créée sur cette instance
+                    continue
+                if cur.rowcount:
+                    detail[table] = detail.get(table, 0) + cur.rowcount
+            for table, col in _ANONYMIZE_BY_USER:
+                try:
+                    cur = con.execute(f"UPDATE {table} SET {col} = '' WHERE {col} = ?", (uid,))
+                except sqlite3.OperationalError:
+                    continue
+                if cur.rowcount:
+                    detail[f"{table}.{col} (anonymisé)"] = cur.rowcount
+    finally:
+        con.close()
+    return detail

@@ -3648,7 +3648,9 @@ def test_suppression_confirmee_efface():
     s = {"user_id": "del2", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}}, "historique": [],
          "cv_parsed": True, "awaiting_delete_confirm": True}
     msg, s = _run(main.process_text_message(s, "oui"))
-    assert s["profil"] == {} and s["cv_parsed"] is False and "effac" in msg.lower()
+    # v3.97 : la suppression est RÉELLE (toutes les tables) et le message l'annonce sans ambiguïté.
+    assert s["profil"] == {} and s["cv_parsed"] is False
+    assert "supprim" in msg.lower() or "effac" in msg.lower()
 
 def test_suppression_annulee():
     s = {"user_id": "del3", "etape": "ACTIF", "profil": {"identite": {"nom": "X"}}, "historique": [],
