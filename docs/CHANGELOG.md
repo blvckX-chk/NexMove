@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v3.97 — Droit à l'effacement : /supprimer efface vraiment (audit A-01)
+- **Le constat** : `/supprimer` ne vidait que le blob de session. Le **profil portable** (`/moncode`), les candidatures, les retours, les messages à l'équipe, les opportunités, les compteurs d'usage et les **fichiers déposés sur le disque** survivaient. Le CV restait donc **restaurable avec `/moi <code>` après une « suppression »**, alors que la page confidentialité promettait l'effacement.
+- **Correctif** : `delete_user_data()` (api/db.py) efface 13 tables en **une transaction** (tout ou rien), plus les fichiers du disque. Les lignes à garder pour l'anti-fraude (code promo déjà consommé) et pour ne pas amputer les données d'autrui (parrainage d'un autre) sont **anonymisées**, pas supprimées.
+- **Honnêteté** : si l'effacement échoue, le bot le **dit** et ne vide pas la session, au lieu d'annoncer une suppression qui n'a pas eu lieu. Le détail par table est journalisé (preuve en cas de demande RGPD).
+- **Test de non-régression structurel** : un test balaie **toutes les tables et colonnes** de la base ; une future table contenant des données personnelles et non câblée à l'effacement fera échouer la CI.
+- Page confidentialité alignée sur le comportement réel (liste précise de ce qui est supprimé, et de ce qui est conservé anonymisé).
+
 ## v3.96 — Orientation professionnelle : un vrai conseiller d'orientation + routage du langage naturel
 - **Diagnostic** : sur 40 phrases réelles, 11 étaient mal routées (« je m'appelle Koffi » → recours, « mon visage » → visa, « je veux changer de carrière mais je sais pas vers quoi » → recherche d'offres, « quelle formation après le bac pour devenir pilote » → formations en ligne, « l'école c'est pas pour moi » → écoles…), et toutes les vraies questions d'orientation tombaient dans le chat générique. Après : 40/40.
 - **Nouveau `/orientation`** (déclenché aussi en langage naturel : choisir un métier ou une filière, hésiter entre deux voies, débouchés, salaire d'un métier, reconversion, échec à un concours, pression des parents, pas les moyens d'étudier, entrepreneuriat…). Démarche de conseiller : si l'essentiel manque, une seule question ciblée ; sinon 2-3 pistes argumentées (pourquoi pour toi, chemin et voie courte, réalisme du marché) et une prochaine étape. Aucun chiffre ni école inventés.
