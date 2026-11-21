@@ -29,11 +29,22 @@ for _py in "$SRC_API"/*.py; do
   [ -f "$_py" ] && CODE_FILES+=("$(basename "$_py")")
 done
 
-echo "➤ 1/4  Mise à jour du code (origin/$BRANCH)…"
-git fetch origin "$BRANCH"
-git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH"
-echo "   version du repo : $(git rev-parse --short HEAD)"
+# Deux interrupteurs, pour que la CI puisse rejouer EXACTEMENT ce déploiement sans toucher
+# à git ni à un vrai serveur (c'est ce chemin-là qui avait cassé la prod en v3.96) :
+#   NEXMOVE_SKIP_GIT=1    -> ne met pas le dépôt à jour (on teste le code déjà présent)
+#   NEXMOVE_SKIP_BUILD=1  -> s'arrête après la copie, sans lancer Docker
+SKIP_GIT="${NEXMOVE_SKIP_GIT:-0}"
+SKIP_BUILD="${NEXMOVE_SKIP_BUILD:-0}"
+
+if [ "$SKIP_GIT" = "1" ]; then
+  echo "➤ 1/4  Mise à jour du code IGNORÉE (NEXMOVE_SKIP_GIT=1)."
+else
+  echo "➤ 1/4  Mise à jour du code (origin/$BRANCH)…"
+  git fetch origin "$BRANCH"
+  git checkout "$BRANCH"
+  git pull --ff-only origin "$BRANCH"
+  echo "   version du repo : $(git rev-parse --short HEAD)"
+fi
 
 echo "➤ 2/4  Choix du dossier de déploiement…"
 DEPLOY_DIR="${NEXMOVE_DEPLOY_DIR:-}"
@@ -60,6 +71,11 @@ if [ "$DEPLOY_DIR" != "$SRC_API" ]; then
   done
 else
   echo "➤ 3/4  Déploiement en place (le repo contient .env)."
+fi
+
+if [ "$SKIP_BUILD" = "1" ]; then
+  echo "➤ 4/4  Build IGNORÉ (NEXMOVE_SKIP_BUILD=1) · fichiers synchronisés dans $DEPLOY_DIR"
+  exit 0
 fi
 
 echo "➤ 4/4  Reconstruction et redémarrage du conteneur…"
