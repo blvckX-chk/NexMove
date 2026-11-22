@@ -8620,15 +8620,16 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
         spec = session.pop("split_spec", "")
         session["tool_mode"] = None
         session_manager.set(uid, session)
+        err = None
         try:
             data = await asyncio.to_thread(split_pdf, pdf_bytes, spec)
             ok = data and len(data) > 100
         except Exception as e:
-            logger.error(f"[split] {e}"); ok = False
+            logger.error(f"[split] {e}"); ok = False; err = e   # `e` disparaît à la sortie du except
         if ok:
             await deliver_file(session, f"{_slug((filename or 'document').rsplit('.',1)[0])}_pages_{spec.replace(',', '_')}.pdf", data, f"✂️ Pages {spec}")
         else:
-            await deliver_text(session, _err("découper ce PDF", e, ["Donne les pages sous la forme `1-3` ou `2,5,7`, sans dépasser le nombre de pages du document."]))
+            await deliver_text(session, _err("découper ce PDF", err, ["Donne les pages sous la forme `1-3` ou `2,5,7`, sans dépasser le nombre de pages du document."]))
         return
     if mode == "extract":
         session["tool_mode"] = None; session_manager.set(uid, session)
