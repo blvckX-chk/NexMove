@@ -1,5 +1,9 @@
 # NexMove — Spécifications techniques (v2.22)
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Spécifications antérieures ; l'architecture décrite (n8n, ngrok) n'est plus celle en service.
+> Dernière modification : août 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 Conseiller IA d'**orientation et d'opportunités** (études, emploi, bourses, fellowships), **local et
 international**, sur messageries, avec **langage naturel**, grounding web réel, matching sémantique,
 génération de documents et veille proactive.

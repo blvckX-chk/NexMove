@@ -1,52 +1,71 @@
 # NexMove
 
-**Conseiller IA d'orientation & d'opportunités sur messageries** — études, emploi, bourses, fellowships,
-**en local comme à l'international**. On lui parle **en langage naturel** (pas besoin de connaître les
-commandes) : il lit le CV, dresse un bilan, trouve de vraies opportunités adaptées, accompagne les
-procédures pas à pas et prépare les documents. Grounding web réel (Tavily), matching sémantique, génération
-de documents (PDF + Word) et veille proactive. Multi-canal : **Telegram** (en production), **WhatsApp** &
-**Messenger** (code prêt).
+**Conseiller IA d'orientation & d'opportunités sur messageries** — orientation scolaire et
+professionnelle, emploi, études, bourses, fellowships, **en local comme à l'international**.
+On lui parle **en langage naturel** (pas besoin de connaître les commandes) : il lit le CV,
+dresse un bilan, aide à choisir une voie, trouve de vraies opportunités adaptées, accompagne
+les procédures pas à pas et prépare les documents.
 
-## Architecture (v2.7)
+Multi-canal : **Telegram**, **WhatsApp** et **Messenger**.
+
+> 📍 **[docs/ETAT-ACTUEL.md](docs/ETAT-ACTUEL.md) décrit le système tel qu'il est aujourd'hui.**
+> C'est la référence à lire en premier — et la seule à suivre en cas de contradiction avec un
+> autre document.
+
+## Architecture
 
 ```
-Utilisateur ─(Telegram / WhatsApp / Messenger)─▶ FastAPI (toute la logique)
-                                                   ├─ SQLite (sessions, offres, candidatures, cache)
-                                                   ├─ Tavily (recherche web réelle)
-                                                   └─ Groq LLM (analyse, scoring, rédaction)
-n8n : WF1 (transport Telegram) · WF0 (veille 24 h)
+Telegram ─┐
+WhatsApp ─┼─► webhooks ─► Cloudflare (tunnel nommé) ─► API FastAPI (127.0.0.1:8000, Docker)
+Messenger ┘                                              │
+                                                         ├─► SQLite (WAL, un fichier)
+                                                         ├─► IA en cascade (Cerebras → Groq →
+                                                         │   Gemini → OpenRouter → Tchavi)
+                                                         └─► recherche web (opportunités réelles)
+
+Vitrine  nexmove.blvckunlimited.space  ─► Cloudflare Workers (dossier web/)
+API      api-nexmove.blvckunlimited.space
 ```
 
-Toute la logique vit dans `api/main.py` ; une **couche canal** (`deliver_text/menu/file`) route vers
-Telegram / WhatsApp / Messenger. Les canaux sont **indépendants** et partagent les mêmes fonctions.
+Le code vit dans `api/` (6 modules). Une **couche canal** (`deliver_text / menu / file`) route
+vers Telegram, WhatsApp ou Messenger : les canaux sont indépendants et partagent la même
+logique. Telegram passe par un **webhook natif** — n8n n'est plus sur le chemin critique.
 
-## Commandes
+## Quelques commandes
 
-`/start` · `/tuto` · `/veille` · `/mobilite <pays/domaine>` · `/campusfrance` · `/parcours` · `/etape` ·
-`/ecoles <domaine>` · `/logement <ville>` · `/entretien` · `/canada` · `/procedure <pays>` · `/budget <ville>` · `/eligibilite <cible>` ·
-`/dossier <cible>` · `/postuler <cible>` · `/formations <domaine>` ·
-`/compresser` · `/fusionner` · `/enpdf` · `/decouper <pages>` · `/traduire <texte>` ·
-`/rappels` · `/digest` · `/profil` · `/status` · `/supprimer`
-(menu à boutons : Trouver · Procédures · Candidater · Formations · Mon espace · Aide).
+Orientation : `/orientation <ta question>` · `/testorientation`
+Opportunités : `/veille` · `/mobilite <pays ou domaine>` · `/formations <domaine>` · `/ecoles <domaine>`
+Démarches : `/campusfrance` · `/parcours` · `/canada` · `/procedure <pays>` · `/visa` · `/budget <ville>`
+Candidater : `/dossier <cible>` · `/postuler <cible>` · `/creercv` · `/simulation` · `/chances <cible>`
+Outils & compte : `/outils` · `/traduire <texte>` · `/profil` · `/status` · `/supprimer`
 
-## Fonctionnalités clés
-- Onboarding déterministe (CV + 8 critères d'éligibilité).
-- **Veille** : offres réelles (RSS + Tavily), scoring, notifications proactives, rappels de deadline J-14/7/3/1.
-- **Campus France** : procédure + suivi en 8 étapes jusqu'au départ.
-- **Dossiers** : documents requis + CV adapté + lettre/projet d'études (PDF), avec suivi.
-- Qualité : liens fiables (par index), profil complet (reconversions), anti-offres expirées, formations gratuites d'abord.
+`/aide` affiche le menu complet. Le langage naturel fonctionne aussi bien que les commandes.
+
+## Développement
+
+```bash
+pip install -r api/requirements.txt
+python3 -m pytest tests -q          # 722 tests, ~10 s
+```
+
+La CI exécute trois contrôles obligatoires avant toute fusion sur `main` : les tests,
+le démarrage de l'image Docker, et le **chemin de déploiement réel**.
 
 ## Déploiement
+
 ```bash
-cd api/          # sur le VPS : ~/infra/forge-nex-api/
-cp .env.example .env   # GROQ_API_KEY, TELEGRAM_TOKEN, TAVILY_API_KEY, GOOGLE_SHEET_ID, WHATSAPP_*/MESSENGER_*...
-docker compose up -d --build
-curl -s http://localhost:8000/health   # affiche version + flags *_configured
+cd ~/infra/nexmove-src && git pull && ./scripts/deploy.sh
 ```
-URL publique fixe via ngrok (webhooks + Telegram). Voir `README-webhook-fix.md`.
+
+La vitrine se publie seule à chaque fusion sur `main`. Les secrets vivent dans le `.env` du
+dossier de déploiement et **ne sont jamais dans le dépôt**.
 
 ## Documentation
-- **[docs/SPECIFICATIONS.md](docs/SPECIFICATIONS.md)** — spécifications complètes (archi, canaux, données, endpoints, roadmap).
+- ⭐ **[docs/ETAT-ACTUEL.md](docs/ETAT-ACTUEL.md)** — l'état réel du système (référence).
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — journal des évolutions.
-- [docs/roadmap-mobilite.md](docs/roadmap-mobilite.md) — analyse experte & roadmap mobilité.
-- [README-webhook-fix.md](README-webhook-fix.md) — URL fixe & correctif webhook.
+- [docs/SECURITE.md](docs/SECURITE.md) — ce qui est public, ce qui ne doit pas l'être, rotation des clés.
+- [docs/SAUVEGARDE.md](docs/SAUVEGARDE.md) — sauvegarde chiffrée et restauration.
+- [docs/GUIDE-IMPLEMENTATION.md](docs/GUIDE-IMPLEMENTATION.md) — installation sur un VPS.
+
+Les autres fichiers de `docs/` sont des **documents historiques** : ils gardent la trace des
+décisions passées et portent un bandeau qui le signale. Ne les suis pas comme des instructions.

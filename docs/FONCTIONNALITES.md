@@ -1,5 +1,9 @@
 # NexMove — Fonctionnalités & avancées (v2.20)
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Inventaire de l'époque v2.20 ; il mentionne ngrok, qui n'est plus utilisé.
+> Dernière modification : août 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 **NexMove** est un **conseiller IA d'orientation et d'opportunités** (études, emploi, bourses, fellowships),
 **en local comme à l'international**, sur messageries. Il se comporte comme un **conseiller d'orientation
 senior** : il lit le CV, dresse un bilan, trouve de **vraies** opportunités adaptées, accompagne les

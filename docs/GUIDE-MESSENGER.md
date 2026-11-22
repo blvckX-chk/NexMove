@@ -1,5 +1,7 @@
 # Guide — activer NexMove sur Facebook Messenger
 
+> 📘 **Guide de tâche** · dernière modification : novembre 2026. Vue d'ensemble du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+
 Le code Messenger est **déjà prêt** (endpoints `/webhook/messenger`, signature Meta,
 envoi texte/menu/documents). Il n'y a **rien à coder** : il suffit de configurer
 l'app Meta et de mettre le token dans `.env`.

@@ -1,5 +1,9 @@
 # NexMove — Analyse experte mobilité & roadmap d'amélioration
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Analyse et feuille de route antérieures.
+> Dernière modification : juillet 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 Revue du système par cas d'application, avec regard « expert mobilité internationale »
 (emploi, bourses, fellowships, immigration). Priorités : 🟢 quick win · 🟡 moyen · 🔴 gros chantier.
 

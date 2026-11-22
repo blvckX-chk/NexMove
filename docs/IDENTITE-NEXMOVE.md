@@ -1,5 +1,9 @@
 # NexMove — Identité de marque & kit publicitaire (v1)
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Propositions d'identité antérieures au système de marque actuel (voir brand/README.md).
+> Dernière modification : septembre 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 > Complète `LANCEMENT-PRODUCTION.md` (§3 à §7). Décisions validées : baseline, direction de palette,
 > personas de la première vague. Éléments marqués **[proposition]** = point de départ à faire valider
 > par le designer ou à tester.

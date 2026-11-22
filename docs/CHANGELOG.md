@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.01 — La documentation dit enfin la vérité, et un garde-fou l'y oblige (audit A-03)
+- **Le constat** : `ANALYSE-TECHNIQUE.md` décrivait « aucun test, aucune CI, ~3 200 lignes », `CAHIER-DES-CHARGES.md` annonçait « 127 tests », le README affichait une architecture v2.7, et surtout **le guide d'installation décrivait encore ngrok + n8n** : quelqu'un qui le suivait construisait la mauvaise architecture.
+- **`docs/ETAT-ACTUEL.md`** : une référence unique — architecture réelle (webhook Telegram natif, tunnel nommé Cloudflare, n8n hors du chemin critique), code, qualité, exploitation, et **ce qui est connu et non réglé**. En cas de contradiction, c'est cette page qui fait foi.
+- **README réécrit** : architecture à jour, commandes d'orientation, et renvoi vers la référence.
+- **Guide d'installation corrigé** : le tunnel nommé Cloudflare remplace ngrok, n8n devient facultatif et clairement signalé comme historique.
+- **Bandeau de statut sur chaque document** : « Document historique — ne pas suivre comme instructions » ou « Guide de tâche », avec sa date. Plus aucun document ne peut être pris pour l'état actuel.
+- **`tests/test_docs.py`** : la version, le nombre de modules, les jobs CI et le nombre de tests annoncés sont **vérifiés contre le dépôt** ; les liens internes doivent exister ; aucun document à jour ne peut présenter ngrok comme l'architecture en service. Vérifié en simulant une dérive : le test échoue et indique le chiffre à corriger. Il a d'ailleurs trouvé un document que j'avais oublié d'étiqueter.
+
 ## v4.00 — Public scolaire assumé : la politique dit enfin la vérité (audit N-02)
 - **Le constat** : la politique affirmait « le service s'adresse à des personnes majeures » alors que le module d'orientation (v3.96) détecte et enregistre « collège / BEPC » et « lycée », et que les affiches ciblent les élèves. Le service collectait donc **sciemment** des données de mineurs en affirmant le contraire.
 - **Choix assumé** : NexMove accompagne bien les collégiens et lycéens. La section §9 devient « Élèves et mineurs », écrite dans une langue qu'un élève de 15 ans comprend : prévenir un adulte avant 16 ans, données limitées au strict nécessaire pour l'orientation, aucune publicité ni transmission à un établissement ou un employeur, le conseil ne remplace pas la décision de la famille, et effacement par `/supprimer`. Un parent peut écrire pour accéder, corriger ou supprimer.
