@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.05.0"
+VERSION         = "4.06.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -337,6 +337,7 @@ from llm import (call_groq, embed_text, semantic_scores, analyze_cv_image_vision
 
 # ── Persistance : 3 stores SQLite extraits dans db.py (PR-A du refactor) ──
 import orientation as ori   # orientation professionnelle (module pur, testable)
+import llm as _llm          # accès aux compteurs de la cascade IA (llm_stats)
 from db import (SessionManager, OppStore, Cache, session_manager, opp_store, cache, delete_user_data,  # noqa: F401
                 profile_store, profile_quality, usage_store, premium_store, credit_store, referral_store,
                 link_store, recruiter_offer_store)
@@ -2008,6 +2009,10 @@ def _cv_brief(profil: dict) -> str:
     skills = []
     for k in ("techniques", "outils"):
         skills += [c for c in (comp.get(k) or []) if isinstance(c, str) and c.strip()]
+    # Savoir-être (v4.06) : déjà extrait du CV, il servait à la conversation mais PAS au
+    # raisonnement d'orientation — or « rigoureux », « à l'aise à l'oral » ou « sens du contact »
+    # orientent autant qu'un langage de programmation.
+    soft = [c for c in (comp.get("soft_skills") or []) if isinstance(c, str) and c.strip()][:4]
     form = profil.get("formation") or []
     dom = (form[0].get("domaine") or form[0].get("diplome") if form and isinstance(form[0], dict) else "") or ""
     if dom:
@@ -2019,6 +2024,8 @@ def _cv_brief(profil: dict) -> str:
         postes = [e.get("poste", "") for e in exp if isinstance(e, dict) and e.get("poste")][:3]
         if postes:
             bits.append("expérience : " + ", ".join(postes))
+    if soft:
+        bits.append("savoir-être : " + ", ".join(dict.fromkeys(soft))[:90])
     niv = profil.get("niveau_global")
     if niv:
         bits.append(f"niveau : {niv}")
@@ -4753,6 +4760,32 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith(("/ia", "/llm")) and _is_admin(session):
+        st = _llm.llm_stats()
+        if not st["fournisseurs"]:
+            msg = "🧠 *Cascade IA* — aucun appel depuis le démarrage."
+        else:
+            lignes = [f"🧠 *Cascade IA* · {st['total_ok']}/{st['total_appels']} appels réussis",
+                      f"_Dernier utilisé : {st['dernier_utilise']}_", ""]
+            for f in st["fournisseurs"][:6]:
+                lignes.append(f"*{f['fournisseur']}* — {f['taux_ok']}% · {f['latence_moy_ms']} ms "
+                              f"(max {f['latence_max_ms']})")
+                détails = []
+                if f["bascules"]:
+                    détails.append(f"{f['bascules']} bascule(s)")
+                if f["erreurs"]:
+                    détails.append(f"{f['erreurs']} erreur(s)")
+                if f["json_invalide"]:
+                    détails.append(f"{f['json_invalide']} JSON illisible(s)")
+                if détails:
+                    lignes.append("  ⚠️ " + " · ".join(détails))
+                if f["dernier_echec"]:
+                    lignes.append(f"  _{_md_clean(f['dernier_echec'])[:70]}_")
+            lignes.append("\n_Compteurs remis à zéro à chaque redémarrage._")
+            msg = "\n".join(lignes)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/parcours"):
         stage = int(session.get("cf_stage", 0) or 0)
         lines = []
@@ -5852,7 +5885,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             for i, f in enumerate(forms[:5], 1):
                 titre = _md_clean(f.get("titre", ""))[:60]
                 org = _md_clean(f.get("organisme", ""))
-                url = str(f.get("url", "")).replace("*", "").replace("`", "")
+                url = _lien_verifie(str(f.get("url", "")).replace("*", "").replace("`", ""), grounded)
                 cout = _md_clean(f.get("cout", ""))
                 duree = _md_clean(f.get("duree", ""))
                 msg += f"{i}. 📘 *{titre}*\n   🏫 {org}"
@@ -9166,7 +9199,7 @@ JSON: {{"intro":"","points":[{{"titre":"","detail":"","lien":""}}],"checklist":[
         msg += f"• *{ti}*"
         if p.get("detail"):
             msg += f" · {_md_clean(p['detail'])}"
-        lien = str(p.get("lien", "") or "").replace("*", "").replace("`", "").strip()
+        lien = _lien_verifie(str(p.get("lien", "") or "").replace("*", "").replace("`", ""), grounded)
         if lien:
             msg += f"\n  🔗 {lien}"
         msg += "\n"
@@ -10564,6 +10597,56 @@ def _domain(url):
     d = re.sub(r"^https?://(www\.)?", "", str(url or "")).split("/")[0]
     return d[:40]
 
+# ══ VÉRIFICATION DES LIENS PRODUITS PAR L'IA (v4.06) ════════════════════════════════════════
+# Le modèle reçoit des sources web et doit en reprendre les URL. Rien ne l'y obligeait : une
+# consigne dans l'invite n'est pas un garde-fou. Un lien plausible mais inventé envoyé à
+# quelqu'un qui cherche une bourse, c'est la panne la plus coûteuse pour un produit qui promet
+# « de vraies opportunités ». Ce contrôle est DÉTERMINISTE : aucun appel IA, aucune latence.
+#
+# Règle :
+#   1. URL exactement présente dans les sources      -> gardée telle quelle ;
+#   2. domaine connu (sources ou liste officielle)   -> ramenée à la RACINE du domaine,
+#      car le chemin peut être inventé même quand le domaine est réel ;
+#   3. tout le reste                                 -> supprimée (le conseil, lui, est gardé).
+_DOMAINES_OFFICIELS = frozenset({
+    "campusfrance.org", "monmaster.gouv.fr", "parcoursup.fr", "service-public.fr",
+    "france-visas.gouv.fr", "canada.ca", "cic.gc.ca", "quebec.ca", "educanada.ca",
+    "daad.de", "study-in-germany.de", "studyinfrance.fr", "erasmus-plus.ec.europa.eu",
+    "ec.europa.eu", "auf.org", "chevening.org", "cscuk.fcdo.gov.uk", "commonwealth.org",
+    "coursera.org", "edx.org", "openclassrooms.com", "fun-mooc.fr",
+    "cisco.com", "aws.amazon.com", "cloud.google.com", "microsoft.com", "isc2.org",
+})
+
+def _url_racine(url: str) -> str:
+    d = _domain(url)
+    return f"https://{d}" if d else ""
+
+def _domaines_des_sources(grounded) -> set:
+    """Domaines réellement rencontrés dans les résultats de recherche."""
+    out = set()
+    for s in (grounded or []):
+        d = _domain((s or {}).get("url", "")) if isinstance(s, dict) else ""
+        if d:
+            out.add(d)
+    return out
+
+def _lien_verifie(url: str, grounded=None, urls_sources=None) -> str:
+    """Renvoie un lien sûr, ou '' s'il n'est pas vérifiable. Ne renvoie JAMAIS un chemin inventé."""
+    url = str(url or "").strip().strip(".,;)")
+    if not url.lower().startswith(("http://", "https://")):
+        return ""
+    exactes = set(urls_sources or [])
+    if not exactes:
+        exactes = {str((s or {}).get("url", "")).strip() for s in (grounded or []) if isinstance(s, dict)}
+    if url in exactes:
+        return url                                   # 1. reprise fidèle d'une source
+    d = _domain(url)
+    if d and (d in _domaines_des_sources(grounded) or d in _DOMAINES_OFFICIELS):
+        return _url_racine(url)                      # 2. domaine réel, chemin non garanti
+    logger.info(f"[lien] écarté (hors sources) : {d or url[:40]}")
+    return ""                                        # 3. inventé -> on ne l'envoie pas
+
+
 # Raccourcisseur de liens : base publique de l'API (où répond /l/<code>).
 PUBLIC_API_URL = os.getenv("PUBLIC_API_URL", "https://api-nexmove.blvckunlimited.space").rstrip("/")
 # Domaine affiché pour les liens courts (idéalement un sous-domaine court/brandé qui pointe vers /l/).
@@ -11659,6 +11742,12 @@ async def health():
 async def admin_health(_auth: bool = Depends(verify_api_key)):
     """Détail d'infra (protégé par la clé admin X-Forge-Nex-Key)."""
     return {"status": "ok", "version": VERSION, "service": "nexmove-api", "llm_providers": [p["name"] for p in _LLM_PROVIDERS if p["key"]], "tavily_configured": bool(TAVILY_API_KEY), "telegram_configured": bool(TELEGRAM_TOKEN), "whatsapp_configured": bool(WHATSAPP_TOKEN and WHATSAPP_PHONE_ID), "messenger_configured": bool(MESSENGER_TOKEN), "ocr_configured": _ocr_available(), "docx_configured": _DOCX_OK, "semantic_matching": _embeddings_available(), "adzuna_configured": bool(ADZUNA_APP_ID and ADZUNA_APP_KEY), "adzuna_countries": ADZUNA_COUNTRIES, "euraxess_configured": bool(EURAXESS_RSS or EURAXESS_API), "rss_feeds": len(SOURCE_FEEDS), "remote_sources": ["arbeitnow", "remoteok", "remotive", "jobicy", "himalayas", "themuse"], "sessions_stored": session_manager.count(), "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+@app.get("/api/admin/llm")
+async def admin_llm(_auth: bool = Depends(verify_api_key)):
+    """Santé de la cascade IA (audit A-10) : qui répond, à quelle vitesse, ce qui casse."""
+    return _llm.llm_stats()
 
 
 async def _check_health() -> dict:

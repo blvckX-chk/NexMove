@@ -6,7 +6,8 @@ Extrait de main.py (PR-B du refactor). Comportement STRICTEMENT identique :
 - même analyse vision Gemini pour les CV en image
 """
 from __future__ import annotations
-import os, json, hashlib, base64, asyncio, math, logging, contextvars
+import os, json, hashlib, base64, asyncio, math, logging, contextvars, time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -76,6 +77,37 @@ SMART_LEAD_PROVIDER = os.getenv("SMART_LEAD_PROVIDER", "gemini").strip().lower()
 
 # Dernier fournisseur/modèle ayant répondu avec succès (pour tracer qui a RÉDIGÉ chaque livrable :
 # A/B Tchavi premium vs modèles gratuits). Mis à jour par call_groq à chaque appel abouti.
+# ── Observabilité de la cascade IA (v4.06, audit A-10) ──────────────────────────────────────
+# 195 `except` avalaient les échecs en silence : on ne savait ni quel fournisseur répondait,
+# ni en combien de temps, ni pourquoi ça basculait. En mémoire (remis à zéro au redémarrage) :
+# ça suffit pour diagnostiquer, et ça n'ajoute aucune dépendance.
+_LLM_STATS: dict = {}
+
+def _stat(nom: str) -> dict:
+    return _LLM_STATS.setdefault(nom, {"appels": 0, "ok": 0, "bascules": 0, "erreurs": 0,
+                                       "json_invalide": 0, "ms_total": 0, "ms_max": 0,
+                                       "dernier_echec": "", "derniere_ok": ""})
+
+def llm_stats() -> dict:
+    """Vue lisible : qui répond, à quelle vitesse, et ce qui casse."""
+    out = []
+    for nom, c in _LLM_STATS.items():
+        out.append({"fournisseur": nom, "appels": c["appels"], "ok": c["ok"],
+                    "bascules": c["bascules"], "erreurs": c["erreurs"],
+                    "json_invalide": c["json_invalide"],
+                    "latence_moy_ms": round(c["ms_total"] / c["ok"]) if c["ok"] else 0,
+                    "latence_max_ms": c["ms_max"],
+                    "taux_ok": round(100 * c["ok"] / c["appels"]) if c["appels"] else 0,
+                    "dernier_echec": c["dernier_echec"], "derniere_ok": c["derniere_ok"]})
+    out.sort(key=lambda x: -x["appels"])
+    return {"fournisseurs": out,
+            "total_appels": sum(x["appels"] for x in out),
+            "total_ok": sum(x["ok"] for x in out),
+            "dernier_utilise": LAST_PROVIDER or "—"}
+
+def reset_llm_stats() -> None:
+    _LLM_STATS.clear()
+
 LAST_PROVIDER = ""
 LAST_MODEL = ""
 
@@ -198,25 +230,42 @@ async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0
             continue
         tried = True
         model = prov.get("model_fast", prov["model"]) if tier == "fast" else prov["model"]
+        c = _stat(prov["name"])
         for attempt in range(max(1, min(retries, 2))):
+            c["appels"] += 1
+            t0 = time.monotonic()
             try:
                 if prov["api"] == "gemini":
                     raw = await _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens, json_mode)
                 else:
                     raw = await _llm_openai(prov, model, system_prompt, user_prompt, temperature, max_tokens, json_mode)
-                logger.info(f"[llm] via {prov['name']} ({model})")
+                ms = int((time.monotonic() - t0) * 1000)
+                try:
+                    out = _llm_parse_json(raw) if json_mode else raw
+                except Exception as je:
+                    # JSON illisible : c'est un échec DU FOURNISSEUR, pas de l'app. On bascule.
+                    c["json_invalide"] += 1
+                    c["dernier_echec"] = f"json illisible ({type(je).__name__})"
+                    logger.warning(f"[llm] {prov['name']} ({model}) {ms} ms · JSON illisible -> bascule")
+                    last = je
+                    break
+                c["ok"] += 1; c["ms_total"] += ms; c["ms_max"] = max(c["ms_max"], ms)
+                c["derniere_ok"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                logger.info(f"[llm] via {prov['name']} ({model}) · {ms} ms · tier={tier} · ~{approx} tk")
                 global LAST_PROVIDER, LAST_MODEL
                 LAST_PROVIDER, LAST_MODEL = prov["name"], model
-                return _llm_parse_json(raw) if json_mode else raw
+                return out
             except _LLMFallback as f:
-                last = f
+                last = f; c["bascules"] += 1
+                c["dernier_echec"] = f"{type(f).__name__}: {str(f)[:100]}"
                 if attempt < 1:
                     await asyncio.sleep(1.0)
                 else:
-                    logger.warning(f"[llm] bascule {prov['name']}: {f}")
+                    logger.warning(f"[llm] bascule {prov['name']} après {int((time.monotonic()-t0)*1000)} ms : {f}")
             except Exception as e:
-                last = e
-                logger.error(f"[llm] {prov['name']} erreur: {e}")
+                last = e; c["erreurs"] += 1
+                c["dernier_echec"] = f"{type(e).__name__}: {str(e)[:100]}"
+                logger.error(f"[llm] {prov['name']} erreur après {int((time.monotonic()-t0)*1000)} ms : {e}")
                 break
     if not tried:
         raise HTTPException(500, "Aucun fournisseur LLM configuré (clés manquantes).")

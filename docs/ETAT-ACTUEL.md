@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.05.0** · 22 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.06.0** · 22 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -43,7 +43,7 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **739**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
+| Tests | **757**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
 | Fichiers de test | 11, par domaine (unités, scénarios, orientation, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
@@ -57,7 +57,7 @@ API      api-nexmove.blvckunlimited.space
 | Sauvegarder | `./scripts/backup.sh` — voir [SAUVEGARDE.md](SAUVEGARDE.md) |
 | Restaurer | `./scripts/restore.sh` |
 | Secrets | `.env` du dossier de déploiement, **jamais dans le dépôt** — voir [SECURITE.md](SECURITE.md) |
-| Surveiller | Message Telegram à chaque démarrage, avec alerte si un secret manque |
+| Surveiller | Message Telegram au démarrage (alerte si un secret manque) · `/ia` en admin et `/api/admin/llm` : qui répond, latence, bascules |
 | En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
 
 ## Ce qui est connu et non réglé
