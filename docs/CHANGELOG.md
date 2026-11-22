@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.02 — Tri de la documentation : 23 fichiers → 8, tous opérationnels
+- **Le vrai problème n'était pas du copier-coller** : aucun paragraphe n'était dupliqué. C'était pire — le même sujet était expliqué dans 7 à 17 fichiers, chacun avec **sa propre version**, et elles se contredisaient (ngrok contre Cloudflare, n8n contre webhook natif). Le déploiement apparaissait dans 12 fichiers, les variables `.env` dans 17.
+- **Un seul guide d'installation** : `GUIDE-IMPLEMENTATION.md` devient `INSTALLATION.md` et absorbe `MISE-A-JOUR-SERVEUR`, `MIGRATION-VPS` et `WEBHOOK-TELEGRAM-DIRECT`. Il **renvoie** vers les guides spécialisés au lieu de les réécrire : la dédoublonnage se fait par référence, pas par réécriture (on ne perd aucun détail exact).
+- **Supprimés** (contenu conservé dans l'historique Git) : `ANALYSE-TECHNIQUE`, `SPECIFICATIONS`, `FONCTIONNALITES`, `CAHIER-DES-CHARGES`, `roadmap-mobilite` (décrivaient une architecture qui n'existe plus), `MISE-A-JOUR-SERVEUR`, `MIGRATION-VPS`, `WEBHOOK-TELEGRAM-DIRECT`, `README-webhook-fix` (correctif d'un bug n8n disparu), `guide-test.html` (page testeurs v2.20).
+- **Sortis du dépôt** : `MONETISATION`, `LANCEMENT-PRODUCTION`, `KIT-CAMPAGNE`, `IDENTITE-NEXMOVE`. Le dépôt est **public** : la stratégie de prix et le plan de lancement n'ont rien à y faire.
+- `docs/` contient désormais **8 fichiers opérationnels**, sans doublon, chacun avec un rôle unique.
+- **Garde-fou** : `tests/test_docs.py` refuse tout fichier non déclaré dans `docs/`, et exige que chacun soit listé dans `ETAT-ACTUEL.md`. Impossible de laisser la documentation regrossir en silence.
+
 ## v4.01 — La documentation dit enfin la vérité, et un garde-fou l'y oblige (audit A-03)
 - **Le constat** : `ANALYSE-TECHNIQUE.md` décrivait « aucun test, aucune CI, ~3 200 lignes », `CAHIER-DES-CHARGES.md` annonçait « 127 tests », le README affichait une architecture v2.7, et surtout **le guide d'installation décrivait encore ngrok + n8n** : quelqu'un qui le suivait construisait la mauvaise architecture.
 - **`docs/ETAT-ACTUEL.md`** : une référence unique — architecture réelle (webhook Telegram natif, tunnel nommé Cloudflare, n8n hors du chemin critique), code, qualité, exploitation, et **ce qui est connu et non réglé**. En cas de contradiction, c'est cette page qui fait foi.

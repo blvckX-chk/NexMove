@@ -68,9 +68,38 @@ def test_nombre_de_tests_documente(etat):
         f"ETAT-ACTUEL.md annonce {ecrit} tests, il y en a {reel} — remplace le chiffre par {reel}")
 
 
+DOCS_ATTENDUS = {
+    "ETAT-ACTUEL.md",        # la référence
+    "CHANGELOG.md",          # historique des versions
+    "INSTALLATION.md",       # installer, mettre à jour, exploiter
+    "DOMAINE-ET-TUNNEL.md",  # domaine + tunnel Cloudflare
+    "GUIDE-WHATSAPP.md",     # activer WhatsApp (côté Meta)
+    "GUIDE-MESSENGER.md",    # activer Messenger (côté Meta)
+    "SECURITE.md",           # secrets, rotation, ce qui est public
+    "SAUVEGARDE.md",         # sauvegarder, restaurer, changer de serveur
+}
+
+
+def test_docs_ne_contient_que_de_l_operationnel():
+    """`docs/` était monté à 23 fichiers qui se contredisaient (ngrok vs Cloudflare, n8n vs
+    webhook natif). Chaque ajout doit donc être délibéré : ajoute le fichier à DOCS_ATTENDUS
+    *et* à la table d'ETAT-ACTUEL.md, ou garde-le hors du dépôt (il est public)."""
+    reels = {p.name for p in DOCS.iterdir() if p.is_file()}
+    en_trop = reels - DOCS_ATTENDUS
+    manquants = DOCS_ATTENDUS - reels
+    assert not en_trop, (f"documents non prévus dans docs/ : {sorted(en_trop)} — "
+                         "déclare-les dans DOCS_ATTENDUS et dans ETAT-ACTUEL.md, ou sors-les du dépôt")
+    assert not manquants, f"documents attendus mais absents : {sorted(manquants)}"
+
+
+def test_chaque_document_est_reference_dans_la_page_de_reference(etat):
+    for nom in DOCS_ATTENDUS - {"ETAT-ACTUEL.md"}:
+        assert nom in etat, f"{nom} n'est pas listé dans la table d'ETAT-ACTUEL.md"
+
+
 def test_chaque_document_porte_un_statut():
     """Aucun document ne doit pouvoir être pris pour l'état actuel sans le dire."""
-    connus = {"ETAT-ACTUEL.md", "CHANGELOG.md", "SECURITE.md", "SAUVEGARDE.md"}
+    connus = {"ETAT-ACTUEL.md", "CHANGELOG.md", "SECURITE.md", "SAUVEGARDE.md"}  # pas de bandeau : toujours à jour
     sans_statut = []
     for p in sorted(DOCS.glob("*.md")):
         if p.name in connus:

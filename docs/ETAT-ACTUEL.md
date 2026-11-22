@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.01.0** · 22 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.02.0** · 22 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -43,7 +43,7 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **722**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
+| Tests | **724**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
 | Fichiers de test | 11, par domaine (unités, scénarios, orientation, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 3 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne) |
 | Protection de `main` | Les 3 jobs sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
@@ -69,13 +69,23 @@ API      api-nexmove.blvckunlimited.space
   fournisseur, ni les durées de conservation chez eux.
 
 ## Documents de `docs/`
-| Fichier | Statut |
+`docs/` ne contient **que** de la documentation opérationnelle : de quoi faire tourner, mettre à
+jour et reconstruire le système. Huit fichiers, aucun doublon, chacun avec un rôle unique.
+
+| Fichier | Rôle |
 |---|---|
-| **ETAT-ACTUEL.md** | ⭐ cette page — la référence |
-| CHANGELOG.md | à jour — l'historique détaillé des versions |
-| SECURITE.md, SAUVEGARDE.md | à jour — procédures d'exploitation |
-| GUIDE-IMPLEMENTATION.md, GUIDE-WHATSAPP.md, GUIDE-MESSENGER.md, DOMAINE-ET-TUNNEL.md, MIGRATION-VPS.md, MISE-A-JOUR-SERVEUR.md | guides de tâche — vérifier le bandeau en tête |
-| ANALYSE-TECHNIQUE.md, CAHIER-DES-CHARGES.md, FONCTIONNALITES.md, LANCEMENT-PRODUCTION.md, MONETISATION.md, IDENTITE-NEXMOVE.md, KIT-CAMPAGNE.md | **historiques** — utiles pour comprendre les décisions passées, à ne pas suivre comme instructions |
+| **ETAT-ACTUEL.md** | ⭐ cette page — la référence sur ce qu'est le système |
+| CHANGELOG.md | l'historique détaillé des versions |
+| INSTALLATION.md | installer, mettre à jour, exploiter sur un VPS |
+| DOMAINE-ET-TUNNEL.md | domaine, tunnel nommé Cloudflare, vitrine |
+| GUIDE-WHATSAPP.md · GUIDE-MESSENGER.md | activer ces deux canaux (côté Meta) |
+| SECURITE.md | ce qui est public, les secrets, la rotation des clés |
+| SAUVEGARDE.md | sauvegarde chiffrée, restauration, changement de serveur |
+
+Les documents de **stratégie** (monétisation, plan de lancement, kit de campagne, identité de
+marque) ont été sortis du dépôt : il est public. Les anciennes analyses techniques et
+spécifications ont été supprimées — elles décrivaient une architecture qui n'existe plus ; leur
+contenu reste consultable dans l'historique Git.
 
 ## Entretenir cette page
 Les chiffres ci-dessus (version, nombre de tests, modules, jobs CI) sont **vérifiés

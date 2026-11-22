@@ -1,6 +1,13 @@
-# NexMove — Guide d'implémentation (déploiement de A à Z)
+# NexMove — Installation et exploitation
 
-> 📘 **Guide de tâche** · révisé le 22 novembre 2026 (architecture ngrok/n8n corrigée). Vue d'ensemble : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+> 📘 **Guide de tâche** · révisé le 22 novembre 2026 · **à jour**.
+> Vue d'ensemble du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+>
+> **C'est le seul document d'installation.** Il renvoie, sans les réécrire, vers :
+> [DOMAINE-ET-TUNNEL.md](DOMAINE-ET-TUNNEL.md) (domaine et tunnel Cloudflare),
+> [GUIDE-WHATSAPP.md](GUIDE-WHATSAPP.md) et [GUIDE-MESSENGER.md](GUIDE-MESSENGER.md) (activer ces canaux),
+> [SAUVEGARDE.md](SAUVEGARDE.md) (sauvegarder, restaurer, **changer de serveur**),
+> [SECURITE.md](SECURITE.md) (secrets et rotation des clés).
 
 Ce guide couvre l'installation complète sur un VPS Linux, de zéro jusqu'à la production, puis les mises à
 jour et le dépannage. Temps estimé : ~45 min la première fois.
@@ -75,12 +82,13 @@ mkdir -p ~/infra/forge-nex-api && cd ~/infra/forge-nex-api
 
 ## 3. Les fichiers
 
-Copie depuis le dépôt (dossier `api/`) : `main.py`, `requirements.txt`, `Dockerfile`, `docker-compose.yml`.
-Soit par `git clone`/`git pull`, soit par `scp` depuis ta machine :
+Clone le dépôt **une fois** sur le VPS ; ensuite, `scripts/deploy.sh` synchronise tout seul
+le code vers le dossier de déploiement (il ne touche jamais à `.env` ni à `data/`) :
 ```bash
-scp api/main.py api/requirements.txt api/Dockerfile api/docker-compose.yml \
-    UTILISATEUR@IP_VPS:~/infra/forge-nex-api/
+git clone https://github.com/blvckX-chk/NexMove.git ~/infra/nexmove-src
 ```
+> Ne copie plus les fichiers à la main : un module oublié = API morte au démarrage. C'est
+> arrivé en v3.96, et c'est pour ça que la CI teste désormais ce chemin exact.
 
 ### 3.1 `.env` (à créer, avec TES valeurs)
 ```bash
@@ -150,35 +158,11 @@ Les webhooks ont besoin d'une **URL stable**. On utilise un **tunnel nommé Clou
 
 ---
 
-## 6. n8n (facultatif — plus nécessaire)
+## 6. n8n — non requis
 
-> Le bot fonctionne **sans n8n** : le transport Telegram est natif et la veille passe par
-> le cron système. Cette section ne sert que si tu veux rejouer l'ancienne chaîne.
-
-### WF1 — Transport Telegram (historique)
-
-- **Telegram Trigger** écoute `message` **et** `callback_query`.
-- Un **Code node** normalise le message (texte / document / bouton).
-- Route :
-  - document (CV/PDF) → télécharge → `POST http://host.docker.internal:8000/api/chat-cv` (multipart :
-    `file`, `user_id`, `chat_id`, `username`) ;
-  - texte / bouton → `POST http://host.docker.internal:8000/api/chat` (JSON : `user_id`, `chat_id`,
-    `username`, `text`, `message_type`, `callback_data`, `callback_id`, `message_id`).
-- **Pas de node d'envoi** : c'est FastAPI qui répond directement à Telegram.
-- Header sur chaque requête : `X-Forge-Nex-Key: $FORGE_NEX_API_KEY`.
-- Le JSON du workflow est dans `workflows/WF1_Onboarding_Telegram.json`.
-
-> Règle d'or : **un seul** workflow avec Telegram Trigger actif (WF1). Ne jamais relancer `setWebhook` à la
-> main. Si un autre workflow (ex. WF5) capte le webhook, désactive-le puis réactive WF1.
-
-### WF0 — Veille 24 h (recommandé)
-Un **Schedule Trigger** (toutes les 24 h) qui enchaîne, avec le header API :
-```
-POST http://host.docker.internal:8000/api/collect
-POST http://host.docker.internal:8000/api/score
-POST http://host.docker.internal:8000/api/notify
-```
-→ ingère les sources, score par profil, envoie le digest + rappels de deadline.
+Le bot fonctionne **sans n8n** : le transport Telegram est natif (`/webhook/telegram`) et la veille
+passe par le cron système (`scripts/nex-cron.sh`). Les fichiers de `workflows/` sont conservés pour
+mémoire ; l'historique de l'ancienne chaîne est dans l'historique Git.
 
 ---
 
@@ -200,14 +184,13 @@ docker exec forge-nex-api python -c "import asyncio,main; print('vecteur' if asy
 
 ## 8. Mises à jour
 
-En général, **seul `main.py` change** :
 ```bash
-scp api/main.py UTILISATEUR@IP_VPS:~/infra/forge-nex-api/
-cd ~/infra/forge-nex-api && docker compose up -d --build
-curl -s http://localhost:8000/health | python3 -m json.tool | grep version
+cd ~/infra/nexmove-src && git pull && ./scripts/deploy.sh
 ```
-Si `requirements.txt`/`Dockerfile` changent (nouvelle dépendance système comme l'OCR), copie-les **aussi**
-avant le `--build`. Le volume `./data` (sessions, dossiers) est **conservé** à chaque rebuild.
+
+Le script met le dépôt à jour, synchronise **tous** les modules, reconstruit l'image, redémarre le
+conteneur et vérifie `/health`. Le volume `./data` (sessions, dossiers) est conservé à chaque rebuild.
+Tu reçois un message Telegram au démarrage, avec une alerte si un secret manque.
 
 ---
 
@@ -233,14 +216,14 @@ docker logs forge-nex-api --tail 80 | grep -Ei 'error|429|embed|euraxess|llm'
 
 ---
 
-## 10. Sauvegarde & sécurité
+## 10. Sauvegarde, sécurité, changement de serveur
 
-- **Sauvegarde** : archiver `~/infra/forge-nex-api/data/` (contient `sessions.db`).
-  ```bash
-  tar czf nexmove-data-$(date +%F).tgz -C ~/infra/forge-nex-api data
-  ```
-- **Secrets** : ne jamais committer `.env`. `/supprimer` = droit à l'effacement (RGPD).
-- **Auth API** : header `X-Forge-Nex-Key` sur tous les endpoints sauf `/health` et les webhooks.
+- **Sauvegarder / restaurer / migrer vers un autre VPS** : [SAUVEGARDE.md](SAUVEGARDE.md).
+  L'archive chiffrée contient la base **et** le `.env` : restaurer sur une machine neuve suffit à
+  remonter le service. N'archive plus `data/` à la main.
+- **Secrets, rotation des clés, ce qui est public** : [SECURITE.md](SECURITE.md).
+- **Authentification de l'API** : header `X-Forge-Nex-Key` sur tous les endpoints, sauf `/health`
+  et les webhooks (eux sont authentifiés par signature).
 
 ---
 
