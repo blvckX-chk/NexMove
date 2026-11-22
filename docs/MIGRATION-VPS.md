@@ -1,5 +1,7 @@
 # NexMove — Migration vers ton propre VPS (avec droits root)
 
+> 📘 **Guide de tâche** · dernière modification : octobre 2026. Vue d'ensemble du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+
 Objectif : déplacer le bot vers un VPS où tu es **root**, **sans perdre de données** et **sans changer les
 webhooks** (l'URL `api-nexmove.blvckunlimited.space` reste identique grâce au tunnel nommé).
 

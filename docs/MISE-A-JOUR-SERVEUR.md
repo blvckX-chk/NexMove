@@ -1,5 +1,9 @@
 # NexMove — Mettre à jour le serveur (VPS)
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Procédure antérieure (elle cite la v2.38). Le déploiement actuel tient en une commande : `./scripts/deploy.sh`.
+> Dernière modification : septembre 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 Tout le code est sur GitHub. Pour déployer une nouvelle version, on **récupère depuis GitHub** et on
 **reconstruit le conteneur** — aucun fichier à copier à la main.
 

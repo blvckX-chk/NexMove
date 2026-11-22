@@ -1,5 +1,7 @@
 # NexMove — Guide de mise en service WhatsApp Cloud API
 
+> 📘 **Guide de tâche** · dernière modification : octobre 2026. Vue d'ensemble du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+
 Le **code est prêt** (channels.py + endpoints webhook + parseur photos/documents/boutons/vocaux). Il ne
 reste qu'à faire la **config côté Meta** — ~30 min. Suis les étapes dans l'ordre.
 

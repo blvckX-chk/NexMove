@@ -1,5 +1,9 @@
 # NexMove — Pack de mise en production & campagne de lancement
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Plan de lancement rédigé pour la v2.49.
+> Dernière modification : septembre 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 > Projet **blvckUnlimited**. Document markdown (design/PDF à réaliser séparément). Version applicative de
 > référence : **v2.49.0**. Ce document réunit : l'état actuel, l'identité de marque (propositions à valider),
 > le positionnement/messaging, les offres, le plan de lancement, les assets à produire, les pages légales,

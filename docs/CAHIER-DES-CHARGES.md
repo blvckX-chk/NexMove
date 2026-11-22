@@ -1,5 +1,9 @@
 # NexMove — Cahier des charges
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Rédigé pour la v2.39 (il annonce « 127 tests »).
+> Dernière modification : septembre 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 > Projet **blvckUnlimited**. Document markdown neutre (le design/PDF sera réalisé séparément). Version
 > applicative de référence : **v2.39.0**. Ce document décrit le système actuel **et** la feuille de route
 > produit — y compris les ajouts essentiels et innovants prévus pour en faire une plateforme d'emploi et de

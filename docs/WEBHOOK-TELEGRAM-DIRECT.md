@@ -1,5 +1,7 @@
 # NexMove — Passer au webhook Telegram natif (retirer n8n)
 
+> 📘 **Guide de tâche** · dernière modification : septembre 2026. Cette migration est **faite** : le webhook Telegram natif est l'architecture en service. Garde ce guide pour le refaire (changement de domaine, nouveau serveur). Vue d'ensemble : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+
 Objectif : **Telegram parle directement à l'API** (`/webhook/telegram`), sans n8n. Ça supprime la cause
 n°1 des coupures (workflow n8n désactivé, webhook effacé, bug « undefined » du nœud fichier).
 

@@ -1,5 +1,9 @@
 # NexMove — Analyse technique senior (v2.22)
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Analyse datée de l'époque v2.22 : elle décrit un système « sans test ni CI, ~3 200 lignes ». Ce n'est plus vrai (713 tests, 3 jobs CI, 6 modules).
+> Dernière modification : août 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 Audit d'ingénierie du système, dans l'esprit d'une revue staff/principal. Objectif : dire honnêtement où on
 en est, ce qui tient, ce qui casse à l'échelle, et par quoi commencer.
 

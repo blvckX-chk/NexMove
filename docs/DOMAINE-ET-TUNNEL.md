@@ -1,5 +1,7 @@
 # NexMove — Domaine, tunnel nommé & déploiement web
 
+> 📘 **Guide de tâche** · dernière modification : octobre 2026. Vue d'ensemble du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+
 Objectif : une **URL fixe** pour l'API (webhooks Telegram + WhatsApp qui ne cassent plus) et la
 **vitrine** en ligne, le tout sous le domaine parapluie **blvckunlimited.space**.
 

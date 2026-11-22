@@ -1,5 +1,9 @@
 # NexMove — Kit de campagne de lancement
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Kit rédigé avant les visuels actuels (voir brand/ et le dossier Canva).
+> Dernière modification : octobre 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 Tout le prêt-à-produire pour la campagne : **affiches**, **scripts vidéo**, **textes d'annonces**,
 **kit ambassadeur**, **calendrier** et **liens trackés**. Fondé sur l'identité validée
 (`IDENTITE-NEXMOVE.md`). Les visuels sont à réaliser sur ton outil de design (Canva…) à partir des

@@ -1,5 +1,9 @@
 # NexMove — Stratégie de monétisation & business plan
 
+> ⚠️ **Document historique — ne pas suivre comme instructions.**
+> Hypothèses de marché et de prix, non confirmées par des chiffres réels.
+> Dernière modification : septembre 2026. **État réel du système : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).**
+
 > Document de travail (projet blvckUnlimited). Contenu markdown volontairement neutre : le design/PDF sera
 > réalisé séparément. Les chiffres de marché et d'unit economics sont des **hypothèses de travail à valider**,
 > pas des données arrêtées.

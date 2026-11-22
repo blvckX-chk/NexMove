@@ -1,5 +1,7 @@
 # NexMove — Guide d'implémentation (déploiement de A à Z)
 
+> 📘 **Guide de tâche** · révisé le 22 novembre 2026 (architecture ngrok/n8n corrigée). Vue d'ensemble : [ETAT-ACTUEL.md](ETAT-ACTUEL.md).
+
 Ce guide couvre l'installation complète sur un VPS Linux, de zéro jusqu'à la production, puis les mises à
 jour et le dépannage. Temps estimé : ~45 min la première fois.
 
@@ -8,14 +10,17 @@ jour et le dépannage. Temps estimé : ~45 min la première fois.
 ## 0. Vue d'ensemble
 
 ```
-Telegram ──▶ n8n (WF1 transport) ──▶ FastAPI (forge-nex-api:8000) ──▶ Telegram (envoi direct)
-                                          ├─ SQLite (./data, persistant)
-                                          ├─ Tavily · LLM (Cerebras/Groq/Gemini) · Embeddings
-n8n WF0 (cron 24 h) ──▶ /api/collect → /api/score → /api/notify
-ngrok (domaine statique) ──▶ expose n8n + webhooks à Internet
+Telegram / WhatsApp / Messenger ──▶ webhooks
+            │
+  tunnel nommé Cloudflare ──▶ FastAPI (forge-nex-api, 127.0.0.1:8000)
+                                   ├─ SQLite (./data, persistant, mode WAL)
+                                   └─ recherche web · IA en cascade (Cerebras/Groq/Gemini/…)
+cron système ──▶ scripts/nex-cron.sh ──▶ /api/collect → /api/score → /api/notify
 ```
 
-- **FastAPI** contient 100 % de la logique. **n8n** ne fait que le transport Telegram + le cron veille.
+- **FastAPI** contient 100 % de la logique, y compris le **webhook Telegram natif**
+  (`/webhook/telegram`) : n8n n'est plus sur le chemin critique.
+- L'API n'est **pas** exposée directement : elle écoute sur `127.0.0.1`, derrière le tunnel.
 - Tout tourne en **Docker** sur le VPS. Le dossier `./data` (volume) conserve la base SQLite.
 
 ---
@@ -40,7 +45,7 @@ ngrok (domaine statique) ──▶ expose n8n + webhooks à Internet
 | **Gemini** | `GEMINI_API_KEY` | aistudio.google.com/apikey | ➕ fallback **+ embeddings** |
 | **Tavily** | `TAVILY_API_KEY` | tavily.com | ✅ (grounding web) |
 | **Adzuna** | `ADZUNA_APP_ID` + `ADZUNA_APP_KEY` | developer.adzuna.com | ➕ emplois |
-| **ngrok** | (domaine statique) | ngrok.com → Domains | ✅ (URL fixe) |
+| **Cloudflare** | (tunnel nommé + DNS) | dash.cloudflare.com | ✅ (URL fixe) |
 
 > 💡 Gemini sert **à la fois** de fallback LLM et d'**embeddings** (matching sémantique). Fortement recommandé.
 
@@ -130,20 +135,28 @@ Attendu : `"version": "2.20.1"`, `"telegram_configured": true`, `"tavily_configu
 
 ---
 
-## 5. URL publique fixe (ngrok)
+## 5. URL publique fixe (tunnel nommé Cloudflare)
 
-Telegram et les webhooks ont besoin d'une **URL stable**. Utilise un **domaine statique ngrok** (gratuit) —
-jamais un tunnel éphémère (c'était la cause du bug « Provided secret is not valid »).
+Les webhooks ont besoin d'une **URL stable**. On utilise un **tunnel nommé Cloudflare**, qui publie
+`api-nexmove.blvckunlimited.space` vers l'API locale. Jamais un tunnel éphémère
+(`trycloudflare`) : c'était la cause du bug « Provided secret is not valid ».
 
-1. Récupère ton domaine sur ngrok.com → **Domains** (ex. `creation-hydrant-dimple.ngrok-free.dev`).
-2. Configure ngrok pour exposer **n8n** (port 5678) derrière ce domaine (dans le compose n8n ou un service
-   ngrok dédié). L'API (8000) est jointe par n8n en interne via `host.docker.internal:8000`.
+> ⚠️ Les anciennes versions de ce guide décrivaient **ngrok + n8n**. Ce n'est plus l'architecture
+> en service. Procédure détaillée : **[DOMAINE-ET-TUNNEL.md](DOMAINE-ET-TUNNEL.md)**.
+
+1. Crée le tunnel nommé et son enregistrement DNS (voir le guide ci-dessus).
+2. Lance-le au démarrage : `scripts/nexmove-named-tunnel.sh` (ligne `@reboot` dans la crontab).
+3. Déclare le webhook Telegram vers `https://TON-DOMAINE/webhook/telegram` (commande admin `/setwebhook`).
 
 ---
 
-## 6. n8n : les deux workflows
+## 6. n8n (facultatif — plus nécessaire)
 
-### WF1 — Transport Telegram (obligatoire)
+> Le bot fonctionne **sans n8n** : le transport Telegram est natif et la veille passe par
+> le cron système. Cette section ne sert que si tu veux rejouer l'ancienne chaîne.
+
+### WF1 — Transport Telegram (historique)
+
 - **Telegram Trigger** écoute `message` **et** `callback_query`.
 - Un **Code node** normalise le message (texte / document / bouton).
 - Route :
@@ -202,7 +215,7 @@ avant le `--build`. Le volume `./data` (sessions, dossiers) est **conservé** à
 
 | Symptôme | Cause | Solution |
 |---|---|---|
-| `Provided secret is not valid` | URL webhook éphémère (trycloudflare) | Domaine **statique ngrok**, un seul WF1 actif |
+| `Provided secret is not valid` | URL webhook éphémère (trycloudflare) | Utiliser le **tunnel nommé** Cloudflare, puis refaire `/setwebhook` |
 | `/postuler` : envoi Telegram échoué | `TELEGRAM_TOKEN` périmé dans `.env` | Mettre le token actuel + `up -d --build` |
 | `/health` renvoie une vieille version | main.py pas copié avant build | Re-scp `main.py` puis `--build` |
 | `429` / `503 Service IA surchargé` en veille | osint LLM par utilisateur | `COLLECT_OSINT_PER_USER=0` (défaut) |
@@ -237,7 +250,7 @@ docker logs forge-nex-api --tail 80 | grep -Ei 'error|429|embed|euraxess|llm'
 - [ ] `main.py`, `requirements.txt`, `Dockerfile`, `docker-compose.yml` en place
 - [ ] `.env` renseigné (Telegram, un LLM, Tavily, Gemini pour embeddings)
 - [ ] `docker compose up -d --build` OK, `/health` = bonne version
-- [ ] Domaine ngrok statique actif, un seul WF1 (Telegram Trigger) actif
+- [ ] Tunnel nommé Cloudflare actif (`scripts/nexmove-named-tunnel.sh`, relancé au boot)
 - [ ] WF0 planifié (veille 24 h)
 - [ ] Test Telegram : /start → CV → bilan + 3 pistes → /veille → /compresser
 - [ ] `data/` sauvegardé régulièrement
