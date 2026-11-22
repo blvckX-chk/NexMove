@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.00 — Public scolaire assumé : la politique dit enfin la vérité (audit N-02)
+- **Le constat** : la politique affirmait « le service s'adresse à des personnes majeures » alors que le module d'orientation (v3.96) détecte et enregistre « collège / BEPC » et « lycée », et que les affiches ciblent les élèves. Le service collectait donc **sciemment** des données de mineurs en affirmant le contraire.
+- **Choix assumé** : NexMove accompagne bien les collégiens et lycéens. La section §9 devient « Élèves et mineurs », écrite dans une langue qu'un élève de 15 ans comprend : prévenir un adulte avant 16 ans, données limitées au strict nécessaire pour l'orientation, aucune publicité ni transmission à un établissement ou un employeur, le conseil ne remplace pas la décision de la famille, et effacement par `/supprimer`. Un parent peut écrire pour accéder, corriger ou supprimer.
+- **L'engagement est tenu dans le produit, pas seulement sur la page** : un collégien ne lira jamais la politique, donc le bot l'invite **une seule fois**, dans la conversation, à en parler à un parent et à son professeur principal — formulé comme un vrai conseil d'orientation, parce que c'en est un.
+- Les données d'orientation (classe, série, intérêts, résultat du test) sont désormais **listées** en §2 : elles n'y figuraient pas depuis la v3.96.
+- CGU : nouvelle section « Qui peut utiliser NexMove » (paiements réservés aux majeurs), renumérotation complète.
+- `tests/test_pages_legales.py` : numérotation continue, renvois « §N » valides, balises bien fermées, et vérification que les deux pages portent le même message — j'avais justement cassé la numérotation en éditant les CGU.
+
 ## v3.99 — La CI teste enfin le vrai chemin de déploiement (audit N-03)
 - **Le constat** : la CI construisait l'image depuis `api/` en direct, alors qu'en production `deploy.sh` **recopie** d'abord les fichiers ailleurs. Cet écart a mis l'API à terre en v3.96 (`orientation.py` jamais copié) : tous les tests passaient, la production plantait au démarrage.
 - `deploy.sh` accepte deux interrupteurs — `NEXMOVE_SKIP_GIT=1` et `NEXMOVE_SKIP_BUILD=1` — pour que la CI rejoue **exactement** la synchronisation de production sans toucher à git. Comportement inchangé en usage normal.

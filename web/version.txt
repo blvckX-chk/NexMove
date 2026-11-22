@@ -1,2 +1,2 @@
-NexMove vitrine 3.97
+NexMove vitrine 4.00
 (publication manuelle : le déploiement automatique remplace ce fichier par le commit et l'heure)
