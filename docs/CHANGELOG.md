@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.06 — Les liens inventés ne partent plus, et on voit enfin ce que fait l'IA
+- **Faille trouvée en auditant le routage** : dans `conseil_grounded` (`/ecoles`, `/logement`, `/entretien`, `/canada`) et dans `/formations`, le modèle recevait des sources web puis renvoyait des liens… **envoyés tels quels**. La seule protection était une phrase dans l'invite (« jamais d'URL inventée ») — ce n'est pas un garde-fou. Le bot pouvait donc envoyer une URL plausible mais morte à quelqu'un qui cherche une bourse : la panne la plus coûteuse pour un produit qui promet « de vraies opportunités ».
+- **Contrôle déterministe** (`_lien_verifie`, 0 token, 0 ms) : URL exactement présente dans les sources → gardée ; domaine réel mais chemin non garanti → **ramenée à la racine du domaine** ; domaine inventé → **supprimée**, le conseil étant conservé. Le lien écarté est journalisé.
+- **Observabilité de la cascade IA (A-10)** : par fournisseur — appels, succès, **latence moyenne et maximale**, bascules, erreurs, **JSON illisibles**, et la cause du dernier échec. Un JSON illisible est désormais traité comme un échec du fournisseur et déclenche la bascule, au lieu de remonter en erreur applicative.
+- Consultation : `/ia` (admin, sur Telegram) ou `GET /api/admin/llm`.
+- **Savoir-être enfin utilisé** : il était extrait du CV et servait à la conversation, mais n'atteignait pas le conseiller d'orientation. « Sens du contact » ou « rigueur » orientent pourtant autant qu'un langage de programmation.
+
 ## v4.05 — Erreurs expliquées, conseiller plus humain, détresse prise au sérieux
 - **Les erreurs expliquent et proposent** : 45 messages disaient « 😕 X indisponible, réessaie » — sans dire ce qui s'était passé, et en donnant un mauvais conseil quand la cause était un fichier trop lourd ou un lien illisible. Désormais : ce qui a échoué, **pourquoi** en langage normal (service saturé, trop de monde, fichier trop lourd, réglage de notre côté), et **1 à 3 actions concrètes** adaptées à la commande. Le détail technique va dans les journaux, jamais dans la conversation — et quand la panne vient de nous, c'est dit (« ce n'est pas de ton fait »).
 - **Le conseiller monte d'un cran** : écoute active (reformuler avec ses mots, nommer l'émotion, jamais de réconfort vide), distinguer la demande affichée de la demande réelle (« quelle filière ? » cache souvent une peur d'échouer ou une pression familiale), accompagner l'ambivalence sans trancher à sa place, construire la confiance sur des réussites passées, séparer ce qui dépend d'elle de ce qui n'en dépend pas, accueillir un échec avant de proposer un plan B.

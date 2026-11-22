@@ -274,3 +274,13 @@ def test_erreur_cle_api_ne_culpabilise_pas_l_utilisateur():
 def test_erreur_sans_exception_reste_utile():
     msg = main._err("fabriquer ton CV", None, ["Envoie ton CV, ou tape /creercv."])
     assert "Ce que tu peux faire" in msg and "/creercv" in msg
+
+
+def test_le_savoir_etre_du_cv_nourrit_le_conseil_dorientation():
+    """Le savoir-être était extrait du CV mais n'atteignait pas le conseiller d'orientation."""
+    profil = {"competences": {"techniques": ["Python"], "outils": ["Git"],
+                              "soft_skills": ["sens du contact", "rigueur"]},
+              "formation": [{"domaine": "Informatique"}], "niveau_global": "junior"}
+    brief = main._cv_brief(profil)
+    assert "sens du contact" in brief and "rigueur" in brief
+    assert "Python" in brief
