@@ -77,6 +77,7 @@ DOCS_ATTENDUS = {
     "GUIDE-MESSENGER.md",    # activer Messenger (côté Meta)
     "SECURITE.md",           # secrets, rotation, ce qui est public
     "SAUVEGARDE.md",         # sauvegarder, restaurer, changer de serveur
+    "RUNBOOK.md",            # que faire quand ça casse, sans la personne qui a construit
 }
 
 
