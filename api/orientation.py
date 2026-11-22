@@ -241,3 +241,44 @@ def format_result(code: str) -> str:
     lignes.append("_Un test donne des pistes, il ne décide pas à ta place : tes résultats scolaires, ton budget "
                   "et ce que tu as envie de vivre comptent autant._")
     return "\n".join(lignes)
+
+
+# ── Détresse : reconnaître, accueillir, orienter vers un humain (v4.05) ─────────────────────
+# L'orientation touche des gens qui vont parfois très mal (échec, pression familiale, avenir
+# bouché). Le bot n'est pas thérapeute. Motifs à HAUTE précision seulement : mieux vaut en
+# rater un que traiter « ce formulaire me tue » comme une alerte.
+_DETRESSE_RE = re.compile(
+    r"\b(je\s+(veux|vais)\s+(mourir|en\s+finir|me\s+tuer|disparaitre)"
+    r"|j'?ai\s+envie\s+d[e']\s*(mourir|en\s+finir|disparaitre)"
+    r"|me\s+suicider|suicide|suicidaire"
+    r"|je\s+(ne\s+)?(vaux|sers)\s+(plus\s+)?(a\s+)?rien"
+    r"|j'?ai\s+envie\s+de\s+tout\s+(arreter|abandonner|laisser\s+tomber)\s*[.!]*\s*$"
+    r"|ma\s+vie\s+(n'?a|ne\s+sert)\s+(aucun\s+sens|a\s+rien|plus\s+de\s+sens)"
+    r"|je\s+(suis|me\s+sens)\s+(completement\s+)?(desespere\w*|au\s+bout\s+du\s+rouleau)"
+    r"|plus\s+aucune?\s+(raison|espoir)\b"
+    r"|personne\s+ne\s+(tient|pense)\s+a\s+moi)\b")
+
+# Contre-exemples fréquents : on ne déclenche pas dessus.
+_DETRESSE_FAUX = re.compile(r"\b(ce\s+\w+\s+me\s+tue|tu\s+me\s+tues|mort\s+de\s+rire|trop\s+mortel"
+                            r"|je\s+meurs\s+de\s+(faim|soif|chaud|froid|rire))\b")
+
+
+def detecte_detresse(text: str) -> bool:
+    """Signal de souffrance profonde dans le message. Haute précision, faible rappel assumé."""
+    low = _fold(text)
+    if _DETRESSE_FAUX.search(low):
+        return False
+    return bool(_DETRESSE_RE.search(low))
+
+
+# Message d'accueil : chaleureux, sans dramatiser, sans jouer au thérapeute, et SANS
+# abandonner la personne — on continue de l'aider sur sa question d'orientation.
+MESSAGE_DETRESSE = (
+    "Je lis ce que tu écris, et je ne vais pas faire comme si de rien n'était. 💛\n\n"
+    "Ce que tu traverses a l'air lourd, et ce n'est pas une question d'orientation qui va le "
+    "régler. Je ne suis pas la bonne personne pour ça — mais quelqu'un près de toi l'est : "
+    "un parent, un grand frère ou une grande sœur, un enseignant en qui tu as confiance, un "
+    "soignant. En parler à voix haute à quelqu'un change vraiment quelque chose.\n\n"
+    "Et je reste là. Quand tu veux reprendre sur tes études ou ton métier, on continue — "
+    "sans pression, à ton rythme."
+)

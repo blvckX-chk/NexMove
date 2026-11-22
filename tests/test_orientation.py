@@ -224,3 +224,53 @@ def test_adulte_ne_recoit_pas_la_note(llm):
     s = _sess()
     msg, s = _run(main.process_text_message(s, "je suis comptable depuis 10 ans, je veux me reconvertir"))
     assert "professeur principal" not in msg
+
+
+# ── v4.05 : détresse et erreurs expliquées ──
+@pytest.mark.parametrize("phrase", [
+    "je veux mourir", "j'ai envie d'en finir", "je sers plus à rien",
+    "ma vie n'a aucun sens", "je suis au bout du rouleau",
+])
+def test_detresse_detectee(phrase):
+    assert ori.detecte_detresse(phrase)
+
+
+@pytest.mark.parametrize("phrase", [
+    "ce formulaire me tue", "je meurs de faim", "mort de rire",
+    "je veux arrêter le test", "j'ai envie de tout arrêter et de faire un BTS",
+    "ça ne sert à rien de postuler là-bas",
+])
+def test_pas_de_faux_positif_detresse(phrase):
+    assert not ori.detecte_detresse(phrase)
+
+
+def test_detresse_coupe_court_a_tout_le_reste(llm):
+    """Une personne qui va mal ne doit pas se retrouver dans un questionnaire."""
+    s = _sess()
+    _, s = _run(main.process_text_message(s, "/testorientation"))
+    n = len(llm)
+    msg, s = _run(main.process_text_message(s, "je veux mourir"))
+    assert "orient_test" not in s, "le test continuait malgré le signal de détresse"
+    assert len(llm) == n, "aucun appel IA ne doit être fait : la réponse est déterministe"
+    assert "pas la bonne personne" in msg and "confiance" in msg
+    assert "mourir" not in msg.lower()
+
+
+def test_erreur_explique_et_propose_une_solution():
+    msg = main._err("chercher des écoles pour toi", TimeoutError("timed out"),
+                    ["Précise ton domaine et le pays."])
+    assert "Je n'ai pas réussi à chercher des écoles pour toi" in msg
+    assert "trop de temps" in msg                      # la cause est expliquée
+    assert "Ce que tu peux faire" in msg               # et une suite est proposée
+    assert "Précise ton domaine" in msg
+    assert "TimeoutError" not in msg and "timed out" not in msg   # aucun jargon technique
+
+
+def test_erreur_cle_api_ne_culpabilise_pas_l_utilisateur():
+    msg = main._err("faire cette vérification", PermissionError("401 unauthorized"))
+    assert "pas de ton fait" in msg and "/contact" in msg
+
+
+def test_erreur_sans_exception_reste_utile():
+    msg = main._err("fabriquer ton CV", None, ["Envoie ton CV, ou tape /creercv."])
+    assert "Ce que tu peux faire" in msg and "/creercv" in msg

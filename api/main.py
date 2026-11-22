@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.04.0"
+VERSION         = "4.05.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -420,6 +420,36 @@ CONSEILLER_PERSONA = (
     "la personne (doute, peur, découragement, pression, fatigue, enthousiasme) et réponds-y d'abord, en une "
     "touche, sans en faire trop. Valorise ses FORCES réelles, dédramatise, redonne confiance et de l'ÉLAN. "
     "Adapte ton ton : rassurant si elle doute, dynamique si elle est motivée, posé si elle est perdue. "
+    # ── Pratique réelle du conseil (ce qui distingue un senior d'un moteur de réponses) ──
+    " ÉCOUTE ACTIVE : reformule ce que tu as compris de SA situation en une phrase, avec SES mots, avant de "
+    "conseiller — « si je comprends bien, tu… ». Nomme l'émotion quand elle est nette (« ça a l'air surtout "
+    "épuisant » / « il y a de la pression derrière tout ça »). Jamais de « je comprends » creux, jamais de "
+    "réconfort vide (« tout ira bien ») : on valide, puis on avance. "
+    " DEMANDE RÉELLE : ce qu'on te demande n'est pas toujours le vrai sujet. « Quelle filière ? » cache "
+    "souvent une peur d'échouer, une pression familiale, un manque d'argent ou le deuil d'un projet. Si un "
+    "indice le laisse penser, pose UNE question douce là-dessus avant de lister des pistes. "
+    " AMBIVALENCE : quand la personne hésite entre deux voies, ne tranche pas à sa place et ne la pousse "
+    "pas. Fais ressortir ce qui compte pour ELLE (durée, argent, famille, envie, quotidien du métier), puis "
+    "compare honnêtement. La décision lui appartient. "
+    " CONFIANCE : appuie-toi sur ce qu'elle a DÉJÀ réussi, même petit et hors école, pour montrer qu'une "
+    "piste est à sa portée — c'est ce qui fait bouger, pas les encouragements génériques. Distingue ce qui "
+    "dépend d'elle (effort, délais, dossier) de ce qui n'en dépend pas (quotas, sélection, chance) : ça "
+    "soulage la culpabilité et ça remet l'énergie au bon endroit. "
+    " APRÈS UN ÉCHEC : concours raté, année perdue, refus. Normalise en une phrase (c'est fréquent, ce n'est "
+    "pas un verdict sur sa valeur), laisse exister la déception sans la balayer, PUIS propose des plans B "
+    "concrets. Jamais de leçon, jamais « il fallait ». "
+    " BIAIS À DÉSAMORCER : l'autocensure (« ce n'est pas pour les gens comme moi », une fille qui s'interdit "
+    "la technique), le prestige (choisir un titre plutôt qu'un métier), le coût irrécupérable (« j'ai déjà "
+    "fait 2 ans, je dois continuer » — deux années ne justifient pas dix ans de mal-être). Nomme-les avec "
+    "tact, sans faire la morale. "
+    " CONTEXTE OUEST-AFRICAIN : l'orientation s'y décide souvent en famille et sous contrainte d'argent. "
+    "Ne plaque pas un modèle individualiste : aide à construire un argumentaire pour convaincre les proches, "
+    "cherche le compromis plutôt que l'affrontement, prends au sérieux les voies courtes, l'apprentissage, "
+    "l'artisanat qualifié et l'auto-emploi — ce ne sont pas des choix par défaut. "
+    " TES LIMITES : tu es un conseiller d'orientation, pas un psychologue ni un médecin. Si la personne "
+    "exprime une souffrance profonde, un désespoir ou l'envie de tout arrêter, ne fais pas semblant de ne "
+    "pas l'entendre et ne joue pas au thérapeute : accueille avec chaleur et simplicité, encourage-la à en "
+    "parler à un adulte de confiance ou à un professionnel, et reste disponible pour la suite. "
     # ── Énergie / entrain ──
     " ÉNERGIE : sois vivant, chaleureux et encourageant, jamais plat ni robotique. Un enthousiasme SINCÈRE "
     "(pas d'excès d'émojis, pas de formules toutes faites répétées d'un message à l'autre). "
@@ -4024,6 +4054,62 @@ def _creator_reply() -> str:
             "les règles anti-invention) est fait ici._\n\n"
             "Pour joindre l'équipe : " + " · ".join(contact) + ".")
 
+# ══ ERREURS EXPLIQUÉES (v4.05) ══════════════════════════════════════════════════════════════
+# Avant : 45 messages « 😕 X indisponible, réessaie ». La personne ne savait ni ce qui s'était
+# passé, ni quoi faire — et « réessaie » est un mauvais conseil quand la cause est un fichier
+# trop lourd ou un lien illisible. On explique en langage normal, et on propose une porte de
+# sortie concrète. Jamais de détail technique : il va dans les logs, pas dans la conversation.
+_ERR_CAUSES = [
+    # (mots trouvés dans l'erreur, cause lisible, conseil par défaut)
+    (("timeout", "timed out", "readtimeout", "connecttimeout"),
+     "le service a mis trop de temps à répondre",
+     "Réessaie dans une minute — ça passe presque toujours au second essai."),
+    (("429", "rate limit", "too many requests", "quota"),
+     "il y a beaucoup de monde en ce moment",
+     "Attends 2-3 minutes et relance la même commande."),
+    (("401", "403", "unauthorized", "forbidden", "api key", "invalid key"),
+     "un réglage de mon côté bloque l'accès",
+     "Ce n'est pas de ton fait. Préviens l'équipe avec /contact, on corrige vite."),
+    (("connection", "network", "dns", "unreachable", "ssl"),
+     "je n'ai pas réussi à joindre le service",
+     "Réessaie dans un moment ; si ça persiste, dis-le-moi avec /bug."),
+    (("memory", "too large", "file size", "payload"),
+     "le fichier est trop lourd pour être traité",
+     "Envoie une version plus légère (ou /compresser 2000 pour le réduire)."),
+    (("json", "parse", "decode", "unexpected"),
+     "la réponse reçue était inexploitable",
+     "Reformule ta demande en une phrase plus courte, ça repart en général."),
+]
+
+def _err_cause(e) -> tuple:
+    """(cause lisible, conseil par défaut) à partir de l'exception — jamais son texte brut."""
+    txt = f"{type(e).__name__} {e}".lower() if e is not None else ""
+    for cles, cause, conseil in _ERR_CAUSES:
+        if any(k in txt for k in cles):
+            return cause, conseil
+    return "", "Réessaie dans un instant — et si ça recommence, dis-le-moi avec /bug."
+
+def _err(quoi: str, e=None, pistes=None, contexte: str = "") -> str:
+    """Message d'erreur UTILE : ce qui a échoué, pourquoi, et quoi faire maintenant.
+
+    quoi     : l'action en cours, à la 1re personne ('chercher des écoles pour toi')
+    pistes   : alternatives propres à la commande (la plus utile en premier)
+    contexte : pour les logs uniquement, jamais affiché
+    """
+    if e is not None:
+        logger.warning(f"[err] {contexte or quoi}: {type(e).__name__}: {e}")
+    cause, conseil = _err_cause(e)
+    lignes = [f"😕 Je n'ai pas réussi à {quoi}."]
+    if cause:
+        lignes.append(f"_Ce qui s'est passé : {cause}._")
+    actions = [p for p in (pistes or []) if p]
+    actions.append(conseil)
+    lignes.append("")
+    lignes.append("*Ce que tu peux faire :*")
+    lignes += [f"• {a}" for a in actions[:3]]
+    return "\n".join(lignes)
+
+
 # ══ ORIENTATION PROFESSIONNELLE (v3.96) ════════════════════════════════════════════════════════
 # Démarche de conseiller d'orientation : situer la personne, comprendre ce qui compte pour elle,
 # proposer 2-3 pistes argumentées et UNE prochaine étape. Mémoire dans profil_plus["orientation"].
@@ -4255,6 +4341,18 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     # (évite qu'un CV envoyé ensuite parte par erreur comme capture de bug).
     if session.get("bug_mode") and not low.startswith(("/bug", "/probleme", "/problème", "/signaler")):
         session["bug_mode"] = False; session.pop("bug_text", None)
+
+    # Détresse (v4.05) : AVANT tout flux guidé. Une personne qui va mal ne doit pas se voir
+    # répondre « réponds 1, 2, 3 ou 4 ». Déterministe : on ne confie pas ça au LLM, et on sort
+    # des questionnaires en cours. Les commandes explicites (/...) passent normalement.
+    if not low.startswith("/") and ori.detecte_detresse(t):
+        _leave_flow(session)
+        session.pop("orient_test", None)
+        session["sim_mode"] = False
+        msg = ori.MESSAGE_DETRESSE
+        _push(session, "user", t); _push(session, "assistant", msg)
+        session["derniere_activite"] = now
+        return msg, session
 
     # Mode /simulation (coach d'entretien) : capte les réponses libres (les commandes passent normalement).
     if session.get("sim_mode") and not low.startswith("/"):
@@ -4627,7 +4725,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     "• /dossier <programme> · monter le dossier (CV + projet)")
         except Exception as e:
             logger.error(f"campusfrance: {e}")
-            msg = "😕 Impossible de récupérer les infos Campus France pour l'instant, réessaie."
+            msg = _err("récupérer les infos Campus France", e, ["En attendant, /parcours te montre où tu en es dans les étapes."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4707,7 +4805,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     "Recommande 4 à 6 écoles/programmes RÉELS et ADAPTÉS au profil (niveau, domaine, budget/bourse), du plus accessible au plus sélectif, avec pour chacun comment et quand postuler.",
                     cta="Ensuite : /dossier <programme> (préparer le dossier) · /logement <ville> · /entretien.")
             except Exception as e:
-                logger.error(f"ecoles: {e}"); msg = "😕 Recherche d'écoles indisponible, réessaie."
+                logger.error(f"ecoles: {e}"); msg = _err("chercher des écoles pour toi", e, ["Précise ton domaine et le pays : `/ecoles informatique Canada`."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4722,7 +4820,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 "Explique concrètement comment trouver un logement étudiant abordable et ÉVITER LES ARNAQUES : CROUS/résidences, plateformes fiables, dispositif garant Visale, budget réaliste, pièces à préparer, délais.",
                 cta="🔎 Commence tôt, les logements partent vite. /entretien pour la suite.")
         except Exception as e:
-            logger.error(f"logement: {e}"); msg = "😕 Conseils logement indisponibles, réessaie."
+            logger.error(f"logement: {e}"); msg = _err("préparer des conseils logement", e, ["Donne-moi la ville : `/logement Lyon`."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4737,7 +4835,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 "Prépare l'utilisateur à l'entretien (Campus France/Institut Français et/ou entretien visa type Capago/VFS). Donne 5 à 7 QUESTIONS TYPES avec, pour chacune, une PISTE de réponse ADAPTÉE à son profil, plus les erreurs à éviter et la posture attendue (projet cohérent, financement, retour au pays).",
                 cta="Cible si besoin : /entretien visa Capago · /entretien Campus France.")
         except Exception as e:
-            logger.error(f"entretien: {e}"); msg = "😕 Prépa entretien indisponible, réessaie."
+            logger.error(f"entretien: {e}"); msg = _err("préparer l'entretien", e, ["Tu peux aussi t'entraîner en direct : /simulation."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4790,7 +4888,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             elif not _is_premium(session):
                 msg += f"\n_(Gratuit : {max(reste-1,0)} analyse·s restante·s aujourd'hui · illimité en Premium : /offres.)_"
         except Exception as e:
-            logger.error(f"compatibilite: {e}"); msg = "😕 Analyse indisponible, réessaie."
+            logger.error(f"compatibilite: {e}"); msg = _err("analyser ça", e, ["Tu peux aussi me coller le *texte* de l'annonce, je l'analyse directement."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4866,7 +4964,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             elif not _is_premium(session):
                 msg += f"\n_(Score gratuit : {max(reste-1,0)} restant·s aujourd'hui · illimité en Premium : /offres.)_"
         except Exception as e:
-            logger.error(f"chances: {e}"); msg = "😕 Estimation indisponible, réessaie."
+            logger.error(f"chances: {e}"); msg = _err("faire cette estimation", e, None)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4895,7 +4993,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 if rounds_txt:
                     msg += f"\n\n📅 *Dernières rondes Entrée express (IRCC, temps réel) :*\n{rounds_txt}"
             except Exception as e:
-                logger.error(f"canada: {e}"); msg = "😕 Conseils Canada indisponibles, réessaie."
+                logger.error(f"canada: {e}"); msg = _err("réunir les infos sur le Canada", e, ["En attendant : /procedure Canada, ou /visa pour les démarches."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4985,7 +5083,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     await deliver_file(session, f"CV_1page_{_slug(nom)}.pdf", buf.getvalue(), "📄 Ton CV condensé (1 page)")
                     msg = "✅ Voici ton *CV condensé* · parfait quand un recruteur veut du synthétique."
                 except Exception as e:
-                    logger.error(f"[cv1page] {e}"); msg = "😕 Génération impossible, réessaie."
+                    msg = _err("produire ton CV en une page", e, ["Si ton CV est très long, retire une expérience ancienne puis réessaie."], "cv1page")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -5004,7 +5102,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     await deliver_file(session, "CV_anonyme.pdf", buf.getvalue(), "🕶️ Ton CV anonymisé")
                     msg = "✅ *CV anonymisé* (nom et coordonnées masqués) · idéal pour une candidature à l'aveugle ou une CVthèque."
                 except Exception as e:
-                    logger.error(f"[anonymiser] {e}"); msg = "😕 Génération impossible, réessaie."
+                    msg = _err("anonymiser ton CV", e, ["Renvoie-le en PDF si tu l'as envoyé en image."], "anonymiser")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -5017,7 +5115,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             msg = "📄 Je dois d'abord connaître ton profil. Envoie ton CV (PDF, Word ou image) ou tape /creercv."
         elif arg in ("ats", "sobre", "robot", "texte"):
             ok = await _deliver_cv(session, "ats")
-            msg = "✅ *CV ATS* envoyé · sobre, une colonne, lisible par les logiciels de tri des recruteurs." if ok else "😕 Génération impossible, réessaie."
+            msg = "✅ *CV ATS* envoyé · sobre, une colonne, lisible par les logiciels de tri des recruteurs." if ok else _err("fabriquer ton CV", None, ["Envoie ton CV (PDF, Word ou photo), ou tape /creercv pour le construire avec moi."])
         elif arg in ("modeles", "modèles", "templates", "modele", "modèle", "gabarits"):
             msg = ("🎨 *10 modèles de CV graphiques* · choisis-en un (tape `/cv <modèle>`) :\n\n"
                    + "\n".join(f"• *{v['label']}* → `/cv {k}`" for k, v in _CV_TEMPLATES.items())
@@ -5027,14 +5125,14 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             tk = arg.replace(" ", "-")
             ok = await _deliver_cv(session, "graphic", template=tk)
             msg = (f"✅ *CV graphique · modèle {_CV_TEMPLATES[tk]['label']}* envoyé.\n"
-                   "_Envie d'un autre style ? `/cv modeles`._") if ok else "😕 Génération impossible, réessaie."
+                   "_Envie d'un autre style ? `/cv modeles`._") if ok else _err("fabriquer ton CV", None, ["Envoie ton CV (PDF, Word ou photo), ou tape /creercv pour le construire avec moi."])
         elif arg in ("graphique", "graphic", "design", "designe", "designé", "joli"):
             ok = await _deliver_cv(session, "graphic")
             msg = ("✅ *CV graphique* envoyé (modèle par défaut).\n"
-                   "🎨 *10 modèles au choix* : tape `/cv modeles`.") if ok else "😕 Génération impossible, réessaie."
+                   "🎨 *10 modèles au choix* : tape `/cv modeles`.") if ok else _err("fabriquer ton CV", None, ["Envoie ton CV (PDF, Word ou photo), ou tape /creercv pour le construire avec moi."])
         elif arg in ("deux", "les deux", "2", "tous", "both"):
             ok = await _deliver_cv(session, "deux")
-            msg = "✅ Tes *deux CV* sont envoyés : **ATS** (robots de tri) + **graphique** (envoi direct)." if ok else "😕 Génération impossible, réessaie."
+            msg = "✅ Tes *deux CV* sont envoyés : **ATS** (robots de tri) + **graphique** (envoi direct)." if ok else _err("fabriquer ton CV", None, ["Envoie ton CV (PDF, Word ou photo), ou tape /creercv pour le construire avec moi."])
         else:
             msg = ("📄 *Quel format de CV veux-tu ?*\n\n"
                    + _ATS_INFO + "\n\n"
@@ -5077,7 +5175,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 if up:
                     msg += "\n\n" + up
             except Exception as e:
-                logger.error(f"[tool {mode}] {e}"); msg = "😕 Génération impossible, réessaie."
+                msg = _err("traiter ce fichier", e, ["Vérifie qu'il s'ouvre bien chez toi, puis renvoie-le."], f"tool {mode}")
             _tool_clear(session.get("user_id")); session["tool_mode"] = None
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
@@ -5106,7 +5204,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 "Donne un budget mensuel étudiant réaliste (loyer, nourriture, transport, santé, divers) en euros · et l'ordre de grandeur en FCFA · puis rappelle le montant de RESSOURCES à justifier pour le visa/Campus France si connu.",
                 cta="Ensuite : /eligibilite <programme> · /compresser (justificatifs).")
         except Exception as e:
-            logger.error(f"budget: {e}"); msg = "😕 Estimation budget indisponible, réessaie."
+            logger.error(f"budget: {e}"); msg = _err("estimer le budget", e, ["Indique la ville : `/budget Montréal`."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -5126,7 +5224,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     "Compare HONNÊTEMENT le profil aux exigences réelles : dis s'il est éligible / limite / non éligible, liste précisément ce qui MANQUE et comment le combler. Pas de faux espoirs.",
                     cta="Prêt ? /dossier <cible> pour monter le dossier.")
             except Exception as e:
-                logger.error(f"eligibilite: {e}"); msg = "😕 Vérification indisponible, réessaie."
+                logger.error(f"eligibilite: {e}"); msg = _err("faire cette vérification", e, None)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -5146,7 +5244,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 msg = (f"🌐 *Traduction* ({r.get('langue_source','?')} → {r.get('langue_cible','?')})\n\n"
                        f"{r.get('traduction','')}\n\n⚠️ _Informatif. Un dossier officiel exige un traducteur assermenté._")
             except Exception as e:
-                logger.error(f"traduire: {e}"); msg = "😕 Traduction indisponible, réessaie."
+                logger.error(f"traduire: {e}"); msg = _err("traduire ce texte", e, ["Si le texte est long, coupe-le en deux morceaux et renvoie-les."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -5168,7 +5266,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                     f"Explique la ou les VOIES OFFICIELLES adaptées à CE profil pour {pays} (études : université + permis étudiant + preuve de fonds ; travail : permis/visa et programmes officiels). Étapes concrètes, conditions honnêtes, organismes RÉELS.",
                     cta="Ensuite : /ecoles · /budget <ville> · /dossier <programme> · /entretien.")
             except Exception as e:
-                logger.error(f"procedure: {e}"); msg = "😕 Infos pays indisponibles, réessaie."
+                logger.error(f"procedure: {e}"); msg = _err("réunir les infos sur ce pays", e, ["Vérifie l'orthographe du pays, ou essaie /procedure <pays>."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -6519,10 +6617,11 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
                 await deliver_file(session, "NexMove_timeline.png", png, "🗺️ Ta feuille de route visuelle")
                 msg = "🗺️ Voici ta *feuille de route* ! Étapes ✅ faites · 🟠 en cours · ⚪ à venir.\nFais /etape quand tu avances, puis /timeline pour la remettre à jour."
             else:
-                msg = "😕 Génération de la feuille de route impossible pour le moment."
+                msg = _err("construire ta feuille de route", None,
+                           ["Fais /parcours pour vérifier où tu en es, puis retente /timeline."])
         except Exception as e:
             logger.error(f"[timeline] {e}")
-            msg = "😕 Génération de la feuille de route impossible, réessaie."
+            msg = _err("construire ta feuille de route", e, ["Précise ta cible : `/parcours <pays ou programme>`."])
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -8529,7 +8628,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
         if ok:
             await deliver_file(session, f"{_slug((filename or 'document').rsplit('.',1)[0])}_pages_{spec.replace(',', '_')}.pdf", data, f"✂️ Pages {spec}")
         else:
-            await deliver_text(session, "😕 Découpe impossible (vérifie les numéros de pages).")
+            await deliver_text(session, _err("découper ce PDF", e, ["Donne les pages sous la forme `1-3` ou `2,5,7`, sans dépasser le nombre de pages du document."]))
         return
     if mode == "extract":
         session["tool_mode"] = None; session_manager.set(uid, session)
@@ -8556,7 +8655,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
             await deliver_file(session, "image_compressee.jpg", data, f"🖼️ {len(pdf_bytes)//1024} Ko → {kb} Ko")
         except Exception as e:
             logger.error(f"[imgcompress] {e}")
-            await deliver_text(session, "😕 Compression d'image impossible sur ce fichier.")
+            await deliver_text(session, _err("compresser cette image", e, ["Envoie-la en JPG ou PNG classique (pas en HEIC ni en capture d'écran protégée)."]))
         return
     if mode == "pdf2img":
         session["tool_mode"] = None; session_manager.set(uid, session)
@@ -8568,7 +8667,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
             await deliver_file(session, "pages_png.zip", z, "🖼️ Chaque page du PDF en PNG (zip)")
         except Exception as e:
             logger.error(f"[pdf2img] {e}")
-            await deliver_text(session, "😕 Conversion impossible sur ce fichier.")
+            await deliver_text(session, _err("convertir ce fichier", e, ["Vérifie que le fichier s'ouvre bien chez toi, puis renvoie-le."]))
         return
     # Mode compression : l'utilisateur a demandé /compresser puis envoie un PDF
     target_kb = session.pop("compress_target", 0)
@@ -8582,7 +8681,7 @@ async def process_cv(session, pdf_bytes, filename="cv.pdf", caption=""):
             data, kb = await asyncio.to_thread(compress_pdf, pdf_bytes, target_kb)
         except Exception as e:
             logger.error(f"[compress] {e}")
-            await deliver_text(session, "😕 Compression impossible sur ce fichier.")
+            await deliver_text(session, _err("compresser ce fichier", e, ["Le fichier est peut-être protégé par mot de passe ou abîmé : réenregistre-le puis renvoie-le."]))
             return
         base = _slug((filename or "document").rsplit(".", 1)[0])
         await deliver_file(session, f"{base}_compresse.pdf", data, f"🗜️ {orig_kb} Ko → {kb} Ko")
@@ -9875,7 +9974,7 @@ async def audit_opportunity_link(session: dict, url: str) -> tuple[str, dict]:
         r = await call_groq(system, prompt, temperature=0.2, max_tokens=900)
     except Exception as e:
         logger.error(f"[lien] llm {e}")
-        msg = "😕 Analyse momentanément indisponible, réessaie dans un instant."
+        msg = _err("analyser ça", e, ["Tu peux aussi me coller le *texte* de l'annonce, je l'analyse directement."])
         _push(session, "user", url); _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
         return msg, session
     if not used_credit:
