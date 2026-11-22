@@ -45,7 +45,7 @@ Outils & compte : `/outils` · `/traduire <texte>` · `/profil` · `/status` · 
 
 ```bash
 pip install -r api/requirements.txt
-python3 -m pytest tests -q          # 722 tests, ~10 s
+python3 -m pytest tests -q          # 724 tests, ~10 s
 ```
 
 La CI exécute trois contrôles obligatoires avant toute fusion sur `main` : les tests,
@@ -65,7 +65,12 @@ dossier de déploiement et **ne sont jamais dans le dépôt**.
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — journal des évolutions.
 - [docs/SECURITE.md](docs/SECURITE.md) — ce qui est public, ce qui ne doit pas l'être, rotation des clés.
 - [docs/SAUVEGARDE.md](docs/SAUVEGARDE.md) — sauvegarde chiffrée et restauration.
-- [docs/GUIDE-IMPLEMENTATION.md](docs/GUIDE-IMPLEMENTATION.md) — installation sur un VPS.
+- [docs/INSTALLATION.md](docs/INSTALLATION.md) — installer, mettre à jour, exploiter sur un VPS.
 
-Les autres fichiers de `docs/` sont des **documents historiques** : ils gardent la trace des
-décisions passées et portent un bandeau qui le signale. Ne les suis pas comme des instructions.
+Également dans `docs/` : [DOMAINE-ET-TUNNEL.md](docs/DOMAINE-ET-TUNNEL.md) (domaine et tunnel
+Cloudflare), [GUIDE-WHATSAPP.md](docs/GUIDE-WHATSAPP.md) et
+[GUIDE-MESSENGER.md](docs/GUIDE-MESSENGER.md) (activer ces canaux).
+
+`docs/` ne contient que de la documentation **opérationnelle** — ce qu'il faut pour faire tourner
+et reconstruire le système. Les documents de stratégie (monétisation, lancement, campagne,
+identité) vivent hors du dépôt : celui-ci est public.
