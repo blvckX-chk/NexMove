@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.02.0** · 22 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.03.0** · 22 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -45,8 +45,8 @@ API      api-nexmove.blvckunlimited.space
 |---|---|
 | Tests | **724**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
 | Fichiers de test | 11, par domaine (unités, scénarios, orientation, RGPD, sauvegarde, déploiement, pages légales…) |
-| CI (`.github/workflows/ci.yml`) | 3 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne) |
-| Protection de `main` | Les 3 jobs sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
+| CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
+| Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
 
 ## Exploitation
@@ -64,7 +64,6 @@ API      api-nexmove.blvckunlimited.space
   et testés (modèle : `orientation.py`), au fil des zones qu'on touche. Pas de réécriture globale.
 - Quotas et verrous par utilisateur vivent **en mémoire de chaque worker** (il y en a 2) : la
   limite réelle est donc le double de l'annoncée. Sans volume, c'est théorique.
-- Pas d'analyse de vulnérabilité des dépendances en CI (elles sont figées, mais jamais auditées).
 - La politique de confidentialité nomme les catégories de sous-traitants IA, pas chaque
   fournisseur, ni les durées de conservation chez eux.
 

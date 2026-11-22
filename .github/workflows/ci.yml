@@ -120,3 +120,21 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker rm -f nexmove-deploy || true
+
+  # ─── Failles connues dans les dépendances (audit A-07) ─────────────────────────────
+  # Elles sont figées, ce qui est bien pour la reproductibilité — mais une version figée
+  # vieillit : au 22/11/2026, l'audit a trouvé 68 failles, dont 55 dans Pillow (qui lit les
+  # photos de CV envoyées par des inconnus) et 7 dans starlette (chaque requête HTTP).
+  # Ce job échoue dès qu'une faille connue touche une dépendance de production.
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Installer pip-audit
+        run: python -m pip install --quiet --upgrade pip pip-audit
+      - name: Auditer les dépendances de production
+        run: pip-audit -r api/requirements.txt --progress-spinner off --strict
