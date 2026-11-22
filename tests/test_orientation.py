@@ -208,3 +208,19 @@ def test_memoire_dans_le_contexte_general(llm):
     _, s = _run(main.process_text_message(s, "j'ai eu mon bac D, quelle filière choisir ?"))
     ctx = main._conversation_context(s)
     assert "Orientation" in ctx and "bac D" in ctx
+
+
+# ── v4.00 : public scolaire assumé (audit N-02) ──
+def test_collegien_recoit_la_note_une_seule_fois(llm):
+    s = _sess()
+    msg, s = _run(main.process_text_message(s, "je suis en 3e et je sais pas quoi faire après le BEPC"))
+    assert s["profil"]["profil_plus"]["orientation"]["niveau"] == "collège / BEPC"
+    assert "professeur principal" in msg, "le collégien doit être invité à en parler à un adulte"
+    msg2, s = _run(main.process_text_message(s, "et si j'aime la mécanique ?"))
+    assert "professeur principal" not in msg2, "la note ne doit pas se répéter à chaque message"
+
+
+def test_adulte_ne_recoit_pas_la_note(llm):
+    s = _sess()
+    msg, s = _run(main.process_text_message(s, "je suis comptable depuis 10 ans, je veux me reconvertir"))
+    assert "professeur principal" not in msg

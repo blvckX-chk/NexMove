@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "3.99.0"
+VERSION         = "4.00.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4155,8 +4155,27 @@ async def _orientation_reply(session: dict, question: str) -> str:
     if not rep or _looks_truncated(rep):
         rep = await _gen_text(CONSEILLER_PERSONA + ORIENT_METHOD, user, max_tokens=700, temperature=0.4, tier="smart") or rep
     _orient_touch(session)
-    return rep or ("Je veux bien t'aider à y voir clair 🙂 Dis-moi où tu en es (classe, diplôme ou métier actuel) "
-                   "et ce qui t'attire, même vaguement. Tu peux aussi faire le /testorientation (6 questions, 2 min).")
+    rep = rep or ("Je veux bien t'aider à y voir clair 🙂 Dis-moi où tu en es (classe, diplôme ou métier actuel) "
+                  "et ce qui t'attire, même vaguement. Tu peux aussi faire le /testorientation (6 questions, 2 min).")
+    return rep + _orient_jeune_note(session)
+
+# Public scolaire assumé (v4.00) : NexMove conseille aussi des collégiens. La politique de
+# confidentialité (§9) leur demande d'en parler à un adulte — or un collégien ne lira jamais
+# cette page. On le dit donc DANS la conversation, UNE fois, et sous une forme qui est d'abord
+# un bon conseil d'orientation : à cet âge, le prof principal et la famille comptent vraiment.
+_ORIENT_JEUNE_NOTE = ("\n\n_Tu es encore au collège : parle aussi de tout ça à un parent et à ton "
+                      "professeur principal. Ils connaissent ton dossier et les établissements du coin "
+                      "mieux que moi — et c'est plus simple si un adulte est au courant._")
+
+def _orient_jeune_note(session: dict) -> str:
+    """Note affichée UNE seule fois quand la personne se décrit comme collégienne."""
+    memo = _orient_memo(session)
+    if not str(memo.get("niveau", "")).lower().startswith("collège"):
+        return ""
+    if memo.get("note_jeune_vue"):
+        return ""
+    memo["note_jeune_vue"] = True
+    return _ORIENT_JEUNE_NOTE
 
 def _orient_test_start(session: dict) -> str:
     session["orient_test"] = {"qi": 0, "answers": []}
