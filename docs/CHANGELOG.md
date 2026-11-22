@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.04 — Sous-traitants IA nommés, durées de conservation réelles, runbook (audit A-08, A-12)
+- **A-08 — on nomme enfin les prestataires** : la politique parlait de « fournisseurs » sans les citer. §4 liste désormais Cerebras, Groq, Google (Gemini), OpenRouter, Tavily et Cloudflare, leur rôle et leur pays. Surtout, elle dit **ce qui leur est envoyé** (le texte, le CV, l'image) et **ce qui ne l'est pas** : aucun identifiant Telegram/WhatsApp, aucun numéro, aucun nom de compte — vérifié dans le code. Le prestataire reçoit un texte, pas une personne.
+- **Honnêteté sur ce qu'on ne maîtrise pas** : la durée de conservation chez ces prestataires dépend de leurs conditions, pas des nôtres. C'est écrit tel quel plutôt que noyé.
+- **§6 — durées réelles, pas une formule** : historique limité aux **30 derniers messages**, **15 fichiers** maximum par personne, **2 000** messages non compris au total, code promo conservé sans identifiant. Ces chiffres viennent du code.
+- **A-12 — `docs/RUNBOOK.md`** : écrit pour être suivi **par quelqu'un d'autre que la personne qui a construit NexMove**. Diagnostic par symptôme (bot muet, site down, base corrompue, serveur perdu), table des pannes déjà vues et de leur cause, reconstruction complète depuis une sauvegarde, et une section **accès de secours** : qui doit pouvoir accéder à quoi si le propriétaire est injoignable.
+- Le runbook dit ce qui est vrai : **la phrase secrète des sauvegardes est le point de défaillance unique du projet**. Sans elle, les sauvegardes ne sont que du bruit chiffré.
+
 ## v4.03 — 68 failles connues corrigées dans les dépendances (audit A-07)
 - **Ce n'était pas théorique** : un audit (`pip-audit`) a trouvé **68 failles connues** dans trois paquets, tous sur le chemin d'attaque d'un bot qui accepte des fichiers d'inconnus — **Pillow 11.0.0 (55 failles)**, qui lit les photos de CV ; **starlette 0.41.3 (7)**, qui traite chaque requête HTTP ; **python-multipart 0.0.20 (6)**, qui analyse les fichiers téléversés.
 - **Mises à jour** : Pillow 11→**13.0.0**, starlette 0.41→**1.10.0** (via fastapi 0.115→**0.165.0**), python-multipart 0.0.20→**0.0.34**. `starlette` est désormais épinglé explicitement : c'est une dépendance indirecte, mais elle traite chaque requête — elle ne doit pas évoluer dans notre dos. Résultat : **plus aucune faille connue**.

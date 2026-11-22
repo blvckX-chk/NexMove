@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.03.0** · 22 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.04.0** · 22 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -58,6 +58,7 @@ API      api-nexmove.blvckunlimited.space
 | Restaurer | `./scripts/restore.sh` |
 | Secrets | `.env` du dossier de déploiement, **jamais dans le dépôt** — voir [SECURITE.md](SECURITE.md) |
 | Surveiller | Message Telegram à chaque démarrage, avec alerte si un secret manque |
+| En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
 
 ## Ce qui est connu et non réglé
 - `main.py` reste un monolithe de ~11 700 lignes : extraction progressive vers des modules purs
@@ -69,7 +70,7 @@ API      api-nexmove.blvckunlimited.space
 
 ## Documents de `docs/`
 `docs/` ne contient **que** de la documentation opérationnelle : de quoi faire tourner, mettre à
-jour et reconstruire le système. Huit fichiers, aucun doublon, chacun avec un rôle unique.
+jour et reconstruire le système. Neuf fichiers, aucun doublon, chacun avec un rôle unique.
 
 | Fichier | Rôle |
 |---|---|
@@ -80,6 +81,7 @@ jour et reconstruire le système. Huit fichiers, aucun doublon, chacun avec un r
 | GUIDE-WHATSAPP.md · GUIDE-MESSENGER.md | activer ces deux canaux (côté Meta) |
 | SECURITE.md | ce qui est public, les secrets, la rotation des clés |
 | SAUVEGARDE.md | sauvegarde chiffrée, restauration, changement de serveur |
+| RUNBOOK.md | que faire quand ça casse — écrit pour quelqu'un d'autre que le constructeur |
 
 Les documents de **stratégie** (monétisation, plan de lancement, kit de campagne, identité de
 marque) ont été sortis du dépôt : il est public. Les anciennes analyses techniques et

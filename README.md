@@ -65,6 +65,7 @@ dossier de déploiement et **ne sont jamais dans le dépôt**.
 - [docs/CHANGELOG.md](docs/CHANGELOG.md) — journal des évolutions.
 - [docs/SECURITE.md](docs/SECURITE.md) — ce qui est public, ce qui ne doit pas l'être, rotation des clés.
 - [docs/SAUVEGARDE.md](docs/SAUVEGARDE.md) — sauvegarde chiffrée et restauration.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — que faire quand ça casse (pannes, accès de secours).
 - [docs/INSTALLATION.md](docs/INSTALLATION.md) — installer, mettre à jour, exploiter sur un VPS.
 
 Également dans `docs/` : [DOMAINE-ET-TUNNEL.md](docs/DOMAINE-ET-TUNNEL.md) (domaine et tunnel
