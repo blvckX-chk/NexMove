@@ -2,14 +2,14 @@
 # on l'épingle explicitement pour qu'une faille ne passe pas inaperçue.
 starlette==1.10.0
 fastapi==0.165.0
-uvicorn[standard]==0.34.0
+uvicorn[standard]==0.54.0
 httpx==0.28.1
-pydantic==2.10.4
+pydantic==2.14.3
 python-multipart==0.0.34
-PyMuPDF==1.25.1
-reportlab==4.2.5
+PyMuPDF==2.1
+reportlab==5.1.0
 # OCR pour les CV scannés (nécessite les paquets système tesseract-ocr* du Dockerfile)
 pytesseract==0.3.13
 Pillow==13.0.0
 # Export Word (.docx) modifiable — pur Python, aucune dépendance système
-python-docx==1.1.2
+python-docx==1.2.0
