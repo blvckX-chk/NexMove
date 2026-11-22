@@ -1,0 +1,23 @@
+# Mises à jour automatiques des dépendances (audit A-07).
+# Une PR par lot et par semaine : assez pour ne pas vieillir, assez peu pour rester lisible.
+# La CI (test + docker-smoke + deploy-path + audit) valide chaque PR avant fusion.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /api
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      production:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

@@ -38,6 +38,21 @@ curl -s -o /dev/null -w "%{http_code}\n" -H "X-Forge-Nex-Key: forge_nex_secret_2
   https://api-nexmove.blvckunlimited.space/api/admin/stats
 ```
 
+## Dépendances
+Les versions sont **figées** (reproductibilité) et **auditées à chaque PR** par le job CI
+`audit` (`pip-audit`). Une faille connue dans une dépendance de production fait échouer la CI.
+Dependabot propose une mise à jour groupée chaque semaine.
+
+> Pourquoi ça compte ici : `Pillow` lit les **photos de CV envoyées par des inconnus**,
+> `starlette` traite **chaque requête HTTP**, `python-multipart` analyse les **fichiers
+> téléversés**. Au 22/11/2026, ces trois paquets cumulaient **68 failles connues** ; ils ont
+> été mis à jour (Pillow 11→13, starlette 0.41→1.10, python-multipart 0.0.20→0.0.34).
+
+Vérifier à la main :
+```bash
+pip install pip-audit && pip-audit -r api/requirements.txt
+```
+
 ## Autres protections en place
 - Webhooks Meta signés (`META_APP_SECRET`), webhook Telegram authentifié (`TELEGRAM_WEBHOOK_SECRET`).
 - Droits admin désactivés sur WhatsApp/Messenger tant que `META_APP_SECRET` manque.

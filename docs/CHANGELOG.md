@@ -2,6 +2,12 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.03 — 68 failles connues corrigées dans les dépendances (audit A-07)
+- **Ce n'était pas théorique** : un audit (`pip-audit`) a trouvé **68 failles connues** dans trois paquets, tous sur le chemin d'attaque d'un bot qui accepte des fichiers d'inconnus — **Pillow 11.0.0 (55 failles)**, qui lit les photos de CV ; **starlette 0.41.3 (7)**, qui traite chaque requête HTTP ; **python-multipart 0.0.20 (6)**, qui analyse les fichiers téléversés.
+- **Mises à jour** : Pillow 11→**13.0.0**, starlette 0.41→**1.10.0** (via fastapi 0.115→**0.165.0**), python-multipart 0.0.20→**0.0.34**. `starlette` est désormais épinglé explicitement : c'est une dépendance indirecte, mais elle traite chaque requête — elle ne doit pas évoluer dans notre dos. Résultat : **plus aucune faille connue**.
+- **Vérifié, pas supposé** : 723 tests au vert sous les nouvelles versions, et un essai réel du traitement d'images (photo de CV 2400×3200 → relecture → redimensionnement → ré-encodage, plus un fichier corrompu correctement refusé), parce que les tests ne manipulent pas de vraies images.
+- **Nouveau job CI `audit`** : une faille connue dans une dépendance de production fait échouer la CI. Plus **Dependabot** (mise à jour groupée hebdomadaire), pour que les versions figées ne vieillissent plus en silence.
+
 ## v4.02 — Tri de la documentation : 23 fichiers → 8, tous opérationnels
 - **Le vrai problème n'était pas du copier-coller** : aucun paragraphe n'était dupliqué. C'était pire — le même sujet était expliqué dans 7 à 17 fichiers, chacun avec **sa propre version**, et elles se contredisaient (ngrok contre Cloudflare, n8n contre webhook natif). Le déploiement apparaissait dans 12 fichiers, les variables `.env` dans 17.
 - **Un seul guide d'installation** : `GUIDE-IMPLEMENTATION.md` devient `INSTALLATION.md` et absorbe `MISE-A-JOUR-SERVEUR`, `MIGRATION-VPS` et `WEBHOOK-TELEGRAM-DIRECT`. Il **renvoie** vers les guides spécialisés au lieu de les réécrire : la dédoublonnage se fait par référence, pas par réécriture (on ne perd aucun détail exact).
