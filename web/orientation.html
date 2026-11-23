@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Test d'orientation · NexMove</title>
-<meta name="description" content="Six questions, deux minutes : découvre tes centres d'intérêt dominants et les familles de métiers qui vont avec. Gratuit, sans inscription, sans e-mail.">
+<meta name="description" content="Six questions, deux minutes, et tu repars avec tes dominantes et les familles de métiers qui vont avec. Gratuit, sans inscription.">
 <meta name="theme-color" content="#f7f9fc">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="icon" href="favicon.png" sizes="32x32" type="image/png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta property="og:title" content="Test d'orientation · NexMove">
-<meta property="og:description" content="Six questions, deux minutes. Tes dominantes et les métiers qui vont avec. Sans inscription.">
+<meta property="og:description" content="Six questions, deux minutes, et tu repars avec tes dominantes et les métiers qui vont avec. Sans inscription.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="NexMove">
 <meta property="og:locale" content="fr_FR">
@@ -138,11 +138,11 @@
   <div class="wrap">
     <span class="kicker">Gratuit · sans inscription</span>
     <h1>Quel métier te ressemble&nbsp;?</h1>
-    <p class="lead" id="lead">Six questions, deux minutes. Il n'y a ni bonne ni mauvaise réponse&nbsp;: choisis ce qui te ressemble vraiment, pas ce qui «&nbsp;fait bien&nbsp;».</p>
+    <p class="lead" id="lead">Six questions, deux minutes. Aucune réponse n'est meilleure qu'une autre, alors réponds pour toi, pas pour la personne qui lira.</p>
     <div class="meta" id="meta">
-      <span><b>2 min</b> · 6 questions</span>
-      <span><b>Aucun e-mail</b> demandé</span>
-      <span><b>Rien n'est enregistré</b></span>
+      <span><b>2 min</b>, 6 questions</span>
+      <span>Pas d'e-mail à donner</span>
+      <span>Rien n'est enregistré</span>
     </div>
 
     <div class="carte" id="zone" aria-live="polite">
@@ -150,9 +150,9 @@
     </div>
 
     <p class="avert" id="intro-note">
-      Ce test repose sur le modèle <strong>RIASEC</strong>, celui qu'utilisent les conseillers d'orientation.
-      Il donne des pistes&nbsp;; il ne décide pas à ta place. Tes résultats scolaires, ton budget et ce que tu as
-      envie de vivre comptent autant.
+      Le test repose sur le modèle <strong>RIASEC</strong>, celui qu'utilisent les conseillers d'orientation.
+      Il mesure ce qui t'attire, pas ce dont tu es capable. Tes notes, ton budget et la vie que tu veux
+      mener pèsent tout autant dans un choix de métier.
     </p>
   </div>
 </main>
@@ -253,7 +253,7 @@
       "</div>" +
       "<p style=\"margin:0\"><strong>Familles de métiers qui vont souvent avec&nbsp;:</strong></p>" +
       '<ul class="metiers">' + vus.map(function (m) { return "<li>" + esc(m) + "</li>"; }).join("") + "</ul>" +
-      '<div class="avert">Un test donne des pistes, il ne décide pas à ta place. Pour transformer ça en parcours concret — filière, durée, budget, voie courte — continue avec le conseiller&nbsp;: il part de ta situation réelle.</div>' +
+      '<div class="avert">Reste la vraie question&nbsp;: quelle filière, combien d\'années, à quel prix, et s\'il existe une voie plus courte. Le conseiller part de ta situation pour y répondre.</div>' +
       '<div class="btns">' +
       '<a class="btn btn-amb" href="' + TG + "?start=ori_" + encodeURIComponent(code) + '">Continuer sur Telegram</a>' +
       '<a class="btn btn-wa" href="' + WA + "?text=" + encodeURIComponent("Bonjour, j'ai fait le test d'orientation. Mon profil : " + code + ". Peux-tu m'aider à choisir ?") + '">Continuer sur WhatsApp</a>' +
@@ -269,8 +269,8 @@
     if (etat.total === D.court) {
       suite.innerHTML =
         "<p style=\"margin:0 0 10px;color:var(--gris);font-size:.92rem\">Ce résultat vient de " + D.court +
-        " questions. Six de plus et j'ajoute ta <strong>troisième dominante</strong> — souvent celle qui départage deux métiers proches.</p>";
-      var b = el('<button class="btn" type="button">Affiner · 6 questions de plus</button>');
+        " questions. Six de plus et tu gagnes une <strong>troisième dominante</strong>. C'est souvent elle qui départage deux métiers proches.</p>";
+      var b = el('<button class="btn" type="button">Affiner avec 6 questions de plus</button>');
       b.addEventListener("click", function () {
         etat.total = D.questions.length;   // on garde les réponses déjà données
         question();
