@@ -45,7 +45,7 @@ Outils & compte : `/outils` · `/traduire <texte>` · `/profil` · `/status` · 
 
 ```bash
 pip install -r api/requirements.txt
-python3 -m pytest tests -q          # 757 tests, ~10 s
+python3 -m pytest tests -q          # 762 tests, ~10 s
 ```
 
 La CI exécute trois contrôles obligatoires avant toute fusion sur `main` : les tests,

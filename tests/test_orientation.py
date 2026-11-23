@@ -284,3 +284,53 @@ def test_le_savoir_etre_du_cv_nourrit_le_conseil_dorientation():
     brief = main._cv_brief(profil)
     assert "sens du contact" in brief and "rigueur" in brief
     assert "Python" in brief
+
+
+# ── v4.07 : test d'orientation approfondi (12 questions) ──
+def test_les_12_questions_restent_equilibrees():
+    for L in ori.RIASEC:
+        n = sum(1 for _q, opts in ori.TEST_COMPLET for l, _ in opts if l == L)
+        assert n == 8, f"{L} apparaît {n} fois sur 12 questions (attendu 8)"
+
+
+def test_six_reponses_donnent_deux_lettres_douze_en_donnent_trois():
+    assert len(ori.score_test(["S", "A", "S", "A", "I", "R"])) == 2
+    assert len(ori.score_test(["S", "A", "S", "A", "I", "R", "S", "E", "A", "I", "S", "C"])) == 3
+
+
+def test_version_courte_propose_daffiner_sans_imposer(llm):
+    s = _sess()
+    _, s = _run(main.process_text_message(s, "/testorientation"))
+    assert "1/6" in s["historique"][-1]["content"]
+    for rep in ["1", "2", "3", "4", "1", "2"]:
+        msg, s = _run(main.process_text_message(s, rep))
+    assert "orient_test" not in s, "le test court doit se terminer à 6 questions"
+    assert "Affiner" in str(s.get("_kb_options")), "on doit PROPOSER d'affiner"
+    assert "6 questions" in msg
+    assert len(s["profil"]["profil_plus"]["orientation"]["riasec"]) == 2
+
+
+def test_affiner_reprend_les_reponses_sans_tout_refaire(llm):
+    s = _sess()
+    _, s = _run(main.process_text_message(s, "/testorientation"))
+    for rep in ["1", "2", "3", "4", "1", "2"]:
+        _, s = _run(main.process_text_message(s, rep))
+    deja = list(s["profil"]["profil_plus"]["orientation"]["riasec_reponses"])
+    assert len(deja) == 6
+
+    s = _run(main.handle_action(s, "act:ori_plus"))
+    assert s["orient_test"]["qi"] == 6, "on reprend à la 7e question"
+    assert s["orient_test"]["answers"] == deja, "les 6 premières réponses sont conservées"
+    assert s["orient_test"]["complet"] is True
+
+    for rep in ["1", "2", "3", "4", "1", "2"]:
+        msg, s = _run(main.process_text_message(s, rep))
+    memo = s["profil"]["profil_plus"]["orientation"]
+    assert len(memo["riasec_reponses"]) == 12
+    assert len(memo["riasec"]) == 3, "12 réponses -> code à 3 lettres"
+
+
+def test_version_longue_directe(llm):
+    s = _sess()
+    msg, s = _run(main.process_text_message(s, "/testorientation long"))
+    assert "1/12" in msg and s["orient_test"]["complet"] is True

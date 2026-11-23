@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.06.0"
+VERSION         = "4.07.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -2552,7 +2552,7 @@ def valider_pref(field: str, value: str) -> tuple[bool, str]:
 
 AIDE_TXT = ("🧭 *NexMove · que veux-tu faire ?*\n\n"
             "🧭 *Trouver ta voie (orientation)*\n"
-            "/orientation <ta question> (métier, filière, reconversion, débouchés) · /testorientation (6 questions, 2 min)\n\n"
+            "/orientation <ta question> (métier, filière, reconversion, débouchés) · /testorientation (6 questions, 2 min · « long » pour 12)\n\n"
             "🔎 *Trouver des opportunités*\n"
             "/veille · /mobilite <pays ou domaine> · 🔔 /alerte <mot-clé>\n\n"
             "🇫🇷 *Étudier en France (accompagnement pas à pas)*\n"
@@ -4249,7 +4249,7 @@ async def _orientation_reply(session: dict, question: str) -> str:
         rep = await _gen_text(CONSEILLER_PERSONA + ORIENT_METHOD, user, max_tokens=700, temperature=0.4, tier="smart") or rep
     _orient_touch(session)
     rep = rep or ("Je veux bien t'aider à y voir clair 🙂 Dis-moi où tu en es (classe, diplôme ou métier actuel) "
-                  "et ce qui t'attire, même vaguement. Tu peux aussi faire le /testorientation (6 questions, 2 min).")
+                  "et ce qui t'attire, même vaguement. Tu peux aussi faire le /testorientation (6 questions, 2 min · « long » pour 12).")
     return rep + _orient_jeune_note(session)
 
 # Public scolaire assumé (v4.00) : NexMove conseille aussi des collégiens. La politique de
@@ -4270,36 +4270,56 @@ def _orient_jeune_note(session: dict) -> str:
     memo["note_jeune_vue"] = True
     return _ORIENT_JEUNE_NOTE
 
-def _orient_test_start(session: dict) -> str:
-    session["orient_test"] = {"qi": 0, "answers": []}
+def _orient_test_start(session: dict, suite: bool = False) -> str:
+    """Démarre le test (6 questions) ou le PROLONGE de 6 questions si `suite`.
+
+    On ne demande jamais 12 questions d'emblée : trop long décourage, et un test
+    abandonné ne vaut rien. On propose d'affiner APRÈS avoir donné un premier résultat.
+    """
+    memo = _orient_memo(session)
+    deja = list(memo.get("riasec_reponses") or []) if suite else []
+    session["orient_test"] = {"qi": ori.TEST_COURT if suite else 0, "answers": deja, "complet": bool(suite)}
     session["sim_mode"] = False; session["tool_mode"] = None; session["guide_mode"] = False
-    txt, kb = ori.format_question(0)
+    total = len(ori.TEST_COMPLET) if suite else ori.TEST_COURT
+    txt, kb = ori.format_question(ori.TEST_COURT if suite else 0, total)
     session["_kb_options"] = kb
+    if suite:
+        return ("🧭 *On affine · 6 questions de plus*\n"
+                "Mêmes règles : ce qui te ressemble vraiment, pas ce qui « fait bien ».\n\n" + txt)
     return ("🧭 *Test d'orientation · 6 questions, 2 minutes*\n"
             "Il n'y a ni bonne ni mauvaise réponse : choisis ce qui te ressemble *vraiment*.\n\n" + txt)
 
 async def _orient_test_feed(session: dict, letter: str) -> str:
-    st = session.get("orient_test") or {"qi": 0, "answers": []}
+    st = session.get("orient_test") or {"qi": 0, "answers": [], "complet": False}
+    complet = bool(st.get("complet"))
+    total = len(ori.TEST_COMPLET) if complet else ori.TEST_COURT
     st["answers"] = (st.get("answers") or []) + [letter]
     st["qi"] = int(st.get("qi", 0)) + 1
-    if st["qi"] < len(ori.TEST_QUESTIONS):
+    if st["qi"] < total:
         session["orient_test"] = st
-        txt, kb = ori.format_question(st["qi"])
+        txt, kb = ori.format_question(st["qi"], total)
         session["_kb_options"] = kb
         return txt
     session.pop("orient_test", None)
     code = ori.score_test(st["answers"])
     memo = _orient_memo(session)
     memo["riasec"] = code
+    memo["riasec_reponses"] = st["answers"]          # pour pouvoir prolonger sans tout refaire
     _orient_touch(session)
     msg = ori.format_result(code)
     if memo.get("niveau") or memo.get("interets") or session.get("cv_parsed"):
         # On connaît déjà sa situation : on transforme tout de suite le résultat en pistes concrètes.
         perso = await _orientation_reply(session, "Je viens de finir le test d'orientation. À partir de mon résultat "
                                          "et de ma situation, quelles pistes concrètes me conseilles-tu ?")
-        return msg + "\n\n" + perso
-    return (msg + "\n\n👉 *Pour aller plus loin :* dis-moi où tu en es (classe et série, diplôme, ou métier actuel) "
-            "et ce qui compte pour toi (budget, ville, durée des études). Je transforme ces pistes en parcours concret.")
+        msg = msg + "\n\n" + perso
+    else:
+        msg += ("\n\n👉 *Pour aller plus loin :* dis-moi où tu en es (classe et série, diplôme, ou métier actuel) "
+                "et ce qui compte pour toi (budget, ville, durée des études). Je transforme ces pistes en parcours concret.")
+    if not complet:
+        msg += ("\n\n_Ce résultat vient de 6 questions. Six de plus et je peux préciser ta "
+                "*troisième* dominante — souvent celle qui départage deux métiers proches._")
+        session["_kb_options"] = [("🔎 Affiner (6 questions)", "act:ori_plus")]
+    return msg
 
 async def _orient_test_answer(session: dict, t: str, now: str):
     """Réponse tapée pendant le test. None = ce n'est pas une réponse (on sort du test, traitement normal)."""
@@ -4315,7 +4335,7 @@ async def _orient_test_answer(session: dict, t: str, now: str):
         session.pop("orient_test", None)   # autre demande : on sort du test sans bloquer la personne
         return None
     _push(session, "user", t)
-    txt, kb = ori.format_question(qi)
+    txt, kb = ori.format_question(qi, len(ori.TEST_COMPLET) if st.get("complet") else ori.TEST_COURT)
     session["_kb_options"] = kb
     msg = "Réponds simplement *1, 2, 3 ou 4* 🙂 (ou /annuler pour arrêter le test)\n\n" + txt
     _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -4737,7 +4757,15 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         return msg, session
 
     if low.startswith(("/testorientation", "/test-orientation", "/quiz")):
+        # « /testorientation long » : 12 questions d'emblée, pour qui veut la version complète.
+        _long = bool(re.search(r"\b(long|complet|approfondi|12)\b", low))
         msg = _orient_test_start(session)
+        if _long:
+            session["orient_test"]["complet"] = True
+            _txt, _kb = ori.format_question(0, len(ori.TEST_COMPLET))
+            session["_kb_options"] = _kb
+            msg = ("🧭 *Test d'orientation approfondi · 12 questions*\n"
+                   "Il n'y a ni bonne ni mauvaise réponse : choisis ce qui te ressemble *vraiment*.\n\n" + _txt)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -4750,7 +4778,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                    "• « j'ai mon bac D et j'aime la santé, mais pas 7 ans d'études »\n"
                    "• « je suis comptable depuis 8 ans, je veux changer »\n"
                    "• « j'hésite entre droit et économie »\n\n"
-                   "Pas d'idée du tout ? Le /testorientation (6 questions, 2 min) donne des premières pistes.")
+                   "Pas d'idée du tout ? Le /testorientation (6 questions, 2 min · « long » pour 12) donne des premières pistes.")
             session["_kb_options"] = [("🧭 Faire le test", "act:ori_test")]
             _orient_touch(session)
         else:
@@ -8349,6 +8377,10 @@ async def handle_action(session, data, callback_id=None):
             cmd = session.pop("pending_intent", "") or "/veille"
             msg, session = await process_text_message(session, cmd)
             await deliver_text(session, msg, with_menu=True)
+            return session
+        if act == "ori_plus":
+            msg = _orient_test_start(session, suite=True)
+            await deliver_text(session, msg, options=session.pop("_kb_options", None))
             return session
         if act == "ori_test":
             msg, session = await process_text_message(session, "/testorientation")

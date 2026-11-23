@@ -172,15 +172,44 @@ TEST_QUESTIONS = [
 ]
 assert all(sum(1 for _q, opts in TEST_QUESTIONS for l, _ in opts if l == L) == 4 for L in RIASEC)
 
+# Six questions SUPPLÉMENTAIRES, proposées seulement à qui veut affiner (v4.07).
+# Même équilibre : chaque dimension revient 4 fois de plus. Sur 12 questions, le code
+# devient fiable à 3 lettres (le « code Holland » classique).
+TEST_QUESTIONS_SUITE = [
+    ("Dans ton quartier, on te demande un coup de main. Tu proposes plutôt…",
+     [("R", "réparer ou installer quelque chose"), ("S", "donner des cours à un plus jeune"),
+      ("E", "organiser une collecte ou une vente"), ("C", "tenir les comptes de l'opération")]),
+    ("Un sujet te passionne. Tu as surtout envie de…",
+     [("I", "comprendre en profondeur comment ça marche"), ("A", "en faire une vidéo, un dessin, un texte"),
+      ("E", "en parler autour de toi et convaincre"), ("C", "en faire une fiche claire et bien rangée")]),
+    ("Tu dois présenter un travail devant la classe. Tu soignes surtout…",
+     [("A", "la forme : visuel, mise en scène"), ("I", "l'exactitude : chiffres et sources"),
+      ("S", "l'utilité pour ceux qui écoutent"), ("R", "la démonstration : un objet, une maquette")]),
+    ("Tu te verrais bien travailler…",
+     [("R", "sur un chantier, une exploitation, un atelier"), ("C", "dans un bureau où tout est carré"),
+      ("E", "en rendez-vous, à négocier"), ("I", "devant des données ou en laboratoire")]),
+    ("Pendant de longues vacances, tu choisirais…",
+     [("S", "aider dans une association ou un centre de santé"), ("A", "un atelier créatif"),
+      ("R", "apprendre un métier manuel auprès de quelqu'un"), ("I", "un cours en ligne technique")]),
+    ("Dans dix ans, ce qui te rendrait le plus fier ou fière…",
+     [("E", "diriger ta propre structure"), ("S", "qu'on dise que tu as aidé beaucoup de gens"),
+      ("C", "un poste solide, tenu avec sérieux"), ("A", "avoir créé quelque chose qui te ressemble")]),
+]
+assert all(sum(1 for _q, opts in TEST_QUESTIONS_SUITE for l, _ in opts if l == L) == 4 for L in RIASEC)
+
+# Liste complète : les 6 de base, puis les 6 d'approfondissement.
+TEST_COMPLET = TEST_QUESTIONS + TEST_QUESTIONS_SUITE
+TEST_COURT = len(TEST_QUESTIONS)
+
 _LETTER_IDX = {"a": 0, "b": 1, "c": 2, "d": 3, "1": 0, "2": 1, "3": 2, "4": 3}
 
 
 def parse_test_answer(text: str, qi: int):
     """Réponse à la question qi : '1'..'4', 'a'..'d', ou un mot du libellé. Renvoie la lettre RIASEC ou None."""
     low = _fold(text).strip(" .!)")
-    if not low or not (0 <= qi < len(TEST_QUESTIONS)):
+    if not low or not (0 <= qi < len(TEST_COMPLET)):
         return None
-    opts = TEST_QUESTIONS[qi][1]
+    opts = TEST_COMPLET[qi][1]
     m = re.fullmatch(r"(?:reponse\s+|choix\s+|option\s+)?([1-4a-d])", low)
     if m:
         return opts[_LETTER_IDX[m.group(1)]][0]
@@ -199,7 +228,11 @@ def parse_test_answer(text: str, qi: int):
 
 
 def score_test(answers: list) -> str:
-    """Code à 2 lettres (dominantes). Égalité départagée par l'ordre des réponses (la 1re citée gagne)."""
+    """Code des dominantes. Égalité départagée par l'ordre des réponses (la 1re citée gagne).
+
+    6 réponses -> 2 lettres (le test court ne permet pas d'en dire plus honnêtement).
+    10 et plus -> 3 lettres : c'est le « code Holland » classique, fiable à cette longueur.
+    """
     counts: dict = {}
     first: dict = {}
     for i, l in enumerate(answers):
@@ -207,13 +240,14 @@ def score_test(answers: list) -> str:
             counts[l] = counts.get(l, 0) + 1
             first.setdefault(l, i)
     ranked = sorted(counts, key=lambda l: (-counts[l], first[l]))
-    return "".join(ranked[:2])
+    return "".join(ranked[:3 if len([a for a in answers if a in RIASEC]) >= 10 else 2])
 
 
-def format_question(qi: int) -> tuple:
-    """(texte, options[(libellé bouton, callback)])"""
-    q, opts = TEST_QUESTIONS[qi]
-    lignes = [f"*{qi + 1}/{len(TEST_QUESTIONS)} · {q}*", ""]
+def format_question(qi: int, total: int = None) -> tuple:
+    """(texte, options[(libellé bouton, callback)]) · `total` = 6 (court) ou 12 (approfondi)."""
+    q, opts = TEST_COMPLET[qi]
+    total = total or TEST_COURT
+    lignes = [f"*{qi + 1}/{total} · {q}*", ""]
     for n, (_l, label) in enumerate(opts, 1):
         lignes.append(f"{n}. {label}")
     lignes.append("")
@@ -225,15 +259,16 @@ def format_question(qi: int) -> tuple:
 def format_result(code: str) -> str:
     if not code:
         return ""
-    noms = " – ".join(RIASEC[l][0] for l in code)
+    noms = " – ".join(RIASEC[l][0] for l in code if l in RIASEC)
     lignes = [f"🧭 *Ton profil d'intérêts : {noms}*", ""]
     for l in code:
         lignes.append(f"• *{RIASEC[l][0]}* : {RIASEC[l][1]}.")
     lignes.append("")
     lignes.append("*Familles de métiers qui vont souvent avec :*")
     vus = []
+    par_lettre = 3 if len(code) <= 2 else 2      # 3 lettres -> on garde la liste lisible
     for l in code:
-        for m in METIERS[l][:3]:
+        for m in METIERS.get(l, [])[:par_lettre]:
             if m not in vus:
                 vus.append(m)
     lignes += [f"• {m}" for m in vus]
