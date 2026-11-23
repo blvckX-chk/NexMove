@@ -4634,15 +4634,15 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
                 _orient_touch(session)
                 session["source"] = session.get("source") or "web_test_orientation"
                 msg = ("👋 *Bienvenue sur NexMove !*\n"
-                       "Tu arrives du test d'orientation — je reprends ton résultat, on ne recommence pas.\n\n"
+                       "Tu arrives du test d'orientation. J'ai ton résultat, on ne recommence pas.\n\n"
                        + ori.format_result(code) + "\n\n"
-                       "👉 *Pour transformer ça en parcours concret*, dis-moi où tu en es : "
-                       "classe et série, diplôme obtenu, ou métier actuel — et ce qui compte pour toi "
-                       "(budget, ville, durée des études).")
+                       "👉 *Dis-moi maintenant où tu en es* : ta classe et ta série, ton diplôme, "
+                       "ou ton métier actuel. Et ce qui compte pour toi : le budget, la ville, "
+                       "le nombre d'années d'études que tu peux tenir.")
                 if len(code) < 3:
-                    msg += ("\n\n_Ton résultat vient de 6 questions. Tape */testorientation long* pour la "
-                            "version en 12 questions : tu gagnes une *troisième* dominante, celle qui "
-                            "départage souvent deux métiers proches._")
+                    msg += ("\n\n_Ce résultat vient de 6 questions. Tape */testorientation long* pour la "
+                            "version en 12 questions : tu gagnes une *troisième* dominante, souvent "
+                            "celle qui départage deux métiers proches._")
                 _push(session, "user", t); _push(session, "assistant", msg)
                 session["derniere_activite"] = now
                 return msg, session
