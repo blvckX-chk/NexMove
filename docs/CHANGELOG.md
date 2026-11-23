@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.07 — Test d'orientation approfondi : 12 questions, code à 3 lettres
+- **6 questions de plus**, proposées **après** un premier résultat — jamais imposées d'emblée : un test trop long est abandonné, et un test abandonné ne vaut rien. Les 6 premières réponses sont conservées, on ne refait pas le début.
+- **Équilibre préservé** : chaque dimension RIASEC revient exactement **8 fois sur 12 questions** (vérifié par un test, comme pour la version courte).
+- **Code à 3 lettres** au-delà de 10 réponses — le « code Holland » classique. La troisième dominante est souvent celle qui départage deux métiers proches. En dessous, on s'en tient à 2 lettres : le test court ne permet pas d'en dire plus honnêtement.
+- Accès direct à la version complète : `/testorientation long`.
+- Questions ancrées dans le quotidien ouest-africain (coup de main dans le quartier, présentation en classe, vacances, projection à dix ans) plutôt que des formulations abstraites.
+
 ## v4.06 — Les liens inventés ne partent plus, et on voit enfin ce que fait l'IA
 - **Faille trouvée en auditant le routage** : dans `conseil_grounded` (`/ecoles`, `/logement`, `/entretien`, `/canada`) et dans `/formations`, le modèle recevait des sources web puis renvoyait des liens… **envoyés tels quels**. La seule protection était une phrase dans l'invite (« jamais d'URL inventée ») — ce n'est pas un garde-fou. Le bot pouvait donc envoyer une URL plausible mais morte à quelqu'un qui cherche une bourse : la panne la plus coûteuse pour un produit qui promet « de vraies opportunités ».
 - **Contrôle déterministe** (`_lien_verifie`, 0 token, 0 ms) : URL exactement présente dans les sources → gardée ; domaine réel mais chemin non garanti → **ramenée à la racine du domaine** ; domaine inventé → **supprimée**, le conseil étant conservé. Le lien écarté est journalisé.

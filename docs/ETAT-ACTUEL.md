@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.06.0** · 22 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.07.0** · 22 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -43,7 +43,7 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **757**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
+| Tests | **762**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
 | Fichiers de test | 11, par domaine (unités, scénarios, orientation, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
