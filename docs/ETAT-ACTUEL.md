@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.07.0** · 22 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.08.0** · 23 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -22,6 +22,9 @@ Messenger ┘                                              │
                                                          └─► recherche web (opportunités réelles)
 
 Vitrine  nexmove.blvckunlimited.space  ─► Cloudflare Workers (assets statiques, dossier web/)
+         /orientation.html  = test d'intérêts jouable sur la page, 100 % local
+         (aucune IA, aucun stockage, aucun appel à l'API ; renvoie vers le bot
+          avec le résultat dans le lien : /start ori_SA)
 API      api-nexmove.blvckunlimited.space
 ```
 
@@ -43,8 +46,8 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **762**, exécutés en ~10 s (`python3 -m pytest tests -q`) |
-| Fichiers de test | 11, par domaine (unités, scénarios, orientation, RGPD, sauvegarde, déploiement, pages légales…) |
+| Tests | **777**, exécutés en ~13 s (`python3 -m pytest tests -q`) |
+| Fichiers de test | 12, par domaine (unités, scénarios, orientation, test web, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
@@ -54,6 +57,7 @@ API      api-nexmove.blvckunlimited.space
 |---|---|
 | Déployer l'API | `cd ~/infra/nexmove-src && git pull && ./scripts/deploy.sh` |
 | Déployer la vitrine | Automatique (Cloudflare) à chaque fusion sur `main` |
+| Modifier le test d'orientation | Éditer **`api/orientation.py`** uniquement, puis `python3 scripts/gen-orientation-web.py`. `web/orientation-data.js` est **généré** : la page web et le bot doivent poser le même test, et la CI échoue sinon. |
 | Sauvegarder | `./scripts/backup.sh` — voir [SAUVEGARDE.md](SAUVEGARDE.md) |
 | Restaurer | `./scripts/restore.sh` |
 | Secrets | `.env` du dossier de déploiement, **jamais dans le dépôt** — voir [SECURITE.md](SECURITE.md) |

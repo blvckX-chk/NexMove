@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.07.0"
+VERSION         = "4.08.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -4157,6 +4157,24 @@ def _orient_memo(session: dict) -> dict:
         pp["orientation"] = memo
     return memo
 
+def _orient_code_depuis_lien(brut: str) -> str:
+    """Valide un code RIASEC arrivé par `/start ori_XXX` (page web du test).
+
+    Le code vient d'un lien que n'importe qui peut fabriquer. On refuse donc tout ce qui
+    n'est pas exactement ce que la page produit : 2 ou 3 lettres RIASEC, rien d'autre.
+    On ne *filtre* pas les caractères parasites, on rejette — sinon `<script>` donnerait
+    « SCR », un code valide tiré de n'importe quoi. Un code refusé n'invente pas de
+    profil : on repart sur l'accueil normal.
+    """
+    code = (brut or "").strip().upper()
+    if not re.fullmatch(r"[RIASEC]{2,3}", code):
+        return ""
+    vu = []
+    for l in code:
+        if l not in vu:
+            vu.append(l)
+    return "".join(vu) if len(vu) >= 2 else ""
+
 def _orient_active(session: dict) -> bool:
     try:
         return datetime.fromisoformat(session.get("orient_until") or "") > datetime.now(timezone.utc)
@@ -4603,9 +4621,32 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         session["etape"] = "ATTENTE_CV"; session["profil"] = {}; session["historique"] = []
         session["cv_parsed"] = False; session["cv_file_id"] = None
         session["onboarding_complete"] = False; session["pref_current"] = None
-        # /start <code> : soit une source de campagne (src_...), soit un code de parrainage (Pxxxxx).
+        # /start <code> : résultat du test web (ori_...), source de campagne (src_...) ou parrainage (Pxxxxx).
         parts = t.split(maxsplit=1)
         arg = (parts[1].strip() if len(parts) > 1 else "")
+        if arg.lower().startswith("ori_"):
+            # Lien venu de la page /orientation.html : la personne a déjà fait le test, on ne le refait pas.
+            code = _orient_code_depuis_lien(arg[4:])
+            if code:
+                memo = _orient_memo(session)
+                memo["riasec"] = code
+                memo["riasec_source"] = "web"     # pas de réponses détaillées : on ne peut pas « prolonger »
+                _orient_touch(session)
+                session["source"] = session.get("source") or "web_test_orientation"
+                msg = ("👋 *Bienvenue sur NexMove !*\n"
+                       "Tu arrives du test d'orientation — je reprends ton résultat, on ne recommence pas.\n\n"
+                       + ori.format_result(code) + "\n\n"
+                       "👉 *Pour transformer ça en parcours concret*, dis-moi où tu en es : "
+                       "classe et série, diplôme obtenu, ou métier actuel — et ce qui compte pour toi "
+                       "(budget, ville, durée des études).")
+                if len(code) < 3:
+                    msg += ("\n\n_Ton résultat vient de 6 questions. Tape */testorientation long* pour la "
+                            "version en 12 questions : tu gagnes une *troisième* dominante, celle qui "
+                            "départage souvent deux métiers proches._")
+                _push(session, "user", t); _push(session, "assistant", msg)
+                session["derniere_activite"] = now
+                return msg, session
+            arg = ""   # code illisible : on continue sur l'accueil normal, sans rien inventer
         if arg.lower().startswith("src_"):
             # Attribution marketing : on garde la PREMIÈRE source vue (ne pas écraser).
             if not session.get("source"):
