@@ -8,7 +8,7 @@
 <meta name="description" content="Conseiller IA emploi & mobilité sur Telegram et WhatsApp : analyse ton CV, trouve de vraies opportunités notées, prépare tes dossiers. En français, sans app.">
 <meta name="keywords" content="conseiller IA emploi, assistant IA emploi, recherche d'emploi Bénin, CV, lettre de motivation IA, offres d'emploi, bourse, études à l'étranger, Campus France, mobilité, Telegram, WhatsApp, Mobile Money, Afrique de l'Ouest">
 <meta name="author" content="blvckUnlimited">
-<meta name="nexmove-vitrine" content="4.00">
+<meta name="nexmove-vitrine" content="4.07">
 <meta name="theme-color" content="#f7f9fc">
 <script>(function(){try{var t=localStorage.getItem('nex-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="canonical" href="https://nexmove.blvckunlimited.space/">
@@ -68,6 +68,9 @@
   }
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
+  /* L'en-tête est fixe (67 px) : sans cette marge, un lien du menu amenait le titre de la
+     section SOUS l'en-tête, qui le masquait. Concerne les six liens, pas seulement l'orientation. */
+  section[id]{scroll-margin-top:84px}
   body{margin:0;background:var(--bg);color:var(--txt);
     font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;line-height:1.55;-webkit-font-smoothing:antialiased;overflow-x:hidden}
   a{color:inherit;text-decoration:none}
@@ -213,6 +216,21 @@
   .kcard{background:var(--bg2);border:1px solid var(--bord);border-radius:9px;padding:8px 9px;font-size:.8rem;font-weight:600;margin-bottom:7px}
   .kcard small{color:var(--gris);font-weight:500;display:block}
   .drop{border:1.5px dashed var(--bord2);border-radius:12px;padding:22px;text-align:center;color:var(--gris);font-size:.85rem}
+  /* Orientation : bulles de conversation + carte du test (jetons existants, clair et sombre) */
+  .chat{display:flex;flex-direction:column;gap:10px}
+  .bub{max-width:86%;padding:11px 14px;border-radius:14px;font-size:.88rem;line-height:1.5;border:1px solid var(--bord)}
+  .bub.me{align-self:flex-end;background:var(--bleu);color:#fff;border-color:transparent;border-bottom-right-radius:5px}
+  .bub.bot{align-self:flex-start;background:var(--carte2);color:var(--txt);border-bottom-left-radius:5px}
+  .qcard{background:var(--carte);border:1px solid var(--bord);border-radius:var(--rayon);padding:20px;box-shadow:var(--ombre-sm)}
+  .qnum{font-family:"Geist Mono",monospace;font-size:.72rem;font-weight:700;letter-spacing:.08em;color:var(--ambre)}
+  .qtitle{font-weight:700;margin:.4rem 0 .9rem;line-height:1.35}
+  .qopts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;counter-reset:q}
+  .qopts li{counter-increment:q;position:relative;padding:9px 12px 9px 36px;border:1px solid var(--bord);border-radius:10px;font-size:.86rem;color:var(--gris)}
+  .qopts li::before{content:counter(q);position:absolute;left:12px;top:50%;transform:translateY(-50%);font-family:"Geist Mono",monospace;font-size:.74rem;font-weight:700;color:var(--gris)}
+  .qopts li.on{border-color:var(--ambre);background:color-mix(in srgb,var(--ambre) 12%,transparent);color:var(--txt);font-weight:600}
+  .qopts li.on::before{color:var(--ambre)}
+  .qres{margin-top:14px;padding-top:12px;border-top:1px solid var(--bord);font-size:.84rem;color:var(--gris)}
+  .note{margin-top:10px;font-size:.82rem;color:var(--gris);line-height:1.5}
   .filecard{display:flex;gap:.5rem;align-items:center;background:var(--carte2);border:1px solid var(--bord);border-radius:10px;padding:9px 11px;margin-top:9px;font-size:.82rem;font-weight:600}
   .filecard small{color:var(--gris);font-weight:500;display:block}
 
@@ -294,6 +312,7 @@
   <div class="wrap nav">
     <a class="brand" href="#top"><span class="logo"><svg viewBox="0 0 1471 1362" aria-hidden="true"><path fill="#FFFFFF" fill-rule="evenodd" d="M446,65 L33,474 L32,1325 L248,1325 L248,570 L451,371 L943,864 L946,1170 L938,1173 L455,697 L453,997 L786,1330 L1155,1329 L1159,765 Z"/><path fill="#E0A020" fill-rule="evenodd" d="M953,36 L955,196 L1163,205 L951,427 L955,445 L1051,539 L1068,536 L1270,343 L1282,485 L1437,484 L1433,32 Z"/></svg></span> NexMove</a>
     <nav class="nav-links" id="navLinks">
+      <a href="#orientation">Orientation</a>
       <a href="#fonctions">Fonctions</a>
       <a href="#prix">Tarifs</a>
       <a href="#testeurs">Testeurs</a>
@@ -333,7 +352,7 @@
         <div>
           <span class="eyebrow">Conseiller IA · Telegram &amp; WhatsApp · Français</span>
           <h1>Postule moins au hasard.<br><span class="accent">Décroche plus : emploi, études, mobilité.</span></h1>
-          <p class="lead">NexMove lit ton CV, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), les <strong>note selon ton profil</strong> et prépare chaque dossier : lettre, CV adapté, entretien. Dans ta messagerie, sans app.</p>
+          <p class="lead">Tu ne sais pas encore quoi faire ? NexMove t'aide d'abord à <strong>trouver ta voie</strong>. Tu as déjà un cap ? Il lit ton CV, trouve de <strong>vraies opportunités</strong> (locales et à l'étranger), les <strong>note selon ton profil</strong> et prépare chaque dossier. Dans ta messagerie, sans app.</p>
           <div class="cta-row">
             <a class="btn btn-amb js-start" href="https://t.me/nex_move_bot">Démarrer sur Telegram</a>
             <a class="btn js-wa" href="https://wa.me/22962118761" style="background:#25D366;color:#06281a;border:none;font-weight:700">Ouvrir sur WhatsApp</a>
@@ -376,11 +395,72 @@
   </div>
 
   <!-- FONCTIONS -->
+  <section id="orientation">
+    <div class="wrap">
+      <div class="kicker">Avant de chercher une offre</div>
+      <h2>Trouve ta voie, puis fonce</h2>
+      <p class="sub">Choisir une filière ou un métier vient avant tout le reste. Que tu sois au collège, au lycée, à la fac ou déjà en poste, on part de là où tu en es.</p>
+
+      <div class="feat reveal">
+        <div>
+          <div><span class="fnum">01</span><span class="ftag">S'orienter</span></div>
+          <h3>Un conseiller qui écoute avant de conseiller</h3>
+          <p>Dis simplement où tu en es et ce qui t'attire, même vaguement. NexMove reformule ta situation, pose une question à la fois, puis propose deux ou trois pistes argumentées : pourquoi elles te correspondent, le parcours, et la voie courte quand elle existe.</p>
+          <ul class="flist">
+            <li>Parle normalement : aucune commande à retenir</li>
+            <li>Reconversion, concours raté, pression de la famille, budget serré : pris au sérieux</li>
+            <li>Apprentissage, artisanat qualifié et auto-emploi comptent comme de vrais choix</li>
+            <li>Le conseil éclaire, la décision reste la tienne</li>
+          </ul>
+        </div>
+        <div class="fimg">
+          <div class="chat">
+            <div class="bub me">J'ai eu mon bac D et j'aime la santé, mais pas sept ans d'études.</div>
+            <div class="bub bot">Si je comprends bien, tu veux soigner sans t'engager dans un cursus très long. Deux pistes tiennent la route&nbsp;: <strong>soins infirmiers</strong> et <strong>biologie médicale</strong>&hellip;</div>
+            <div class="bub me">Et si je préfère le labo&nbsp;?</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="feat reveal">
+        <div>
+          <div><span class="fnum">02</span><span class="ftag">Se situer</span></div>
+          <h3>Un test d'intérêts en six questions</h3>
+          <p>Deux minutes, quatre choix par question, aucune bonne réponse. Tu repars avec tes dominantes et les familles de métiers qui vont avec. Six questions de plus si tu veux affiner&nbsp;: le résultat gagne alors une troisième dominante, souvent celle qui départage deux métiers proches.</p>
+          <ul class="flist">
+            <li>Fondé sur le modèle RIASEC, celui qu'utilisent les conseillers d'orientation</li>
+            <li>Métiers ancrés sur la réalité du Bénin et de la sous-région</li>
+            <li>Résultat transformé en parcours concret selon ta situation</li>
+            <li>Un test donne des pistes, il ne décide pas à ta place</li>
+          </ul>
+          <div class="cta-row" style="margin-top:18px">
+            <a class="btn btn-amb js-start" href="https://t.me/nex_move_bot">Faire le test sur Telegram</a>
+            <a class="btn js-wa" href="https://wa.me/22962118761" style="background:#25D366;color:#06281a;border:none;font-weight:700">Sur WhatsApp</a>
+          </div>
+          <p class="note">Écris simplement «&nbsp;je ne sais pas quoi faire&nbsp;», ou tape <code>/testorientation</code> (et <code>/testorientation long</code> pour la version en douze questions).</p>
+        </div>
+        <div class="fimg">
+          <div class="qcard">
+            <div class="qnum">3 / 6</div>
+            <div class="qtitle">Dans un travail de groupe, tu es plutôt celui ou celle qui&hellip;</div>
+            <ol class="qopts">
+              <li>prend la tête et convainc les autres</li>
+              <li class="on">fait que tout le monde s'entende</li>
+              <li>tient le planning et les comptes</li>
+              <li>cherche les infos et analyse</li>
+            </ol>
+            <div class="qres">Profil&nbsp;: <strong>Social – Artistique</strong> · enseignement, travail social, design&hellip;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section id="fonctions">
     <div class="wrap">
       <div class="kicker">Ce que NexMove fait pour toi</div>
       <h2>Du CV au départ, sans te perdre</h2>
-      <p class="sub">Un seul conseiller pour analyser, trouver, candidater et te préparer. Pas dix outils.</p>
+      <p class="sub">Une fois le cap fixé&nbsp;: un seul conseiller pour analyser, trouver, candidater et te préparer. Pas dix outils.</p>
 
       <div class="feat reveal">
         <div>
@@ -543,6 +623,9 @@
       <h2>Questions fréquentes</h2>
       <div style="margin-top:22px">
         <details open><summary>NexMove, c'est quoi exactement ?</summary><p>Un conseiller IA emploi & mobilité que tu utilises dans ta messagerie (Telegram ou WhatsApp). Il analyse ton profil, trouve des opportunités notées, prépare tes dossiers et t'accompagne pas à pas.</p></details>
+        <details><summary>Je suis au lycée (ou au collège), est-ce que c'est pour moi&nbsp;?</summary><p>Oui. NexMove accompagne aussi le choix d'une filière ou d'un métier, avant toute recherche d'offre. Dis-lui ta classe et ce qui t'attire&nbsp;: il part de là. Si tu as moins de 16&nbsp;ans, préviens un parent ou ton tuteur avant de l'utiliser.</p></details>
+        <details><summary>Comment marche le test d'orientation&nbsp;?</summary><p>Six questions, quatre choix chacune, deux minutes. Il repose sur le modèle <strong>RIASEC</strong>, utilisé par les conseillers d'orientation&nbsp;: il situe tes centres d'intérêt et en déduit des familles de métiers. Six questions de plus permettent d'affiner avec une troisième dominante. Un test donne des pistes&nbsp;; il ne décide pas à ta place, et tes résultats scolaires, ton budget et ta famille comptent autant.</p></details>
+        <details><summary>Mon enfant veut l'utiliser, qu'est-ce qui est conservé&nbsp;?</summary><p>Seulement ce qui sert à conseiller&nbsp;: sa classe ou sa série, ce qui l'intéresse, le résultat du test. Ni adresse, ni données familiales, ni numéro d'élève. Rien n'est vendu ni transmis à un établissement ou un employeur, et tout s'efface avec <code>/supprimer</code>. Un parent peut nous écrire pour y accéder ou demander la suppression&nbsp;: voir la <a href="confidentialite.html" style="color:var(--bleu2)">politique de confidentialité, §9</a>.</p></details>
         <details><summary>Est-ce que c'est gratuit ?</summary><p>Oui, tu commences gratuitement et tu découvres chaque fonction. L'illimité passe par un abonnement Premium abordable, ou par des packs de crédits à la carte.</p></details>
         <details><summary>Quelle différence IA entre le Gratuit et le Premium ?</summary><p>La <strong>logique</strong> est la même pour tous : analyse, matching noté, rédaction sans invention, lecture d'images. Ce qui change, c'est le moteur : en <strong>Gratuit</strong>, des modèles rapides et solides (Cerebras, Groq, Google Gemini) ; en <strong>Premium / Pro</strong>, tes documents clés et analyses passent par des <strong>modèles premium</strong> (plus puissants) pour une meilleure qualité du livrable. Repli automatique sur un autre modèle si l'un est indisponible.</p></details>
         <details><summary>Faut-il installer une application ?</summary><p>Non. Tout se passe dans Telegram ou WhatsApp. Tu peux même interagir à la voix et démarrer sans CV.</p></details>

@@ -2,6 +2,13 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.07b — La vitrine parle enfin de l'orientation
+- **Le constat** : la vitrine ne mentionnait l'orientation **nulle part** — zéro occurrence de « orientation », « filière », « lycéen » — alors que le bot a un conseiller d'orientation et un test RIASEC depuis la v3.96. Un lycéen qui scannait l'affiche arrivait sur une page qui ne lui parlait pas.
+- **Nouvelle section « Trouve ta voie, puis fonce »**, placée **avant** les fonctions : le conseiller qui écoute avant de conseiller, et le test d'intérêts. Avec une conversation d'exemple et une maquette du test, dans le système de marque existant (mêmes jetons de couleur, clair et sombre).
+- Entrée « Orientation » dans le menu, promesse du hero élargie, trois questions ajoutées à la FAQ (lycéen ou collégien, fonctionnement du test, ce qui est conservé pour un mineur — avec renvoi vers la politique §9).
+- **Défaut préexistant corrigé au passage** : aucune section n'avait de `scroll-margin-top`. Les **six** liens du menu amenaient le titre de la section sous l'en-tête fixe, qui le masquait. Une ligne de CSS, tout le site en profite.
+- Vérifié au rendu réel (Playwright) en 1280 px et 390 px, thèmes clair et sombre : aucun débordement horizontal, aucune erreur console, titre visible après clic sur le menu.
+
 ## v4.07 — Test d'orientation approfondi : 12 questions, code à 3 lettres
 - **6 questions de plus**, proposées **après** un premier résultat — jamais imposées d'emblée : un test trop long est abandonné, et un test abandonné ne vaut rien. Les 6 premières réponses sont conservées, on ne refait pas le début.
 - **Équilibre préservé** : chaque dimension RIASEC revient exactement **8 fois sur 12 questions** (vérifié par un test, comme pour la version courte).
