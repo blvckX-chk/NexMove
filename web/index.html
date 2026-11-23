@@ -8,7 +8,7 @@
 <meta name="description" content="Conseiller IA emploi & mobilité sur Telegram et WhatsApp : analyse ton CV, trouve de vraies opportunités notées, prépare tes dossiers. En français, sans app.">
 <meta name="keywords" content="conseiller IA emploi, assistant IA emploi, recherche d'emploi Bénin, CV, lettre de motivation IA, offres d'emploi, bourse, études à l'étranger, Campus France, mobilité, Telegram, WhatsApp, Mobile Money, Afrique de l'Ouest">
 <meta name="author" content="blvckUnlimited">
-<meta name="nexmove-vitrine" content="4.07">
+<meta name="nexmove-vitrine" content="4.08">
 <meta name="theme-color" content="#f7f9fc">
 <script>(function(){try{var t=localStorage.getItem('nex-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
 <link rel="canonical" href="https://nexmove.blvckunlimited.space/">
@@ -89,7 +89,7 @@
   /* Header */
   header{position:sticky;top:0;z-index:40;background:var(--headerbg);backdrop-filter:blur(12px);border-bottom:1px solid var(--bord)}
   /* Bouton bascule thème clair/sombre */
-  .theme-toggle{background:transparent;border:1.5px solid var(--bord2);color:var(--txt);width:38px;height:38px;
+  .theme-toggle{background:transparent;border:1.5px solid var(--bord2);color:var(--txt);width:44px;height:44px;
     border-radius:10px;display:grid;place-items:center;cursor:pointer;padding:0;transition:border-color .14s,color .14s;flex:0 0 auto}
   .theme-toggle:hover{border-color:var(--bleu);color:var(--bleu)}
   .theme-toggle svg{width:18px;height:18px}
@@ -109,7 +109,7 @@
   .nav-links a:hover{color:var(--txt)}
   .nav-actions{display:flex;align-items:center;gap:.6rem}
   .burger{display:none;background:transparent;border:1.5px solid var(--bord2);color:var(--txt);
-    width:40px;height:40px;border-radius:10px;align-items:center;justify-content:center;cursor:pointer}
+    width:44px;height:44px;border-radius:10px;align-items:center;justify-content:center;cursor:pointer}
   .burger:hover{border-color:var(--bleu);color:var(--bleu)}
   .burger svg{width:22px;height:22px}
   @media(max-width:860px){
@@ -285,10 +285,19 @@
   .annonce a{color:#fff;font-weight:800;white-space:nowrap;border-bottom:2px solid rgba(255,255,255,.6)}
   .annonce a:hover{border-color:#fff}
   .pill-new{background:var(--ambre);color:#06281a;font-weight:800;font-size:.7rem;letter-spacing:.04em;text-transform:uppercase;padding:.15rem .55rem;border-radius:999px;flex:0 0 auto}
-  .annonce .wrap{position:relative;padding-right:48px;padding-left:48px}
-  .annonce-close{position:absolute;right:14px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:#fff;font-size:1.4rem;line-height:1;cursor:pointer;opacity:.8;padding:.1rem .3rem}
-  .annonce-close:hover{opacity:1}
+  .annonce .wrap{position:relative;padding-right:56px;padding-left:20px}
+  .annonce-close{position:absolute;right:8px;top:50%;transform:translateY(-50%);background:transparent;border:0;color:#fff;font-size:1.4rem;line-height:1;cursor:pointer;opacity:.8;
+    /* 44x44 : seuil d'accessibilité tactile. Le signe reste petit, la zone de clic ne l'est plus. */
+    width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:10px}
+  .annonce-close:hover{opacity:1;background:rgba(255,255,255,.14)}
   .annonce.is-hidden{display:none}
+  /* Cibles tactiles (audit 2026-11-23) : 17 éléments cliquables faisaient moins de 44 px de haut
+     sur mobile. On élargit la zone de clic sans toucher à la mise en page visuelle. */
+  @media(max-width:860px){
+    .annonce a{display:inline-flex;align-items:center;min-height:44px}
+    footer a, .contact-equipe a{display:inline-flex;align-items:center;min-height:44px}
+    .btn-ghost{min-height:44px;display:inline-flex;align-items:center}
+  }
 
   /* Mobile : espacements plus serrés, boutons pleine largeur, pas de débordement */
   @media(max-width:560px){
@@ -434,10 +443,10 @@
             <li>Un test donne des pistes, il ne décide pas à ta place</li>
           </ul>
           <div class="cta-row" style="margin-top:18px">
-            <a class="btn btn-amb js-start" href="https://t.me/nex_move_bot">Faire le test sur Telegram</a>
-            <a class="btn js-wa" href="https://wa.me/22962118761" style="background:#25D366;color:#06281a;border:none;font-weight:700">Sur WhatsApp</a>
+            <a class="btn btn-amb" href="orientation.html">Faire le test ici · 2 min</a>
+            <a class="btn js-start" href="https://t.me/nex_move_bot">Sur Telegram</a>
           </div>
-          <p class="note">Écris simplement «&nbsp;je ne sais pas quoi faire&nbsp;», ou tape <code>/testorientation</code> (et <code>/testorientation long</code> pour la version en douze questions).</p>
+          <p class="note">Sur cette page&nbsp;: aucune inscription, aucun e-mail, rien d'enregistré. À la fin, ton résultat part avec toi dans la conversation avec le conseiller. Dans le bot, écris simplement «&nbsp;je ne sais pas quoi faire&nbsp;», ou tape <code>/testorientation</code>.</p>
         </div>
         <div class="fimg">
           <div class="qcard">

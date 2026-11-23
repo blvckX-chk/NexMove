@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test d'orientation · NexMove</title>
+<meta name="description" content="Six questions, deux minutes : découvre tes centres d'intérêt dominants et les familles de métiers qui vont avec. Gratuit, sans inscription, sans e-mail.">
+<meta name="theme-color" content="#f7f9fc">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:title" content="Test d'orientation · NexMove">
+<meta property="og:description" content="Six questions, deux minutes. Tes dominantes et les métiers qui vont avec. Sans inscription.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="NexMove">
+<meta property="og:locale" content="fr_FR">
+<meta property="og:url" content="https://nexmove.blvckunlimited.space/orientation.html">
+<meta property="og:image" content="https://nexmove.blvckunlimited.space/og.png">
+<link rel="canonical" href="https://nexmove.blvckunlimited.space/orientation.html">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=Geist+Mono:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bleu:#1B52B0; --bleu2:#123E86; --ambre:#E0A020;
+    --bg:#f7f9fc; --bg2:#eef2f9; --carte:#ffffff; --carte2:#eef2fb;
+    --txt:#121a33; --gris:#59637d; --bord:#e4e9f2; --bord2:#d4dcea;
+    --rayon:16px; --ombre:0 12px 34px rgba(18,34,74,.10); --ombre-sm:0 6px 18px rgba(18,34,74,.08);
+  }
+  :root[data-theme="dark"]{
+    --bleu:#3f6fd6; --bleu2:#7aa3ef; --bg:#0f1629; --bg2:#141d35; --carte:#16203a; --carte2:#1b2745;
+    --txt:#eef2fb; --gris:#9aa6c2; --bord:#26324f; --bord2:#33425f;
+    --ombre:0 14px 34px rgba(0,0,0,.35); --ombre-sm:0 8px 20px rgba(0,0,0,.3);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bleu:#3f6fd6; --bleu2:#7aa3ef; --bg:#0f1629; --bg2:#141d35; --carte:#16203a; --carte2:#1b2745;
+      --txt:#eef2fb; --gris:#9aa6c2; --bord:#26324f; --bord2:#33425f;
+      --ombre:0 14px 34px rgba(0,0,0,.35); --ombre-sm:0 8px 20px rgba(0,0,0,.3);
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Instrument Sans",system-ui,sans-serif;line-height:1.6;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:720px;margin:0 auto;padding:0 20px}
+  a{color:var(--bleu2)}
+  .skip{position:absolute;left:-999px;top:8px;z-index:100;background:var(--bleu);color:#fff;padding:10px 14px;border-radius:8px;font-weight:700}
+  .skip:focus{left:12px}
+
+  header{border-bottom:1px solid var(--bord);background:var(--carte)}
+  header .wrap{display:flex;align-items:center;justify-content:space-between;min-height:64px;gap:12px}
+  .brand{display:inline-flex;align-items:center;gap:.5rem;text-decoration:none;color:var(--txt);
+    font-family:"Big Shoulders",sans-serif;font-weight:800;font-size:1.5rem;min-height:44px}
+  .brand svg{width:30px;height:30px;border-radius:7px;background:#0B1326;padding:3px}
+  .retour{font-size:.9rem;font-weight:600;text-decoration:none;display:inline-flex;align-items:center;min-height:44px}
+
+  main{padding:36px 0 72px}
+  h1{font-family:"Big Shoulders",sans-serif;font-weight:800;font-size:clamp(2.1rem,7vw,3rem);
+    line-height:1.04;margin:.2rem 0 .6rem;text-wrap:balance}
+  .kicker{font-family:"Geist Mono",monospace;font-size:.74rem;font-weight:700;letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ambre)}
+  .lead{color:var(--gris);font-size:1.02rem;text-wrap:pretty;margin:0 0 4px}
+  .meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;font-size:.86rem;color:var(--gris)}
+  .meta b{color:var(--txt)}
+
+  .carte{background:var(--carte);border:1px solid var(--bord);border-radius:var(--rayon);
+    padding:22px;box-shadow:var(--ombre-sm);margin-top:24px}
+
+  .jauge{height:6px;background:var(--bord);border-radius:999px;overflow:hidden;margin-bottom:18px}
+  .jauge span{display:block;height:100%;background:var(--ambre);border-radius:999px;width:0;
+    transition:width 500ms cubic-bezier(.22,1,.36,1)}
+  .qnum{font-family:"Geist Mono",monospace;font-size:.76rem;font-weight:700;letter-spacing:.08em;color:var(--ambre)}
+  .qtitle{font-weight:700;font-size:1.18rem;margin:.45rem 0 1rem;line-height:1.35;text-wrap:balance}
+
+  .opts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:10px}
+  .opt{width:100%;text-align:left;display:flex;align-items:center;gap:12px;min-height:56px;
+    padding:12px 14px;background:var(--carte2);color:var(--txt);border:1.5px solid var(--bord);
+    border-radius:12px;font:inherit;font-size:.96rem;cursor:pointer;
+    transition:transform 300ms cubic-bezier(.22,1,.36,1),border-color 300ms,background 300ms}
+  .opt .n{flex:0 0 auto;width:26px;height:26px;border-radius:8px;background:var(--bord);
+    display:flex;align-items:center;justify-content:center;
+    font-family:"Geist Mono",monospace;font-size:.78rem;font-weight:700;color:var(--gris)}
+  .opt:hover{border-color:var(--ambre);transform:translateY(-1px)}
+  .opt:active{transform:scale(.99)}
+  .opt:focus-visible{outline:3px solid var(--bleu);outline-offset:2px}
+  .opt[aria-pressed="true"]{border-color:var(--ambre);background:color-mix(in srgb,var(--ambre) 14%,transparent)}
+  .opt[aria-pressed="true"] .n{background:var(--ambre);color:#2a1b00}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:48px;
+    padding:12px 20px;border-radius:12px;font-weight:700;text-decoration:none;border:1.5px solid var(--bord2);
+    background:var(--carte);color:var(--txt);cursor:pointer;font:inherit;font-weight:700;
+    transition:transform 300ms cubic-bezier(.22,1,.36,1),background 300ms,border-color 300ms}
+  .btn:hover{transform:translateY(-1px);border-color:var(--bleu)}
+  .btn:active{transform:scale(.99)}
+  .btn:focus-visible{outline:3px solid var(--bleu);outline-offset:2px}
+  .btn-amb{background:var(--bleu);color:#fff;border-color:transparent}
+  .btn-wa{background:#25D366;color:#06281a;border-color:transparent}
+  .btns{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+  .lien-discret{background:none;border:none;color:var(--gris);text-decoration:underline;
+    cursor:pointer;font:inherit;font-size:.9rem;min-height:44px;padding:0}
+
+  .res h2{font-family:"Big Shoulders",sans-serif;font-weight:800;font-size:2rem;margin:.2rem 0 .2rem;line-height:1.1}
+  .dom{display:flex;flex-direction:column;gap:10px;margin:16px 0}
+  .dom div{display:flex;gap:10px;align-items:flex-start}
+  .pastille{flex:0 0 auto;width:30px;height:30px;border-radius:9px;background:var(--ambre);color:#2a1b00;
+    display:flex;align-items:center;justify-content:center;font-family:"Geist Mono",monospace;font-weight:700}
+  .metiers{margin:14px 0 0;padding-left:20px}
+  .metiers li{margin:5px 0}
+  .avert{margin-top:18px;padding:14px;border-radius:12px;background:var(--bg2);
+    border:1px solid var(--bord);font-size:.9rem;color:var(--gris)}
+  .suite{margin-top:22px;padding-top:18px;border-top:1px solid var(--bord)}
+  footer{border-top:1px solid var(--bord);padding:26px 0;font-size:.86rem;color:var(--gris)}
+  footer a{display:inline-flex;align-items:center;justify-content:center;
+    min-height:44px;min-width:44px;margin-right:8px}
+  .vis-cachee{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  @media (prefers-reduced-motion: reduce){
+    html{scroll-behavior:auto}
+    *,*::before,*::after{transition-duration:.01ms !important;animation-duration:.01ms !important}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#test">Aller au test</a>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="/">
+      <svg viewBox="0 0 1471 1362" aria-hidden="true"><path fill="#F4F1EA" d="M248 1362V478L735 0l487 478v884H944V595L735 390 526 595v767z"/><path fill="#E0A020" d="M1035 0h436v436h-150V256L1035 542 929 436 1215 150h-180z"/></svg>
+      NexMove
+    </a>
+    <a class="retour" href="/">← Retour au site</a>
+  </div>
+</header>
+
+<main id="test">
+  <div class="wrap">
+    <span class="kicker">Gratuit · sans inscription</span>
+    <h1>Quel métier te ressemble&nbsp;?</h1>
+    <p class="lead" id="lead">Six questions, deux minutes. Il n'y a ni bonne ni mauvaise réponse&nbsp;: choisis ce qui te ressemble vraiment, pas ce qui «&nbsp;fait bien&nbsp;».</p>
+    <div class="meta" id="meta">
+      <span><b>2 min</b> · 6 questions</span>
+      <span><b>Aucun e-mail</b> demandé</span>
+      <span><b>Rien n'est enregistré</b></span>
+    </div>
+
+    <div class="carte" id="zone" aria-live="polite">
+      <!-- rempli par le script -->
+    </div>
+
+    <p class="avert" id="intro-note">
+      Ce test repose sur le modèle <strong>RIASEC</strong>, celui qu'utilisent les conseillers d'orientation.
+      Il donne des pistes&nbsp;; il ne décide pas à ta place. Tes résultats scolaires, ton budget et ce que tu as
+      envie de vivre comptent autant.
+    </p>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="/">Accueil</a><a href="confidentialite.html">Confidentialité</a><a href="cgu.html">CGU</a>
+    <p style="margin:.4rem 0 0">Un produit blvckUnlimited · Cotonou, Bénin.</p>
+  </div>
+</footer>
+
+<script src="orientation-data.js"></script>
+<script>
+(function () {
+  "use strict";
+  var D = window.ORIENTATION;
+  var zone = document.getElementById("zone");
+  var note = document.getElementById("intro-note");
+  var TG = "https://t.me/nex_move_bot";
+  var WA = "https://wa.me/22962118761";
+
+  var etat = { i: 0, reps: [], total: D.court, demarre: false };
+
+  function el(html) { var d = document.createElement("div"); d.innerHTML = html.trim(); return d.firstChild; }
+  function esc(s) { var d = document.createElement("div"); d.textContent = s == null ? "" : String(s); return d.innerHTML; }
+
+  function accueil() {
+    zone.innerHTML = "";
+    var b = el('<button class="btn btn-amb" type="button">Commencer le test</button>');
+    b.addEventListener("click", function () { etat.demarre = true; question(); });
+    zone.appendChild(b);
+  }
+
+  function question() {
+    var q = D.questions[etat.i];
+    var pct = Math.round((etat.i / etat.total) * 100);
+    zone.innerHTML =
+      '<div class="jauge"><span style="width:' + pct + '%"></span></div>' +
+      '<div class="qnum">' + (etat.i + 1) + " / " + etat.total + "</div>" +
+      '<div class="qtitle">' + esc(q.q) + "</div>" +
+      '<ul class="opts" id="opts"></ul>';
+    var ul = document.getElementById("opts");
+    q.opts.forEach(function (o, n) {
+      var li = document.createElement("li");
+      var b = el('<button class="opt" type="button" aria-pressed="false"><span class="n">' + (n + 1) + "</span><span>" + esc(o[1]) + "</span></button>");
+      b.addEventListener("click", function () {
+        b.setAttribute("aria-pressed", "true");
+        repondre(o[0]);
+      });
+      li.appendChild(b); ul.appendChild(li);
+    });
+    var first = ul.querySelector(".opt");
+    if (first && etat.i > 0) { first.focus(); }
+  }
+
+  function repondre(lettre) {
+    etat.reps.push(lettre);
+    etat.i += 1;
+    if (etat.i < etat.total) { setTimeout(question, 140); } else { setTimeout(resultat, 160); }
+  }
+
+  // Même règle que le bot : 2 lettres en version courte, 3 au-delà de 10 réponses.
+  function score(reps) {
+    var n = {}, premier = {}, valides = 0;
+    reps.forEach(function (l, i) {
+      if (!D.riasec[l]) return;
+      valides += 1;
+      n[l] = (n[l] || 0) + 1;
+      if (premier[l] === undefined) premier[l] = i;
+    });
+    var cles = Object.keys(n).sort(function (a, b) {
+      return n[b] - n[a] || premier[a] - premier[b];
+    });
+    return cles.slice(0, valides >= 10 ? 3 : 2).join("");
+  }
+
+  function resultat() {
+    var code = score(etat.reps);
+    var lettres = code.split("");
+    var noms = lettres.map(function (l) { return D.riasec[l].nom; }).join(" – ");
+    var parLettre = lettres.length <= 2 ? 3 : 2;
+    var vus = [];
+    lettres.forEach(function (l) {
+      (D.metiers[l] || []).slice(0, parLettre).forEach(function (m) {
+        if (vus.indexOf(m) === -1) vus.push(m);
+      });
+    });
+
+    var html =
+      '<div class="res">' +
+      '<span class="kicker">Ton résultat</span>' +
+      "<h2>" + esc(noms) + "</h2>" +
+      '<div class="dom">' +
+      lettres.map(function (l) {
+        return '<div><span class="pastille">' + l + "</span><span><strong>" +
+          esc(D.riasec[l].nom) + "</strong> · " + esc(D.riasec[l].desc) + ".</span></div>";
+      }).join("") +
+      "</div>" +
+      "<p style=\"margin:0\"><strong>Familles de métiers qui vont souvent avec&nbsp;:</strong></p>" +
+      '<ul class="metiers">' + vus.map(function (m) { return "<li>" + esc(m) + "</li>"; }).join("") + "</ul>" +
+      '<div class="avert">Un test donne des pistes, il ne décide pas à ta place. Pour transformer ça en parcours concret — filière, durée, budget, voie courte — continue avec le conseiller&nbsp;: il part de ta situation réelle.</div>' +
+      '<div class="btns">' +
+      '<a class="btn btn-amb" href="' + TG + "?start=ori_" + encodeURIComponent(code) + '">Continuer sur Telegram</a>' +
+      '<a class="btn btn-wa" href="' + WA + "?text=" + encodeURIComponent("Bonjour, j'ai fait le test d'orientation. Mon profil : " + code + ". Peux-tu m'aider à choisir ?") + '">Continuer sur WhatsApp</a>' +
+      "</div>" +
+      '<div class="suite" id="suite"></div>' +
+      "</div>";
+    zone.innerHTML = html;
+    // Le résultat prend la place de l'argumentaire d'accueil : il n'a plus à convaincre.
+    [note, document.getElementById("lead"), document.getElementById("meta")]
+      .forEach(function (e) { if (e) e.style.display = "none"; });
+
+    var suite = document.getElementById("suite");
+    if (etat.total === D.court) {
+      suite.innerHTML =
+        "<p style=\"margin:0 0 10px;color:var(--gris);font-size:.92rem\">Ce résultat vient de " + D.court +
+        " questions. Six de plus et j'ajoute ta <strong>troisième dominante</strong> — souvent celle qui départage deux métiers proches.</p>";
+      var b = el('<button class="btn" type="button">Affiner · 6 questions de plus</button>');
+      b.addEventListener("click", function () {
+        etat.total = D.questions.length;   // on garde les réponses déjà données
+        question();
+      });
+      suite.appendChild(b);
+    } else {
+      var r = el('<button class="lien-discret" type="button">Refaire le test depuis le début</button>');
+      r.addEventListener("click", function () { etat = { i: 0, reps: [], total: D.court, demarre: true }; question(); });
+      suite.appendChild(r);
+    }
+    document.getElementById("test").scrollIntoView({ block: "start" });
+  }
+
+  if (!D || !D.questions || !D.questions.length) {
+    zone.innerHTML = "<p>Le test n'a pas pu se charger. Recharge la page, ou écris directement au bot&nbsp;: <a href=\"" + TG + "\">Telegram</a>.</p>";
+  } else {
+    accueil();
+  }
+})();
+</script>
+</body>
+</html>
