@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.08.0"
+VERSION         = "4.09.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -593,6 +593,96 @@ def _is_admin(session: dict) -> bool:
         return False
     return (str(session.get("chat_id") or "") in _ADMIN_IDS
             or str(session.get("user_id") or "") in _ADMIN_IDS)
+
+_RELANCE_RE = re.compile(
+    r"(peux-tu\s+(?:me\s+)?pr[ée]cis|pourrais-tu\s+pr[ée]cis|tu\s+peux\s+pr[ée]cis|"
+    r"pr[ée]cise[sz]?\s+(?:moi|ta|ton|le|la)|de\s+quoi\s+(?:s'agit|parles)|"
+    r"qu'entends-tu|que\s+veux-tu\s+dire|s'agit-il\s+(?:de|d')|"
+    r"dis-moi\s+(?:plus|en\s+plus)|peux-tu\s+(?:m')?en\s+dire)", re.I)
+
+
+def _est_relance(message: str) -> bool:
+    """Le bot demande-t-il une précision, plutôt que d'avancer ?"""
+    m = (message or "").strip()
+    return bool(m) and "?" in m and bool(_RELANCE_RE.search(m))
+
+
+def _relance_en_boucle(message: str, session: dict) -> bool:
+    """Deuxième demande de précision d'affilée : on arrête.
+
+    Cas réel : « Peux-tu préciser de quels codes il s'agit ? », la personne répond,
+    et le bot repose la même question autrement formulée. On ne compare pas les phrases
+    (deux relances sur le même sujet se ressemblent peu une fois reformulées) : on compte
+    les tours. Deux relances de suite sans avancer, c'est déjà une de trop.
+    """
+    if not _est_relance(message):
+        session["relance_suite"] = 0
+        return False
+    session["relance_suite"] = int(session.get("relance_suite") or 0) + 1
+    return session["relance_suite"] >= 2
+
+
+def _refus_admin(session: dict) -> str:
+    """Refus d'une commande admin, qui DIT pourquoi.
+
+    « 🔒 Commande réservée à l'administrateur » ne sert à rien quand on EST l'administrateur
+    et qu'on ne comprend pas pourquoi ça refuse. On donne donc l'identifiant vu par le serveur
+    et la cause la plus probable — c'est ce qui permet de corriger en une minute.
+    """
+    cid = str(session.get("chat_id") or "?")
+    base = f"🔒 Commande réservée à l'administrateur.\nIdentifiant vu ici : `{cid}` (canal {session.get('channel', '?')})."
+    if not _ADMIN_IDS:
+        return (base + "\n\nAucun administrateur n'est configuré sur ce serveur : `ADMIN_CHAT_ID` est vide "
+                "dans le `.env`. Ajoute cet identifiant, puis relance le conteneur.")
+    if session.get("channel") in ("whatsapp", "messenger") and not META_APP_SECRET:
+        return (base + "\n\nSur WhatsApp et Messenger, les droits admin sont *désactivés* tant que "
+                "`META_APP_SECRET` est absent : sans lui les webhooks ne sont pas signés, et un numéro "
+                "se devine. Passe par Telegram, ou ajoute la clé secrète de l'app Meta.")
+    return (base + "\n\nCet identifiant n'est pas dans `ADMIN_CHAT_ID` (ni `ADMIN_IDS`). Ajoute-le "
+            "dans le `.env` du dossier de déploiement, puis relance le conteneur. `/id` te le redonne.")
+
+
+# Commandes proposées quand une commande inconnue est tapée. Pas la liste complète (≈190) :
+# les plus utiles, celles qu'on cherche vraiment. Les variantes orthographiques sont déjà
+# gérées par les handlers eux-mêmes.
+_CMD_SUGGESTIONS = (
+    "/aide", "/menu", "/tuto", "/start", "/orientation", "/testorientation", "/profil", "/status",
+    "/veille", "/mobilite", "/formations", "/ecoles", "/logement", "/entretien",
+    "/campusfrance", "/parcours", "/canada", "/procedure",
+    "/budget", "/dossier", "/postuler", "/creercv", "/cv", "/simulation", "/chances",
+    "/outils", "/traduire", "/compresser", "/fusionner", "/enpdf", "/extraire",
+    "/premium", "/moncode", "/parrainage", "/retour", "/supprimer", "/version", "/id",
+    "/admin", "/stats", "/codes", "/gencodes", "/annonces", "/misses", "/ia",
+)
+
+
+def _proches(mot: str, candidats, n: int = 3) -> list:
+    """Commandes les plus proches d'une saisie, par distance d'édition simple."""
+    import difflib
+    return difflib.get_close_matches(mot, list(dict.fromkeys(candidats)), n=n, cutoff=0.55)
+
+
+def _commande_inconnue(t: str, session: dict) -> str:
+    """Réponse à une commande qui n'existe pas.
+
+    Avant, un `/truc` inconnu descendait jusqu'à l'orchestrateur IA, qui répondait aimablement
+    à côté (« dis-moi ce dont tu as besoin… ») sans jamais dire que la commande n'existait pas.
+    C'est un fait produit : il se tranche dans le code, jamais par le modèle.
+    """
+    cmd = (t or "").strip().split()[0].lower()
+    suggestions = [c for c in _CMD_SUGGESTIONS if c not in ("/admin", "/stats", "/codes", "/gencodes",
+                                                            "/annonces", "/misses", "/ia")]
+    if _is_admin(session):
+        suggestions = list(_CMD_SUGGESTIONS)
+    proches = _proches(cmd, suggestions)
+    msg = f"❓ La commande `{cmd}` n'existe pas."
+    if proches:
+        msg += "\n\nTu cherchais peut-être : " + " · ".join(f"`{c}`" for c in proches) + " ?"
+    msg += "\n\n`/aide` liste tout. Et tu peux simplement écrire ce que tu veux en français : *« je cherche un stage en logistique »*, *« je ne sais pas quoi faire après le bac »*."
+    if _is_admin(session):
+        msg += "\n\n_Côté admin : `/admin` pour le sommaire._"
+    return msg
+
 
 def _user_tier(session: dict) -> str:
     """Niveau effectif : admin > (premium/pro/vip si abonnement en cours) > free."""
@@ -5421,7 +5511,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/setwebhook") or low.startswith("/webhookinfo") or low.startswith("/webhook"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         if low.startswith("/webhookinfo") or low.strip() in ("/webhook",):
@@ -5579,7 +5669,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
     if low.startswith("/retours") or low.startswith("/retour ") or low == "/retour":
         # Panel UNIQUE des retours testeurs (bugs, avis, contacts, incompris, votes) · ADMIN.
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
         else:
             msg = _retours_report()
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -5588,7 +5678,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
     if low.startswith("/contacts_log") or low.startswith("/contacts-log") or low.startswith("/messages_log"):
         # Historique des /contact · RÉSERVÉ à l'admin
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
         else:
             rows = opp_store.list_contacts(20)
             if not rows:
@@ -5607,7 +5697,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
     if low.startswith("/repondre") or low.startswith("/répondre") or low.startswith("/reply"):
         # Répondre directement à un utilisateur (suite à un /bug ou /contact) · RÉSERVÉ à l'admin.
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split(maxsplit=2)
@@ -5642,7 +5732,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
     if low.startswith("/annonces") or low.startswith("/offres_recruteurs") or low.startswith("/validations"):
         # File des offres déposées par les recruteurs · RÉSERVÉ à l'admin.
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = low.split()
@@ -5670,7 +5760,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/annonce_voir") or low.startswith("/voir_annonce"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         oid = int(re.sub(r"[^0-9]", "", t) or 0)
@@ -5686,7 +5776,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/valider"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         toks = low.split()
@@ -5782,7 +5872,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/refuser"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         oid = int(re.sub(r"[^0-9]", "", t) or 0)
@@ -5806,7 +5896,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             or low.startswith("/broadcast") or low.startswith("/annonce")) and not low.startswith("/diffusions"):
         # Diffusion d'un message/publicité ciblée par profil · RÉSERVÉ à l'admin.
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split(maxsplit=1)
@@ -5871,7 +5961,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
 
     if low.startswith("/diffuser_log") or low.startswith("/diffusions"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
         else:
             rows = opp_store.list_broadcasts(15)
             if not rows:
@@ -5890,7 +5980,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             or low.startswith("/ajouteroffre") or low.startswith("/addoffre")):
         # Ajout MANUEL d'une offre curée par l'admin -> rejoint le pool de veille (matché aux profils).
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split(maxsplit=1)
@@ -6094,7 +6184,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if low.startswith("/gencodes"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split()
@@ -6120,7 +6210,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if low.startswith("/codes"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = low.split()
@@ -6152,7 +6242,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if low.startswith("/gencredits"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         parts = t.split()
@@ -6176,7 +6266,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if low.startswith("/misses") or low.startswith("/rates") or low.startswith("/incompris") or low.startswith("/loupes"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         rows = _misses_recent(25)
@@ -6196,17 +6286,45 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if low.startswith("/qualite") or low.startswith("/qualité") or low.startswith("/qc"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         msg = _qualite_report()
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith(("/admin", "/adminhelp", "/console")):
+        # Le mot le plus évident pour chercher le panneau. Il n'existait pas : on tombait sur
+        # l'orchestrateur, qui répondait poliment à côté. Ici c'est un SOMMAIRE, pas des chiffres :
+        # quelqu'un qui tape /admin cherche la liste de ce qu'il peut faire.
+        if not _is_admin(session):
+            msg = _refus_admin(session)
+        else:
+            msg = ("🛠️ *Panneau admin* · tout est en commandes, il n'y a pas d'autre écran.\n\n"
+                   "*Voir où en est le produit*\n"
+                   "`/stats` traction, funnel, rétention · `/srcstats` d'où viennent les gens\n"
+                   "`/misses` ce que le bot n'a pas compris · `/qualite` qualité des réponses\n"
+                   "`/ia` quel fournisseur répond, latence, bascules\n\n"
+                   "*Codes*\n"
+                   "`/codes` tous · `/codes valides` libres · `/codes utilises` consommés\n"
+                   "`/gencodes <premium|pro|vip> <jours> <nombre>` en créer\n"
+                   "`/gencredits <nombre> <lot>` codes de crédits\n\n"
+                   "*Testeurs et messages*\n"
+                   "`/retours` retours reçus · `/repondre <id> <texte>` répondre à un testeur\n"
+                   "`/contacts_log` demandes de contact · `/diffuser <texte>` message à tous\n"
+                   "`/diffuser_log` historique des diffusions\n\n"
+                   "*Offres recruteurs*\n"
+                   "`/annonces` file d'attente · `/annonce_voir <n>` · `/valider <n>` · `/refuser <n>`\n\n"
+                   "*Technique*\n"
+                   "`/version` · `/id` ton chat_id et ton statut · `/setwebhook` recâbler Telegram\n\n"
+                   "_En langage normal aussi : « stats », « codes valides », « les annonces », « valide 3 »._")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if (low.startswith("/stats") or low.startswith("/statistiques") or low.startswith("/stat ")
             or low == "/stat" or low.startswith("/dashboard") or low.startswith("/panel")):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         d = _admin_stats()
@@ -6243,7 +6361,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
 
     if low.startswith("/srcstats") or low.startswith("/sources-stats"):
         if not _is_admin(session):
-            msg = "🔒 Commande réservée à l'administrateur."
+            msg = _refus_admin(session)
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         stats = session_manager.sources_stats()
@@ -7485,6 +7603,14 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if cmd:
             return await process_text_message(session, cmd)
 
+    # Arrivé ici, AUCUN handler n'a reconnu le message. S'il commence par « / », c'est donc une
+    # commande qui n'existe pas — c'est vrai par construction, sans liste à tenir à jour.
+    # On tranche dans le code : l'orchestrateur, lui, répondrait aimablement à côté.
+    if low.startswith("/") and not _URL_RE.search(t):
+        msg = _commande_inconnue(t, session)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     contexte = _conversation_context(session)
     dialogue = _recent_dialogue(session, 4)
     # Question sur des opportunités DÉJÀ listées : on autorise explicitement le conseiller à en discuter
@@ -7519,6 +7645,7 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
     action = str(r.get("action", "") or "").strip().lower().lstrip("/")
     if action in _VALID_INTENTS:
         arg = str(r.get("argument", "") or "").strip()
+        session["relance_suite"] = 0   # on avance : le compteur de relances repart de zéro
         msg1, session = await process_text_message(session, "/" + action + ((" " + arg) if arg else ""))
         # Boucle d'agent (bornée à 2 pas) : une 2e action « advice » enchaînée si demandée.
         then = r.get("then") if isinstance(r.get("then"), dict) else {}
@@ -7539,6 +7666,14 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
     # Garde-fou déterministe : si le CV est DÉJÀ analysé, on ne laisse jamais le conseiller le redemander.
     if session.get("cv_parsed") and _ASK_CV_RE.search(message):
         message = _strip_cv_request(message)
+    # Garde-fou déterministe : ne jamais reposer la MÊME question de clarification.
+    # La personne vient de répondre ; la lui reposer presque mot pour mot donne l'impression
+    # de parler à un mur, et c'est ce qui fait abandonner.
+    if _relance_en_boucle(message, session):
+        message = ("Je n'arrive pas à cerner ta demande, et je préfère te le dire plutôt que de "
+                   "reposer la même question. Dis-moi en quelques mots ce que tu veux obtenir : "
+                   "une offre, une école, un document, une démarche. `/aide` liste ce que je sais faire.")
+        _log_miss(session, t, "clarif_repetee")
     # Garde-fou anti-hallucination : jamais d'URL ni de code INVENTÉS dans une réponse de conversation.
     message = _sanitize_advisor_msg(message)
     if not _raw_msg:   # ni action ni réponse du LLM -> message pas compris : on le journalise.

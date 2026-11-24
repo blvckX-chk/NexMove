@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.09 — `/admin` existe, les refus disent pourquoi, les commandes inconnues aussi
+Trois défauts constatés sur une vraie conversation Telegram du compte admin, pas en relisant le code.
+
+- **`/admin` n'existait pas.** C'est pourtant le premier mot qu'on tape pour chercher le panneau. La commande descendait jusqu'à l'orchestrateur IA, qui répondait aimablement à côté (« la commande /admin n'est pas reconnue, dis-moi ce dont tu as besoin »). Elle existe maintenant, et c'est un **sommaire** : quelqu'un qui tape `/admin` cherche la liste de ce qu'il peut faire, pas des chiffres. Alias `/adminhelp`, `/console`.
+- **« 🔒 Commande réservée à l'administrateur » ne servait à rien** quand on *est* l'administrateur et qu'on ne comprend pas le refus. Les 17 commandes admin disent désormais l'identifiant vu par le serveur, et la cause la plus probable : aucun administrateur configuré, identifiant absent de `ADMIN_CHAT_ID`, ou droits coupés sur WhatsApp et Messenger faute de `META_APP_SECRET`. Une minute pour corriger au lieu d'une heure à chercher.
+- **Une commande inconnue atteignait l'IA**, qui improvisait une réponse polie sans jamais dire que la commande n'existait pas. C'est un fait produit : il se tranche dans le code. `/truc` répond maintenant que la commande n'existe pas et propose les plus proches (distance d'édition). Aucune liste à tenir à jour : arrivé à ce point du traitement, aucun handler n'a reconnu le message, donc la commande n'existe pas — c'est vrai par construction.
+- **Le bot redemandait une précision deux fois de suite**, alors que la personne avait répondu entre les deux. On ne compare pas les phrases (deux relances reformulées se ressemblent peu) : on compte les tours. À la deuxième relance consécutive, le bot dit qu'il ne cerne pas la demande au lieu de la reposer, et l'échec part dans `/misses`.
+
 ## v4.08 — Le test d'orientation sur le web, sans inscription ni IA
 - **Le constat** : pour faire le test, il fallait ouvrir Telegram ou WhatsApp, autoriser un bot et commencer à parler. Beaucoup de monde s'arrête là. Or le test est **100 % déterministe** : `orientation.py` ne fait aucun appel IA. Rien n'empêchait de le poser directement sur la page.
 - **Nouvelle page `web/orientation.html`** : 6 questions, résultat, puis 6 questions de plus si la personne veut sa troisième dominante. Aucun formulaire, aucun e-mail, **aucun stockage** — ni cookie, ni `localStorage`, ni appel réseau. Vérifié par un test qui échoue si l'un de ces mots réapparaît dans la page.
