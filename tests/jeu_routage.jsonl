@@ -75,3 +75,9 @@
 {"msg": "d'accord merci", "attendu": [], "source": "écrit"}
 {"msg": "je redouble ma licence et j'en ai marre", "attendu": [], "source": "écrit", "note": "découragement : écouter avant de router"}
 {"msg": "est ce que je peux avoir le master avec ma licence", "attendu": [], "source": "écrit", "note": "dépend du dossier réel, le conseiller doit creuser"}
+
+{"_": "LOT 3 — messages RÉELS, conversation WhatsApp du 25 novembre 2026. Ce sont ceux qui comptent."}
+{"msg": "wesh ça donne quoi deh", "attendu": [], "source": "terrain", "note": "ouverture vague : le conseiller doit demander quoi"}
+{"msg": "une formation gratuite en hacking", "attendu": ["/formations"], "source": "terrain"}
+{"msg": "est ce quil reste des programmes ouvert au canada pour les informaticiens auquel j epeux toujours postuler ?", "attendu": ["/canada"], "source": "terrain", "note": "partait en /postuler avec une cible vide"}
+{"msg": "tout ce qui peux me faire voyager", "attendu": ["/mobilite"], "source": "terrain", "note": "aucune route avant la v4.13"}

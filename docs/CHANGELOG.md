@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.13 — Quatre défauts trouvés dans une seule vraie conversation
+Première version entièrement tirée de messages réels plutôt que de cas imaginés. Une conversation WhatsApp de quatre minutes a montré plus que deux jours de relecture de code.
+
+- **Le pire** : après cinq formations en hacking, « il y a des certificats à la fin ? » a relancé une recherche **avec la question comme requête**. Le bot a répondu par des certifications Google Analytics et HubSpot Marketing, présentées comme une réponse. Deux causes : `/formations` ne gardait **aucune mémoire** de la liste qu'il venait d'afficher, et le détecteur de question de suivi exigeait un mot qui désigne la liste (« ces », « parmi », « lesquelles »). Une question posée juste après une liste porte désormais sur cette liste, et la liste est rappelée au conseiller.
+- **Le plus sournois** : « est-ce qu'il reste des programmes ouverts au Canada auxquels je peux postuler ? » partait en `/postuler` **avec une cible vide**, parce que le mot « postuler » suffisait à déclencher la commande. C'était une question sur ce qui *existe*. Les formes interrogatives de disponibilité et les subordonnées relatives excluent maintenant `/postuler` ; la phrase va sur `/canada`. Les vraies demandes (« postuler à Campus France ») marchent toujours, vérifié par test.
+- **« tout ce qui peut me faire voyager »** n'avait aucune route. L'envie de partir est pourtant une intention de mobilité aussi claire qu'« offre d'emploi ».
+- **Le ton** : la synthèse de `/formations` vouvoyait (« Commencez par… pour enrichir votre CV ») alors que tout le reste du bot tutoie. Une consigne dans l'invite le demandait déjà — **une invite n'est pas un garde-fou**. La conversion se fait maintenant dans le code, avec une liste de règles vérifiées une à une, et **si une seule forme résiste, le texte d'origine est rendu tel quel** : un ton formel se pardonne, une conjugaison cassée non.
+- **Relevance** : une demande de formation *gratuite* ne renvoie plus de certification payante.
+
 ## v4.12 — Le compteur de compréhension ne mentait plus qu'une fois sur deux
 Trouvé en regardant `/misses` juste après le déploiement de la v4.11.
 
