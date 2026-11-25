@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.12 — Le compteur de compréhension ne mentait plus qu'une fois sur deux
+Trouvé en regardant `/misses` juste après le déploiement de la v4.11.
+
+- **L'API tourne avec 2 workers uvicorn.** Le compteur vivait en mémoire, donc **chaque worker ne voyait que la moitié du trafic**, et `/misses` affichait l'un ou l'autre au hasard selon celui qui répondait. Et tout repartait à zéro à chaque déploiement. Un taux de compréhension qui dépend du worker qui répond ne vaut rien.
+- **Les compteurs vivent maintenant en base**, partagés par les deux workers et conservés entre les déploiements. La copie en mémoire ne sert plus que de secours si l'écriture échoue.
+- **`/misses reset`** remet les compteurs à zéro pour mesurer une fenêtre propre après un changement de routage, au lieu de comparer à un total qui traîne. Le journal des messages, lui, est conservé : c'est lui qui alimente le jeu d'évaluation.
+- **L'état vide dit quoi faire** au lieu de constater le vide : « le compteur se remplit dès qu'on écrit au bot en français, sans commande ». Une commande tapée avec `/` n'est pas un test de compréhension — c'était la source de confusion juste après le redéploiement.
+
 ## v4.11 — Le journal des ratés était vide par construction
 Trouvé en testant la v4.10 en production : `/misses jeu` a répondu « Aucun raté à exporter » sur un bot qui en avait forcément. L'instrument livré la veille n'avait aucune entrée.
 

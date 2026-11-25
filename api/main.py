@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.11.0"
+VERSION         = "4.12.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -865,8 +865,31 @@ _ROUTAGE_VU = {"vu": 0, "sans_route": 0, "acquit": 0}
 
 
 def _note_routage(quoi: str) -> None:
-    if quoi in _ROUTAGE_VU:
-        _ROUTAGE_VU[quoi] += 1
+    """Compte un message, en base pour que le total soit vrai.
+
+    En mémoire seule, le compteur mentait deux fois : uvicorn tourne avec 2 workers,
+    donc chacun ne voyait que la moitié du trafic, et tout repartait à zéro à chaque
+    déploiement. La copie en mémoire ne sert plus que de secours si l'écriture échoue.
+    """
+    if quoi not in _ROUTAGE_VU:
+        return
+    _ROUTAGE_VU[quoi] += 1
+    try:
+        opp_store.bump_counter("routage_" + quoi)
+    except Exception as e:
+        logger.warning(f"[routage] compteur non enregistré : {e}")
+
+
+def _routage_totaux() -> dict:
+    """Totaux persistants, avec repli sur la mémoire du worker courant."""
+    try:
+        c = opp_store.get_counters()
+        tot = {k: int(c.get("routage_" + k, 0)) for k in _ROUTAGE_VU}
+        if any(tot.values()):
+            return tot
+    except Exception as e:
+        logger.warning(f"[routage] lecture compteurs : {e}")
+    return dict(_ROUTAGE_VU)
 
 
 def _log_miss(session: dict, text: str, kind: str) -> None:
@@ -6389,15 +6412,19 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         rows = _misses_recent(25)
-        _vu = _ROUTAGE_VU
+        _vu = _routage_totaux()
         _routes = max(0, _vu["vu"] - _vu["sans_route"])
-        _taux = (f"📊 Depuis le démarrage : *{_routes}/{_vu['vu']}* messages libres compris "
-                 f"(*{_routes / _vu['vu']:.0%}*) · {_vu['acquit']} bonjour/merci mis de côté.\n"
-                 if _vu["vu"] else "📊 Aucun message libre reçu depuis le démarrage.\n")
+        _taux = (f"📊 *{_routes}/{_vu['vu']}* messages libres compris (*{_routes / _vu['vu']:.0%}*) "
+                 f"· {_vu['acquit']} bonjour/merci mis de côté.\n"
+                 if _vu["vu"] else
+                 "📊 *Aucun message libre reçu pour l'instant.*\n"
+                 "_Le compteur se remplit dès qu'on écrit au bot en français, sans commande. "
+                 "Une commande tapée avec « / » n'est pas un test de compréhension._\n")
         if not rows:
-            msg = (_taux + "\n✅ *Aucun raté de compréhension enregistré.*\n"
-                   "_Un « raté » = un message qui n'a déclenché aucune action, et auquel "
-                   "le modèle a dû répondre librement._")
+            msg = (_taux + "\n✅ *Aucun message sans route enregistré.*\n"
+                   "_Un message « sans route » = un message de fond auquel aucune action n'a "
+                   "répondu, et auquel le modèle a dû improviser. C'est ce qui coûte des tokens "
+                   "et du délai, et c'est le carburant du jeu d'évaluation._")
         else:
             by_kind = {}
             for r in rows:
@@ -6408,8 +6435,23 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             for r in rows:
                 lignes.append(f"• [{r['kind']}] {_md_clean(r['text'])[:120]}  ·  _{r['ts'][11:16]} {r['canal']}_")
             lignes.append("\n📋 `/misses jeu` donne ces mêmes messages au format du jeu "
-                          "d'évaluation du routage (`tests/jeu_routage.jsonl`).")
+                          "d'évaluation du routage (`tests/jeu_routage.jsonl`) · "
+                          "`/misses reset` repart d'un compteur propre.")
             msg = "\n".join(lignes)
+        # Remise à zéro : pour mesurer une fenêtre propre après un changement de routage,
+        # au lieu de comparer à un total qui traîne depuis des semaines.
+        if low.split()[1:2] in (["reset"], ["zero"], ["raz"]):
+            try:
+                opp_store.reset_counters(["routage_vu", "routage_sans_route", "routage_acquit"])
+                _ROUTAGE_VU.update({"vu": 0, "sans_route": 0, "acquit": 0})
+                msg = ("🔄 *Compteurs de routage remis à zéro.*\n"
+                       "Le journal des messages sans route est conservé : c'est lui qui alimente "
+                       "le jeu d'évaluation (`/misses jeu`).")
+            except Exception as e:
+                msg = _err("la remise à zéro des compteurs", e)
+            _push(session, "user", t); _push(session, "assistant", msg)
+            session["derniere_activite"] = now
+            return msg, session
         # Export : les ratés du terrain sont la SEULE mesure honnête du routage. Les cas
         # écrits par celui qui code le routeur mesurent sa mémoire, pas la compréhension.
         if low.split()[1:2] in (["jeu"], ["json"], ["export"]):
@@ -6447,7 +6489,9 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             msg = ("🛠️ *Panneau admin* · tout est en commandes, il n'y a pas d'autre écran.\n\n"
                    "*Voir où en est le produit*\n"
                    "`/stats` traction, funnel, rétention · `/srcstats` d'où viennent les gens\n"
-                   "`/misses` ce que le bot n'a pas compris · `/qualite` qualité des réponses\n"
+                   "`/misses` taux de compréhension + messages sans route\n"
+                   "   └ `/misses jeu` au format du jeu d'évaluation · `/misses reset` repartir à zéro\n"
+                   "`/qualite` qualité des réponses\n"
                    "`/ia` quel fournisseur répond, latence, bascules\n\n"
                    "*Codes*\n"
                    "`/codes` tous · `/codes valides` libres · `/codes utilises` consommés\n"

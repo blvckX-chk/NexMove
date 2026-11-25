@@ -207,6 +207,50 @@ def test_le_meme_message_nest_pas_journalise_deux_fois():
     assert len(repetes) == 1, f"journalisé {len(repetes)} fois au lieu d'une"
 
 
+def test_les_compteurs_survivent_a_un_worker_froid():
+    """L'API tourne avec 2 workers uvicorn.
+
+    En mémoire, chaque worker ne voyait que la moitié du trafic et `/misses` affichait
+    l'un ou l'autre au hasard ; tout repartait à zéro à chaque déploiement. Un taux de
+    compréhension qui dépend du worker qui répond ne vaut rien. Les compteurs vivent
+    donc en base, partagée par les deux.
+    """
+    from db import opp_store
+    opp_store.reset_counters(["routage_vu", "routage_sans_route", "routage_acquit"])
+    main._ROUTAGE_VU.update({"vu": 0, "sans_route": 0, "acquit": 0})
+    for _ in range(5):
+        main._note_routage("vu")
+    main._note_routage("sans_route")
+    main._note_routage("acquit")
+    # Le worker redémarre (ou c'est l'autre worker qui répond) : la mémoire est vide.
+    main._ROUTAGE_VU.update({"vu": 0, "sans_route": 0, "acquit": 0})
+    tot = main._routage_totaux()
+    assert tot == {"vu": 5, "sans_route": 1, "acquit": 1}, tot
+
+
+def test_remise_a_zero_garde_le_journal():
+    """`/misses reset` remet les compteurs à zéro mais garde les messages : c'est eux
+    qui alimentent le jeu d'évaluation."""
+    import asyncio
+    from db import opp_store
+    main._ADMIN_IDS = {"99"}
+    main._note_routage("vu")
+    main._ROUTE_MISSES.append({"ts": "2026-11-25T09:00:00+00:00", "uid": "u", "canal": "telegram",
+                               "kind": "sans_route", "etape": "ACTIF", "text": "un message à garder"})
+    opp_store.add_miss(main._ROUTE_MISSES[-1])
+    sess = {"user_id": "99", "channel": "telegram", "chat_id": "99", "etape": "ACTIF",
+            "profil": {}, "historique": [], "onboarding_complete": True}
+    loop = asyncio.new_event_loop()
+    try:
+        msg, _ = loop.run_until_complete(main.process_text_message(sess, "/misses reset"))
+    finally:
+        loop.close()
+    assert "remis à zéro" in msg
+    assert main._routage_totaux()["vu"] == 0
+    assert any("un message à garder" in (r.get("text") or "")
+               for r in main._misses_recent(40)), "le journal ne doit pas être effacé"
+
+
 def test_export_des_rates_au_format_du_jeu():
     """`/misses jeu` doit produire des lignes directement collables dans le jeu.
 
