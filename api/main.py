@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.13.0"
+VERSION         = "4.14.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -149,10 +149,15 @@ SIM_MAX_Q           = int(os.getenv("SIM_MAX_QUESTIONS", "5"))   # questions par
 BOT_USERNAME        = os.getenv("BOT_USERNAME", "")              # sans @, pour construire le lien t.me
 REFERRAL_GOAL       = int(os.getenv("REFERRAL_GOAL", "2"))
 REFERRAL_REWARD_DAYS = int(os.getenv("REFERRAL_REWARD_DAYS", "30"))
+# Palier TESTEUR : ni gratuit ni client. Il a le confort du premium (pas de quota, pas de
+# filigrane) parce qu'on lui demande un service, et surtout le bot SAIT qu'il en est un —
+# il peut donc lui demander un retour au bon moment, sur ce qu'il vient réellement de faire.
+_TIER_TESTEUR = "testeur"
 # Tiers payants : plafond d'alertes mots-clés par niveau (l'illimité = grand nombre).
-ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999}
+ALERTES_MAX = {"free": 1, "premium": 10, "pro": 999, "vip": 999, "admin": 999, _TIER_TESTEUR: 999}
 _PREMIUM_TIERS = ("premium", "pro", "vip")
-_TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin"}
+_TIER_LABEL = {"free": "Gratuit", "premium": "Premium", "pro": "Pro", "vip": "VIP", "admin": "Admin",
+               _TIER_TESTEUR: "Testeur"}
 # Détection d'un code premium collé tel quel (ex. « PRM-AB12CD34 ») -> activation sans taper /premium.
 _PRM_CODE_RE = re.compile(r"\bPRM-[A-Z0-9]{6,12}\b", re.I)
 _URL_RE = re.compile(r"https?://[^\s<>()\[\]{}\"']+", re.I)
@@ -670,6 +675,190 @@ def _tutoie(texte: str) -> str:
     return out
 
 
+# ── Retour dit en français ────────────────────────────────────────────────────────────────
+# Le constat qui a tout déclenché : le meilleur retour d'une testeuse (« ce que j'ai testé
+# marche bien », « en fait ça facilite vraiment tout ») est arrivé dans le WhatsApp PERSONNEL
+# du propriétaire, jamais dans `/retours`. Personne ne tape `/avis`. Mais tout le monde dit
+# « ça marche pas » au bot — et le bot essayait de router la phrase.
+
+_RETOUR_NEG_RE = re.compile(
+    r"\b(([çc]a|cela|il)\s+(marche|fonctionne|va)\s+pas|ne\s+(marche|fonctionne)\s+pas|"
+    r"[çc]a\s+(bug|beugue|plante|rame|lague)|[çc]'?est\s+(bizarre|cass[ée]|nul|lent|pas\s+clair|"
+    r"bugg?[ée]|mal\s+fait|pas\s+normal|chiant|compliqu[ée])|"
+    r"j'?ai\s+(pas|rien)\s+compris|je\s+comprends\s+pas|j'?comprends\s+pas|"
+    r"[çc]a\s+r[ée]pond\s+(pas|mal)|tu\s+(comprends|r[ée]ponds)\s+(pas|mal)|"
+    r"[çc]a\s+(n'?)?a\s+rien\s+[àa]\s+voir|hors\s+sujet|c'?est\s+pas\s+[çc]a|"
+    r"pourquoi\s+tu\s+(me\s+)?(dis|donnes|r[ée]ponds)\s+[çc]a|"
+    r"[çc]a\s+sert\s+[àa]\s+rien|probl[èe]me\s+avec|erreur\s+(quand|sur|avec)|"
+    r"[çc]a\s+(s'?est\s+)?(coup[ée]|arr[êe]t[ée]|bloqu[ée]))\b", re.I)
+
+_RETOUR_POS_RE = re.compile(
+    # Sujet libre : « ce que j'ai testé marche bien » n'a pas « ça » pour sujet. Le risque de
+    # faux positif est couvert par _RETOUR_EXCLU_RE (« trouve une formation qui marche bien »).
+    r"\b((marche|fonctionne)\s+(bien|nickel|parfaitement|super|impec\w*)|"
+    r"[çc]a\s+(facilite|aide|sert|change)\s+(vraiment\s+)?(tout|beaucoup|la\s+vie)|"
+    r"c'?est\s+(super|g[ée]nial|top|parfait|tr[èe]s\s+(bien|utile|int[ée]ressant)|"
+    r"bien\s+fait|pratique|impressionnant)|"
+    r"j'?adore|bravo|f[ée]licitations?|merci\s+beaucoup\s+[çc]a\s+m'?a\s+(aid[ée]|servi)|"
+    r"[çc]a\s+m'?a\s+(beaucoup\s+)?(aid[ée]|servi)|tr[èe]s\s+int[ée]ressant)\b", re.I)
+
+# Un retour ne doit pas manger une vraie demande qui contient les mêmes mots.
+_RETOUR_EXCLU_RE = re.compile(
+    r"\b(cherche|trouve|donne[- ]moi|envoie|postul\w*|comment\s+(je|faire|on)|"
+    r"c'?est\s+quoi|qu'?est[- ]ce\s+que|peux[- ]tu\s+me)\b", re.I)
+
+
+def _rapport_testeurs(jours: int = 1) -> str:
+    """Rapport Markdown de tout ce que le terrain a appris, prêt à être corrigé.
+
+    Pourquoi le bot l'écrit lui-même : les données vivent dans SA base, sur le VPS. Personne
+    d'autre ne peut les lire. Le propriétaire reçoit le fichier, le transmet à qui corrige,
+    et les lignes « sans route » sont déjà au format du jeu d'évaluation — zéro recopie.
+    """
+    depuis = (datetime.now(timezone.utc) - timedelta(days=max(1, jours))).isoformat()
+    d = f"{jours} jour" + ("s" if jours > 1 else "")
+    out = [f"# NexMove · rapport terrain ({d})",
+           f"_Généré le {datetime.now(timezone.utc).strftime('%d/%m/%Y à %H:%M UTC')} · v{VERSION}_", ""]
+
+    # 1. Compréhension
+    vu = _routage_totaux()
+    compris = max(0, vu["vu"] - vu["sans_route"])
+    out.append("## 1. Compréhension du langage naturel")
+    if vu["vu"]:
+        out.append(f"- **{compris}/{vu['vu']}** messages libres compris (**{compris / vu['vu']:.0%}**)")
+        out.append(f"- {vu['sans_route']} sans route · {vu['acquit']} bonjour/merci écartés")
+    else:
+        out.append("- Aucun message libre reçu sur la période.")
+    out.append("")
+
+    # 2. Ce qui n'a pas été compris, au format du jeu d'évaluation
+    misses = [m for m in _misses_recent(60) if str(m.get("ts", "")) >= depuis]
+    out.append("## 2. Messages sans route")
+    if not misses:
+        out.append("_Aucun._")
+    else:
+        out.append(f"{len(misses)} message(s). **À coller dans `tests/jeu_routage.jsonl`**, "
+                   "en remplissant `attendu` (`[]` si le conseiller doit répondre lui-même) :")
+        out.append("")
+        out.append("```jsonl")
+        for m in misses[:40]:
+            txt = json.dumps(str(m.get("text", ""))[:160], ensure_ascii=False)
+            out.append('{"msg": ' + txt + ', "attendu": [], "source": "terrain", '
+                       + f'"note": "{m.get("kind", "?")} · {str(m.get("ts", ""))[:10]}"}}')
+        out.append("```")
+    out.append("")
+
+    # 3. Retours des gens
+    try:
+        rows = opp_store.list_contacts(120)
+    except Exception:
+        rows = []
+    neg, pos, bugs, avis, autres = [], [], [], [], []
+    for (cid, uid, uname, txt, _fwd, dt) in rows:
+        if str(dt or "") < depuis:
+            continue
+        s = str(txt or "")
+        qui = f"@{uname or '?'}"
+        quand = str(dt)[5:16].replace("T", " ")
+        item = (qui, quand, s)
+        if s.startswith("[RETOUR-NÉGATIF]"):
+            neg.append(item)
+        elif s.startswith("[RETOUR-POSITIF]"):
+            pos.append(item)
+        elif s.startswith("[BUG]"):
+            bugs.append(item)
+        elif s.startswith("[AVIS]"):
+            avis.append(item)
+        else:
+            autres.append(item)
+
+    def _bloc(titre, items, note=""):
+        out.append(f"## {titre} ({len(items)})")
+        if note and items:
+            out.append(f"_{note}_")
+        if not items:
+            out.append("_Aucun._")
+        for qui, quand, s in items[:25]:
+            corps = re.sub(r"^\[[A-ZÉ\-]+\]\s*", "", s).strip()
+            lignes = corps.split("\n↳ juste après : ")
+            out.append(f"- **{qui}** · {quand} — « {lignes[0][:400]} »")
+            if len(lignes) > 1:
+                out.append(f"  - _le bot venait de répondre :_ {lignes[1][:220]}")
+        if len(items) > 25:
+            out.append(f"- _… et {len(items) - 25} autres_")
+        out.append("")
+
+    _bloc("3. 🔴 Ce qui n'a pas marché (dit spontanément)", neg,
+          "Le plus utile du rapport : chacun de ces messages dit quoi corriger, et ce que le bot "
+          "venait de répondre.")
+    _bloc("4. 🐞 Bugs signalés", bugs)
+    _bloc("5. 🟢 Ce qui a plu (dit spontanément)", pos,
+          "Utile pour la vitrine — demander l'accord avant de citer quelqu'un.")
+    _bloc("6. 🌟 Avis déposés avec /avis", avis)
+    _bloc("7. 📨 Autres messages reçus", autres)
+
+    # 8. Qui teste vraiment
+    out.append("## 8. Activité des testeurs")
+    try:
+        testeurs = [s for s in session_manager.list_all()
+                    if (s.get("premium_tier") == _TIER_TESTEUR)]
+        if not testeurs:
+            out.append("_Aucun compte testeur actif._")
+        else:
+            actifs = [s for s in testeurs if str(s.get("derniere_activite") or "") >= depuis]
+            out.append(f"- {len(testeurs)} testeur(s) · **{len(actifs)} actif(s)** sur la période")
+            for s in testeurs[:20]:
+                der = str(s.get("derniere_activite") or "")[:16].replace("T", " ") or "jamais"
+                cv = "CV ✅" if s.get("cv_parsed") else "CV ❌"
+                out.append(f"  - @{s.get('username') or '?'} · {s.get('channel', '?')} · {cv} · vu {der}")
+    except Exception as e:
+        out.append(f"_Lecture impossible : {e}_")
+    out.append("")
+
+    out.append("---")
+    out.append("**Quoi en faire** : les blocs 2 et 3 sont actionnables tels quels. Le bloc 2 se colle "
+               "dans le jeu d'évaluation du routage ; le bloc 3 dit ce qui a déçu et pourquoi.")
+    return "\n".join(out)
+
+
+def _boutons_avis(session: dict, sujet: str) -> None:
+    """Pose 👍/👎 sous une réponse — mais seulement pour un testeur.
+
+    Pour tout le monde, ce serait un sondage permanent qui fatigue. Pour un testeur, c'est
+    précisément le service qu'on lui demande, et un tap coûte moins qu'une phrase à écrire.
+    """
+    if not _est_testeur(session):
+        return
+    session["_kb_options"] = (session.get("_kb_options") or []) + [
+        ("👍 Utile", f"act:av_{sujet}_ok"), ("👎 À côté", f"act:av_{sujet}_ko")]
+
+
+def _derniere_reponse(session: dict) -> str:
+    """Ce que le bot venait de dire — sans quoi « ça marche pas » ne dit pas ce qui ne marche pas."""
+    for h in reversed(session.get("historique") or []):
+        if h.get("role") == "assistant":
+            return re.sub(r"\s+", " ", str(h.get("content") or "")).strip()
+    return ""
+
+
+def _retour_spontane(t: str) -> str:
+    """« négatif », « positif » ou « » — un avis dit en français, sans commande.
+
+    Un retour négatif compte double : il dit quoi corriger. Un « ça marche pas » entendu
+    et enregistré vaut mieux qu'un `/avis` jamais tapé.
+    """
+    txt = (t or "").strip()
+    if not txt or len(txt) > 300 or txt.startswith("/"):
+        return ""
+    if _RETOUR_EXCLU_RE.search(txt):
+        return ""
+    if _RETOUR_NEG_RE.search(txt):
+        return "négatif"
+    if _RETOUR_POS_RE.search(txt):
+        return "positif"
+    return ""
+
+
 def _refus_admin(session: dict) -> str:
     """Refus d'une commande admin, qui DIT pourquoi.
 
@@ -733,7 +922,7 @@ def _commande_inconnue(t: str, session: dict) -> str:
 
 
 def _user_tier(session: dict) -> str:
-    """Niveau effectif : admin > (premium/pro/vip si abonnement en cours) > free."""
+    """Niveau effectif : admin > testeur > (premium/pro/vip si abonnement en cours) > free."""
     if _is_admin(session):
         return "admin"
     exp = session.get("premium_until")
@@ -741,13 +930,26 @@ def _user_tier(session: dict) -> str:
         try:
             if datetime.fromisoformat(exp) > datetime.now(timezone.utc):
                 tier = session.get("premium_tier", "premium")
+                if tier == _TIER_TESTEUR:
+                    return _TIER_TESTEUR
                 return tier if tier in _PREMIUM_TIERS else "premium"
         except Exception:
             pass
     return "free"
 
+
+def _est_testeur(session: dict) -> bool:
+    """Testeur du programme : le bot le SAIT, et peut donc lui parler autrement.
+
+    C'était le manque : quelqu'un à qui on demande de « tester » sans lui dire ce qu'on
+    attend ne teste rien de précis, et son retour arrive dans le WhatsApp personnel du
+    propriétaire au lieu d'entrer dans le produit.
+    """
+    return _user_tier(session) == _TIER_TESTEUR
+
+
 def _is_premium(session: dict) -> bool:
-    return _user_tier(session) in ("admin",) + _PREMIUM_TIERS
+    return _user_tier(session) in ("admin", _TIER_TESTEUR) + _PREMIUM_TIERS
 
 def _quota_check(session: dict, feature: str, limit: int) -> tuple[bool, int]:
     """(autorisé, restant). Admin & abonnés premium : toujours autorisés, non décomptés."""
@@ -4744,6 +4946,69 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     elif session.get("orient_test") and low.startswith("/") and not low.startswith("/testorientation"):
         session.pop("orient_test", None)
 
+    # Précision attendue après un 👎 : la phrase suivante EST le retour, quelle qu'elle soit.
+    # Sans ça, le pouce vers le bas dit qu'il y a un problème sans jamais dire lequel.
+    if session.get("attente_precision_retour") and not low.startswith("/") and len(t) > 3:
+        _sujet = session.pop("attente_precision_retour")
+        try:
+            opp_store.add_contact(session.get("user_id"), session.get("username", ""),
+                                  f"[RETOUR-NÉGATIF] (👎 sur {_sujet}) {t[:400]}", True)
+        except Exception as e:
+            logger.warning(f"[precision] {e}")
+        if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
+            try:
+                await send_message(ADMIN_CHAT_ID,
+                                   f"🔴 *Précision après 👎* ({_sujet}) · @{_md_clean(str(session.get('username') or '?'))}"
+                                   f"\n\n« {_md_clean(t)[:400]} »")
+            except Exception as e:
+                logger.warning(f"[precision] transmission : {e}")
+        msg = ("🙏 *C'est exactement ce qu'il fallait.* Transmis.\n\n"
+               "On continue — dis-moi ce que tu cherches.")
+        _push(session, "user", t); _push(session, "assistant", msg)
+        session["derniere_activite"] = now
+        return msg, session
+
+    # RETOUR DIT EN FRANÇAIS, sans commande. Avant le routage : « ça marche pas » n'est pas une
+    # demande à router, c'est une information sur le produit. Personne ne tape /avis ; tout le
+    # monde dit « ça marche pas ». Hors flux guidés, pour ne pas intercepter une réponse attendue.
+    if (not low.startswith("/") and not _is_admin(session)
+            and not session.get("sim_mode") and not session.get("cvbuild_step")
+            and not session.get("recruit_step") and not session.get("orient_test")
+            and not session.get("bug_mode")):
+        _ton = _retour_spontane(t)
+        if _ton:
+            _dernier = _derniere_reponse(session)
+            try:
+                opp_store.add_contact(session.get("user_id"), session.get("username", ""),
+                                      f"[RETOUR-{_ton.upper()}] {t[:400]}"
+                                      + (f"\n↳ juste après : {_dernier[:160]}" if _dernier else ""), True)
+                opp_store.bump_counter("retour_" + _ton)
+            except Exception as e:
+                logger.warning(f"[retour] {e}")
+            if ADMIN_CHAT_ID and TELEGRAM_TOKEN:
+                _ic = "🔴" if _ton == "négatif" else "🟢"
+                try:
+                    await send_message(ADMIN_CHAT_ID,
+                                       f"{_ic} *Retour spontané* ({_ton}) · @{_md_clean(str(session.get('username') or '?'))} "
+                                       f"`{session.get('user_id')}` · {session.get('channel', '?')}"
+                                       + (" · *testeur*" if _est_testeur(session) else "")
+                                       + f"\n\n« {_md_clean(t)[:400]} »"
+                                       + (f"\n\n_Juste après :_ {_md_clean(_dernier)[:200]}" if _dernier else ""))
+                except Exception as e:
+                    logger.warning(f"[retour] transmission : {e}")
+            if _ton == "négatif":
+                # On ne se défend pas, on ne noie pas : on demande la seule chose qui manque.
+                msg = ("🙏 *Merci de me le dire.* C'est noté et transmis.\n\n"
+                       "Pour que ce soit réparable : qu'est-ce que tu attendais à la place ? "
+                       "Une phrase suffit. Et si tu as une capture, envoie-la.")
+            else:
+                msg = ("🙏 *Merci, ça fait plaisir et c'est noté.*\n\n"
+                       "Si une chose devait être meilleure, ce serait quoi ? C'est ce genre de "
+                       "remarque qui fait avancer le plus.")
+            _push(session, "user", t); _push(session, "assistant", msg)
+            session["derniere_activite"] = now
+            return msg, session
+
     # ADMIN en langage naturel : « stats », « les annonces », « valide 3 », « diffuser … » -> commande.
     # Réservé au compte admin, hors flux guidés (pour qu'il puisse aussi tester les parcours candidats).
     if (_is_admin(session) and not low.startswith("/") and not session.get("sim_mode")
@@ -5158,6 +5423,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             msg = await _orientation_reply(session, q or "Fais-moi un point d'orientation à partir de ce que tu sais de moi.")
             if not memo.get("riasec"):
                 session["_kb_options"] = [("🧭 Test (2 min)", "act:ori_test")]
+            _boutons_avis(session, "orientation")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -6323,6 +6589,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 msg = f"Aucune formation trouvée pour « {_md_clean(domaine)} ». Précise un domaine : /formations data science"
             else:
                 msg += "🌐 _Vérifie les infos sur les sites officiels._"
+                _boutons_avis(session, "formations")
         except Exception as e:
             logger.error(f"formations: {e}")
             msg = "😕 La recherche de formations a échoué, réessaie."
@@ -6394,10 +6661,21 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 exp = _apply_premium(session, tier, days)
                 session_manager.set(session.get("user_id"), session)   # persiste l'abonnement
                 exp_j = exp[:10]
-                msg = (f"✅ *Abonnement {_TIER_LABEL.get(tier, tier)} activé !* 🎉\n"
-                       f"Valable jusqu'au *{exp_j}* ({days} jours).\n\n"
-                       "Tu as maintenant l'accès *illimité* (CV, /guide, /simulation) et les alertes étendues.\n"
-                       "Tape /monabo pour ton statut à tout moment.")
+                if tier == _TIER_TESTEUR:
+                    session["testeur_depuis"] = now
+                    msg = ("🧪 *Te voilà testeur ou testeuse NexMove.* Merci, sincèrement.\n"
+                           f"Accès complet jusqu'au *{exp_j}* : pas de limite, pas de filigrane.\n\n"
+                           "*Ce qu'on attend de toi, concrètement :*\n"
+                           "Utilise-le pour de vrai, pour TA situation. Et quand quelque chose cloche, "
+                           "dis-le-moi *ici, avec tes mots* — « ça marche pas », « j'ai pas compris », "
+                           "« c'est bizarre ». Pas besoin de commande, je comprends.\n\n"
+                           "👉 Tape `/mission` pour voir les 5 choses les plus utiles à essayer.\n"
+                           "_Un retour qui dit ce qui ne va pas vaut dix compliments._")
+                else:
+                    msg = (f"✅ *Abonnement {_TIER_LABEL.get(tier, tier)} activé !* 🎉\n"
+                           f"Valable jusqu'au *{exp_j}* ({days} jours).\n\n"
+                           "Tu as maintenant l'accès *illimité* (CV, /guide, /simulation) et les alertes étendues.\n"
+                           "Tape /monabo pour ton statut à tout moment.")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -6449,9 +6727,12 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         tier = parts[1].lower() if len(parts) > 1 else ""
         days = int(re.sub(r"[^0-9]", "", parts[2]) or 0) if len(parts) > 2 else 0
         count = int(re.sub(r"[^0-9]", "", parts[3]) or 0) if len(parts) > 3 else 0
-        if tier not in _PREMIUM_TIERS or days <= 0 or not (1 <= count <= 500):
-            msg = ("🧰 *Génération de codes* (admin)\n`/gencodes <premium|pro|vip> <jours> <nombre>`\n"
+        if tier not in _PREMIUM_TIERS + (_TIER_TESTEUR,) or days <= 0 or not (1 <= count <= 500):
+            msg = ("🧰 *Génération de codes* (admin)\n`/gencodes <premium|pro|vip|testeur> <jours> <nombre>`\n"
                    "Ex : `/gencodes premium 30 50` → 50 codes Premium de 30 jours.\n"
+                   "Ex : `/gencodes testeur 60 10` → 10 codes *Testeur* de 60 jours.\n"
+                   "_Testeur = même confort que Premium, mais le bot le sait : il demande un retour "
+                   "au bon moment et compte ses retours dans `/rapport`._\n"
                    "Suivi : `/codes` · `/codes valides` · `/codes utilises`\n"
                    f"État actuel : {premium_store.stats()}")
         else:
@@ -6519,6 +6800,59 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                 data = (entete + "\n" + "\n".join(codes)).encode("utf-8")
                 await deliver_file(session, f"credits_{credits}_{now[:10]}.txt", data, f"🧾 {entete}")
                 msg = f"✅ {len(codes)} codes générés (envoyés en fichier). État : {credit_store.stats()}"
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/mission") or low.startswith("/missions"):
+        # « Teste comme un sadique » n'est pas une consigne : personne ne sait par où commencer.
+        # Cinq tâches précises, cochées au fur et à mesure, donnent un cadre et des retours
+        # comparables entre testeurs.
+        faites = set(session.get("missions_faites") or [])
+        for cle, fait in (("cv", session.get("cv_parsed")),
+                          ("orientation", bool((_orient_memo(session) or {}).get("riasec"))),
+                          ("recherche", bool(session.get("last_offers")))):
+            if fait:
+                faites.add(cle)
+        session["missions_faites"] = sorted(faites)
+        _m = [("cv", "Envoie ton *vrai* CV", "il doit retrouver ton nom, tes diplômes et tes compétences sans erreur"),
+              ("orientation", "Fais le test d'orientation", "`/testorientation` · puis dis si le résultat te ressemble"),
+              ("recherche", "Cherche une opportunité qui t'intéresse vraiment", "pas un exemple : ta vraie recherche"),
+              ("langage", "Parle-lui mal exprès", "phrase coupée, faute de frappe, argot, demande vague — c'est là qu'on apprend le plus"),
+              ("casse", "Trouve une réponse à côté de la plaque", "quand tu en trouves une, dis-le tout de suite : « ça n'a rien à voir »")]
+        lignes = ["🧪 *Ta mission de testeur* — cinq choses, dans l'ordre que tu veux.", ""]
+        for cle, titre, detail in _m:
+            coche = "✅" if cle in faites else "⬜"
+            lignes.append(f"{coche} *{titre}*\n   _{detail}_")
+        lignes.append("")
+        lignes.append(f"*{len(faites & {c for c, _, _ in _m})}/5 faites.*")
+        lignes.append("\n💬 À tout moment, dis-moi en français ce qui cloche : « ça marche pas », "
+                      "« j'ai pas compris », « c'est bizarre ». Pas besoin de commande.")
+        if not _est_testeur(session):
+            lignes.append("\n_(Tu n'as pas de code testeur — la mission marche quand même.)_")
+        msg = "\n".join(lignes)
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
+    if low.startswith("/rapport") or low.startswith("/bilan"):
+        if not _is_admin(session):
+            msg = _refus_admin(session)
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        _arg = low.split()[1:2]
+        jours = 7 if _arg and _arg[0] in ("semaine", "hebdo", "7") else (
+            int(re.sub(r"\D", "", _arg[0]) or 1) if _arg and _arg[0].isdigit() else 1)
+        jours = max(1, min(90, jours))
+        try:
+            texte = _rapport_testeurs(jours)
+            nom = f"nexmove-terrain-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{jours}j.md"
+            await deliver_file(session, nom, texte.encode("utf-8"),
+                               f"📋 Rapport terrain · {jours} jour(s)")
+            msg = (f"📋 *Rapport envoyé* ({jours} jour(s)).\n"
+                   "Transmets-le tel quel à qui corrige : les messages sans route y sont déjà au "
+                   "format du jeu d'évaluation.\n\n"
+                   "`/rapport semaine` pour sept jours · `/rapport 30` pour un mois.")
+        except Exception as e:
+            msg = _err("la génération du rapport", e)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -6609,9 +6943,13 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                    "   └ `/misses jeu` au format du jeu d'évaluation · `/misses reset` repartir à zéro\n"
                    "`/qualite` qualité des réponses\n"
                    "`/ia` quel fournisseur répond, latence, bascules\n\n"
+                   "*Programme testeurs*\n"
+                   "`/rapport` rapport terrain du jour (fichier .md) · `/rapport semaine`\n"
+                   "`/gencodes testeur 60 10` créer 10 accès testeur de 60 jours\n"
+                   "_Le bot envoie le rapport seul chaque soir si le cron est posé (voir `scripts/nex-cron.sh`)._\n\n"
                    "*Codes*\n"
                    "`/codes` tous · `/codes valides` libres · `/codes utilises` consommés\n"
-                   "`/gencodes <premium|pro|vip> <jours> <nombre>` en créer\n"
+                   "`/gencodes <premium|pro|vip|testeur> <jours> <nombre>` en créer\n"
                    "`/gencredits <nombre> <lot>` codes de crédits\n\n"
                    "*Testeurs et messages*\n"
                    "`/retours` retours reçus · `/repondre <id> <texte>` répondre à un testeur\n"
@@ -8868,6 +9206,27 @@ async def handle_action(session, data, callback_id=None):
             cmd = session.pop("pending_intent", "") or "/veille"
             msg, session = await process_text_message(session, cmd)
             await deliver_text(session, msg, with_menu=True)
+            return session
+        if act.startswith("av_"):
+            # 👍/👎 sur une réponse qui n'est PAS une offre (formations, orientation, écoles, CV).
+            # Un tap, pas une phrase à écrire : c'est le seul retour que les gens donnent vraiment.
+            _quoi = act[3:].split("_", 1)
+            sujet = _quoi[0] if _quoi else "?"
+            bon = act.endswith("_ok")
+            try:
+                opp_store.add_contact(session.get("user_id"), session.get("username", ""),
+                                      f"[RETOUR-{'POSITIF' if bon else 'NÉGATIF'}] "
+                                      f"({'👍' if bon else '👎'} sur {sujet})"
+                                      + (f"\n↳ juste après : {_derniere_reponse(session)[:160]}"), True)
+                opp_store.bump_counter("avis_" + ("ok" if bon else "ko"))
+            except Exception as e:
+                logger.warning(f"[avis-tap] {e}")
+            if bon:
+                await deliver_text(session, "👍 Noté, merci — ça aide à garder ce qui marche.", with_menu=True)
+            else:
+                session["attente_precision_retour"] = sujet
+                await deliver_text(session, "👎 Noté. *Qu'est-ce qui n'allait pas ?* "
+                                   "Une phrase suffit — c'est elle qui permet de corriger.")
             return session
         if act == "ori_plus":
             msg = _orient_test_start(session, suite=True)
@@ -12025,6 +12384,87 @@ async def notify(_auth: bool = Depends(verify_api_key)):
 
 # B2 · cadence des relances par palier (heures d'inactivité avant une relance). Admin : jamais.
 _RELANCE_HOURS = {"premium": 24, "pro": 24, "vip": 48, "free": 72}
+
+@app.post("/api/rappel-testeurs")
+async def rappel_testeurs(_auth: bool = Depends(verify_api_key)):
+    """Relance les testeurs silencieux — avec une question PRÉCISE, pas un « alors ? ».
+
+    Un « alors, ça donne quoi ? » ne reçoit que « ça va ». Une question sur ce qu'ils ont
+    réellement fait reçoit une réponse utilisable. Telegram uniquement (gratuit), opt-out
+    respecté, une relance tous les 4 jours au plus.
+    """
+    now = datetime.now(timezone.utc)
+    envoyes, vus = 0, 0
+    for s in session_manager.list_all():
+        if s.get("premium_tier") != _TIER_TESTEUR or s.get("relances_off"):
+            continue
+        if (s.get("channel") or "telegram") != "telegram" or not _valid_id(s.get("chat_id")):
+            continue
+        vus += 1
+        try:
+            der = datetime.fromisoformat(s.get("derniere_activite") or "")
+            dernier_rappel = s.get("testeur_rappel_le")
+            if dernier_rappel and (now - datetime.fromisoformat(dernier_rappel)).days < 4:
+                continue
+            silence = (now - der).days
+        except (TypeError, ValueError):
+            continue
+        if silence < 3:
+            continue
+        faites = set(s.get("missions_faites") or [])
+        if "cv" not in faites:
+            q = "Tu n'as pas encore envoyé ton CV — c'est l'étape qui révèle le plus de défauts. Tu peux l'essayer ?"
+        elif "orientation" not in faites:
+            q = "Le test d'orientation (`/testorientation`, 2 min) n'a pas encore été essayé. Le résultat te ressemblerait-il ?"
+        elif "recherche" not in faites:
+            q = "Tu n'as pas encore lancé une vraie recherche. Essaie avec ce qui t'intéresse pour de bon, pas un exemple."
+        else:
+            q = ("Tu as fait le tour. *Une seule question* : qu'est-ce qui t'a le plus agacé ? "
+                 "Même un détail — c'est ce qui se corrige le mieux.")
+        try:
+            await send_message(s["chat_id"],
+                               f"🧪 *Petit point testeur* — {silence} jours sans nouvelles.\n\n{q}\n\n"
+                               "_Réponds ici en français, pas besoin de commande. `/stop` si tu préfères qu'on te laisse._")
+            s["testeur_rappel_le"] = now.isoformat()
+            session_manager.set(s.get("user_id"), s)
+            envoyes += 1
+        except Exception as e:
+            logger.warning(f"[rappel-testeur] {s.get('user_id')}: {e}")
+    return {"ok": True, "testeurs": vus, "relances": envoyes}
+
+
+@app.post("/api/rapport")
+async def rapport_terrain(jours: int = 1, _auth: bool = Depends(verify_api_key)):
+    """Envoie le rapport terrain à l'admin, en fichier Markdown.
+
+    Appelé par cron : `nex-cron.sh rapport` chaque soir, `rapport-hebdo` le dimanche.
+    Le bot l'écrit lui-même parce que les données sont dans SA base — personne d'autre
+    ne peut les lire. Silencieux s'il n'y a rien à dire : un rapport vide chaque soir
+    finit par ne plus être ouvert.
+    """
+    jours = max(1, min(90, int(jours)))
+    if not (ADMIN_CHAT_ID and TELEGRAM_TOKEN):
+        return {"ok": False, "raison": "admin Telegram non configuré"}
+    try:
+        vu = _routage_totaux()
+        misses = _misses_recent(60)
+        try:
+            retours = [r for r in opp_store.list_contacts(60)
+                       if str(r[3] or "").startswith(("[RETOUR-", "[BUG]", "[AVIS]"))]
+        except Exception:
+            retours = []
+        if not (vu["vu"] or misses or retours):
+            return {"ok": True, "envoye": False, "raison": "rien à signaler"}
+        texte = _rapport_testeurs(jours)
+        nom = f"nexmove-terrain-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}-{jours}j.md"
+        sess = {"user_id": ADMIN_CHAT_ID, "chat_id": ADMIN_CHAT_ID, "channel": "telegram"}
+        await deliver_file(sess, nom, texte.encode("utf-8"),
+                           f"📋 *Rapport terrain* · {jours} jour(s) · à transmettre pour correction")
+        return {"ok": True, "envoye": True, "jours": jours, "taille": len(texte)}
+    except Exception as e:
+        logger.error(f"[rapport] {e}")
+        return {"ok": False, "raison": str(e)[:200]}
+
 
 @app.post("/api/relances")
 async def relances(_auth: bool = Depends(verify_api_key)):
