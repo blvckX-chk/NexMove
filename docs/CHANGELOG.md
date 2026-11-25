@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.10 — On mesure enfin le routage du langage naturel
+- **Le constat, en un chiffre** : le bot route le langage libre avec **218 mots-clés** répartis dans une cascade de **21 branches**, et personne ne savait si ça marchait. Aucune mesure n'existait. Chaque ajout de mot-clé était un pari, et une régression passait inaperçue.
+- **`tests/jeu_routage.jsonl` + `tests/test_routage.py`** : 64 messages réalistes, le score imprimé à chaque exécution, la liste nominative des ratés, et un **plancher qui fait échouer la CI** si le score descend. Le test affiche aussi combien de messages partent au modèle faute de route — c'est-à-dire le coût et la latence évitables.
+- **Première mesure : 55 %.** Après corrections : 100 % sur ce lot. **Mais c'est du surapprentissage**, et le fichier le dit. Un second lot, écrit *après* les corrections sans regarder le routeur, est tombé à **70 %** : voilà le vrai niveau de généralisation. Il a servi à corriger une deuxième vague, puis a rejoint le jeu.
+- **Ce que la mesure a trouvé** : la boîte à outils n'avait **aucune** route en langage naturel (« mon pdf est trop lourd », « mets ça en anglais », « lire ce qui est écrit sur la photo » partaient tous au modèle) ; trois collisions de vocabulaire envoyaient vers la mauvaise commande — « joindre deux pdf » demandait un rendez-vous, « mon dossier fait 8 Mo » ouvrait un dossier de candidature, « je suis où dans mon dossier » aussi ; les prix, la version, l'avancement et l'éligibilité n'avaient pas de route ; côté orientation, la pression familiale ne reconnaissait pas « mon papa », et « j'ai fini le lycée et je suis perdu » ne déclenchait rien.
+- **`/misses jeu`** : les ratés du terrain sortent au format du jeu, prêts à coller. C'est le point important — un jeu écrit par celui qui code le routeur mesure sa mémoire, pas la compréhension du bot. Seules les lignes marquées `"source": "terrain"` mesurent quelque chose.
+- Témoignage d'Hermione ajouté sur la vitrine, avec ses mots exacts.
+
 ## v4.09 — `/admin` existe, les refus disent pourquoi, les commandes inconnues aussi
 Trois défauts constatés sur une vraie conversation Telegram du compte admin, pas en relisant le code.
 

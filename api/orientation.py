@@ -27,6 +27,12 @@ _ORIENT_PATTERNS = [
     # « je ne sais pas quoi faire / vers quoi aller »
     r"\b(je\s+(ne\s+)?sais\s+(pas|plus)|j'?sais\s+pas|aucune\s+idee|je\s+vois\s+pas)\b[^.?!]{0,35}\b(quoi\s+faire|quoi\s+etudier|vers\s+quoi|dans\s+quoi|quel\s+metier|quelle\s+filiere|ce\s+que\s+je\s+veux|ou\s+aller|quoi\s+choisir|faire\s+quoi|ma\s+voie)",
     r"\b(perdu|perdue|bloque|bloquee|desoriente\w*|paume\w*)\b[^.?!]{0,30}\b(carriere|etudes|orientation|avenir|vie\s+pro\w*|parcours|metier)",
+    # « j'ai fini le lycée et je suis perdu » : le repère scolaire AVANT le mot « perdu ».
+    r"\b(fini|termine|quitte|sorti\s+du?|j'?ai\s+eu)\b[^.?!]{0,20}\b(lycee|college|bac|bepc|licence|master|bts|fac|universite|ecole)\b[^.?!]{0,40}\b(perdu|perdue|bloque\w*|sais\s+pas|aucune\s+idee|et\s+maintenant|quoi\s+faire|la\s+suite)",
+    # « quel métier avec un bac D », « quelle filière avec mon BTS »
+    rf"\bquel(le)?s?\s+{_DOM}\b[^.?!]{{0,25}}\b(avec|apres)\s+(un|mon|ma|le|la)\s+(bac|bepc|licence|master|bts|dut|cap|diplome|niveau)",
+    # « entre droit et compta je choisis quoi » : l'arbitrage AVANT le verbe.
+    r"\bentre\b[^.?!]{3,40}\bet\b[^.?!]{3,40}\b(je\s+choisis\s+quoi|qu'?est[- ]ce\s+que\s+je\s+choisis|je\s+prends\s+quoi|lequel|laquelle|quoi\s+choisir|je\s+fais\s+quoi)",
     r"\b(trouver|chercher)\s+ma\s+voie\b",
     # « comment devenir X », « quelles études pour devenir X »
     r"\b(comment|quoi\s+faire\s+pour|que\s+faire\s+pour)\s+devenir\b",
@@ -48,7 +54,7 @@ _ORIENT_PATTERNS = [
     r"\bje\s+suis\s+(bon|bonne|fort|forte|nul|nulle|doue\w*)\s+en\b[^.?!]{0,60}\b(j'?aime|j'?adore|metier|faire\s+quoi|quoi\s+faire|me\s+conseilles?|filiere)",
     r"\bj'?(aime|adore)\s+(bien\s+)?(le|la|les|l')\s*\w+[^.?!]{0,40}\b(metier|filiere|faire\s+quoi|quoi\s+faire|travailler\s+dans|en\s+faire\s+mon)",
     # pression familiale
-    r"\b(mes\s+parents|mon\s+pere|ma\s+mere|ma\s+famille|mon\s+oncle|ma\s+tante)\s+(veu\w+|me\s+pousse\w*|m'?oblige\w*|insiste\w*)\b[^.?!]{0,30}\b(que\s+je\s+(fasse|devienne|etudie|choisisse|sois|prenne|aille\s+en)|etudier|devenir|faire\s+des\s+etudes)",
+    r"\b(mes\s+parents|mon\s+pere|mon\s+papa|ma\s+mere|ma\s+maman|ma\s+famille|mon\s+oncle|ma\s+tante|mon\s+tuteur|mon\s+grand\s+frere|ma\s+grande\s+sœur|ma\s+grande\s+soeur)\s+(veu\w+|voudrai\w*|souhaite\w*|me\s+pousse\w*|m'?oblige\w*|insiste\w*|tient\s+a\s+ce)\b[^.?!]{0,30}\b(que\s+je\s+(fasse|devienne|etudie|choisisse|sois|prenne|aille\s+en)|etudier|devenir|faire\s+des\s+etudes)",
     # échec / décrochage
     r"\bj'?ai\s+(rate|echoue|loupe|abandonne|arrete)\b[^.?!]{0,30}\b(concours|bac|bepc|examen|annee|l1|l2|l3|fac|universite|etudes|ecole|licence|master)",
     # rapport négatif à l'école / voie pro
@@ -72,7 +78,11 @@ _SEARCH_RE = re.compile(r"\b(cherche[sz]?[- ]moi|trouve[sz]?[- ]moi|envoie[sz]?[
 
 _TEST_RE = re.compile(r"\b(test|quiz|questionnaire)\s+(d'?orientation|de\s+personnalite|d'?interets?|riasec|holland|metier)"
                       r"|\b(riasec|holland)\b"
-                      r"|\b(test|quiz)\b[^.?!]{0,40}\b(savoir|trouver|decouvrir)\b[^.?!]{0,30}\b(ce\s+qui\s+me\s+(va|correspond|convient)|quel\s+metier|ma\s+voie|pour\s+moi)")
+                      r"|\b(test|quiz)\b[^.?!]{0,40}\b(savoir|trouver|decouvrir)\b[^.?!]{0,30}\b(ce\s+qui\s+me\s+(va|correspond|convient)|quel\s+metier|ma\s+voie|pour\s+moi)"
+                      # « je veux faire le test », « on peut faire le test ? » : dans ce bot, « le test »
+                      # ne désigne rien d'autre. Un test scolaire se dit « mon examen », « mon devoir ».
+                      r"|\b(faire|passer|commencer|lancer|essayer|tenter)\s+(le|ce|un|votre|ton)\s+(test|quiz|questionnaire)\b"
+                      r"|^\s*(le\s+)?(test|quiz)\s*[!?.]*\s*$")
 
 
 def is_orientation_query(text: str) -> bool:
