@@ -147,6 +147,66 @@ def test_collisions_de_vocabulaire(msg, interdit):
     assert _route(msg) != interdit, f"« {msg} » repart vers {interdit}"
 
 
+def test_un_bonjour_nest_pas_un_rate():
+    """Sinon le journal se noie sous les salutations et ne mesure plus rien."""
+    for m in ("bonjour", "Bonsoir", "merci", "Merci beaucoup", "ok", "d'accord",
+              "ça marche", "oui", "non", "super", "à plus", "bye", "👍"):
+        assert main._ACQUIT_RE.match(m), m
+    for m in ("je cherche un stage", "merci de m'aider à trouver du travail",
+              "ok mais comment je fais pour le visa", "bonjour je veux un emploi"):
+        assert not main._ACQUIT_RE.match(m), m
+
+
+def test_un_message_sans_action_est_journalise():
+    """LE défaut corrigé : un raté n'était enregistré que si le modèle ne renvoyait RIEN.
+
+    Ça n'arrive presque jamais, donc le journal restait vide et le jeu d'évaluation
+    n'avait aucune source de terrain. On journalise maintenant tout message de fond
+    auquel aucune action n'a répondu.
+    """
+    import asyncio
+    main._ROUTE_MISSES.clear()
+    avant = dict(main._ROUTAGE_VU)
+
+    async def _conv(system, user, **k):
+        return {"action": "", "argument": "", "message": "Dis-m'en un peu plus."}
+    vrai = main.call_groq
+    main.call_groq = _conv
+    sess = {"user_id": "u-mes", "channel": "telegram", "chat_id": "u-mes", "etape": "ACTIF",
+            "profil": {}, "historique": [], "onboarding_complete": True}
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(main.process_text_message(sess, "wesh c'est quoi ce truc deh"))
+    finally:
+        loop.close()
+        main.call_groq = vrai
+    assert main._ROUTAGE_VU["vu"] > avant["vu"], "le message de fond doit être compté"
+    assert any(r["kind"] == "sans_route" for r in main._ROUTE_MISSES), main._ROUTE_MISSES
+
+
+def test_le_meme_message_nest_pas_journalise_deux_fois():
+    """Quelqu'un qui répète sa phrase ne doit pas remplir le journal à lui seul."""
+    import asyncio
+    main._ROUTE_MISSES.clear()
+
+    async def _conv(system, user, **k):
+        return {"action": "", "argument": "", "message": "Dis-m'en un peu plus."}
+    vrai = main.call_groq
+    main.call_groq = _conv
+    sess = {"user_id": "u-rep", "channel": "telegram", "chat_id": "u-rep", "etape": "ACTIF",
+            "profil": {}, "historique": [], "onboarding_complete": True}
+    loop = asyncio.new_event_loop()
+    try:
+        for _ in range(3):
+            _, sess = loop.run_until_complete(
+                main.process_text_message(sess, "abeg quoi faire maintenant deh"))
+    finally:
+        loop.close()
+        main.call_groq = vrai
+    repetes = [r for r in main._ROUTE_MISSES if "abeg quoi faire" in r["text"]]
+    assert len(repetes) == 1, f"journalisé {len(repetes)} fois au lieu d'une"
+
+
 def test_export_des_rates_au_format_du_jeu():
     """`/misses jeu` doit produire des lignes directement collables dans le jeu.
 

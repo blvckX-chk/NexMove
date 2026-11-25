@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.10.0"
+VERSION         = "4.11.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -844,6 +844,30 @@ def _parse_broadcast_args(arg: str) -> tuple[dict, str, bool, bool]:
 # ── Observabilité : journal des « ratés » de compréhension (pour apprendre des vrais échecs) ──
 # Capé en mémoire (léger, best-effort). Sert à savoir CE QUE le bot ne comprend pas, pour corriger.
 _ROUTE_MISSES: deque = deque(maxlen=200)
+
+# Messages dont la bonne réponse EST une conversation : les journaliser comme « ratés »
+# noierait le signal sous les bonjours. Tout le reste qui n'aboutit à aucune action est
+# un candidat à une nouvelle route.
+_ACQUIT_RE = re.compile(
+    r"^\s*(bonjour|bonsoir|salut|coucou|cc|hello|hi|yo|hey|slt|bjr|bsr"
+    r"|merci\w*|mrc|thanks?|ok+|d'?accord|dac|ca\s+marche|ça\s+marche|parfait|super|nickel|top"
+    r"|oui|non|ouais|nan|bien|tres\s+bien|très\s+bien|a\s+plus|à\s+plus|bonne\s+(journee|journée|nuit|soiree|soirée)"
+    r"|au\s+revoir|bye|amen|wow|ah\s+ok|hmm+|\W+)"
+    # Un intensificateur court est toléré (« merci beaucoup », « ok super »), mais la liste
+    # est fermée : « merci de m'aider à trouver du travail » reste une vraie demande.
+    r"(\s+(beaucoup|bien|infiniment|a\s+toi|à\s+toi|mon\s+frere|mon\s+frère|ma\s+sœur|ma\s+soeur|"
+    r"hein|deh|oo|ooh|super|merci|ok|chef|boss|frero|frérot))*"
+    r"\s*[!?.…]*\s*$", re.I)
+
+# Compteur vivant du routage en production : la contrepartie du jeu d'évaluation.
+# Le test mesure sur des cas écrits ; ceci mesure sur les vrais messages.
+_ROUTAGE_VU = {"vu": 0, "sans_route": 0, "acquit": 0}
+
+
+def _note_routage(quoi: str) -> None:
+    if quoi in _ROUTAGE_VU:
+        _ROUTAGE_VU[quoi] += 1
+
 
 def _log_miss(session: dict, text: str, kind: str) -> None:
     """Enregistre un message que le bot n'a pas su router/comprendre (fallback générique, doc rejeté).
@@ -4558,6 +4582,11 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     t = (text or "").strip()
     low = t.lower()
     now = datetime.now(timezone.utc).isoformat()
+    # Compteur de routage : on compte à l'ENTRÉE, pas en fin de chaîne — sinon tous les
+    # messages attrapés par un handler précoce manquent à l'appel et le taux est faux.
+    # Les appels internes passent une commande « /… » : ils ne sont donc jamais recomptés.
+    if not low.startswith("/"):
+        _note_routage("acquit" if _ACQUIT_RE.match(t) else "vu")
     profil = session.get("profil", {}) or {}   # disponible pour TOUS les handlers (évite UnboundLocalError)
     # Gating modèles par TIER : premium (Tchavi) pour admin/payant, modèles gratuits pour les gratuits.
     set_allow_premium(_user_tier(session) != "free")
@@ -6360,13 +6389,21 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         rows = _misses_recent(25)
+        _vu = _ROUTAGE_VU
+        _routes = max(0, _vu["vu"] - _vu["sans_route"])
+        _taux = (f"📊 Depuis le démarrage : *{_routes}/{_vu['vu']}* messages libres compris "
+                 f"(*{_routes / _vu['vu']:.0%}*) · {_vu['acquit']} bonjour/merci mis de côté.\n"
+                 if _vu["vu"] else "📊 Aucun message libre reçu depuis le démarrage.\n")
         if not rows:
-            msg = "✅ *Aucun raté de compréhension récent.* (Le bot a su router tous les derniers messages.)"
+            msg = (_taux + "\n✅ *Aucun raté de compréhension enregistré.*\n"
+                   "_Un « raté » = un message qui n'a déclenché aucune action, et auquel "
+                   "le modèle a dû répondre librement._")
         else:
             by_kind = {}
             for r in rows:
                 by_kind[r["kind"]] = by_kind.get(r["kind"], 0) + 1
-            lignes = [f"🔎 *Ce que le bot n'a pas compris* ({len(rows)} récents · {', '.join(f'{k}:{v}' for k,v in by_kind.items())})",
+            lignes = [_taux,
+                      f"🔎 *Messages sans route* ({len(rows)} récents · {', '.join(f'{k}:{v}' for k,v in by_kind.items())})",
                       "_Chaque ligne = une occasion d'améliorer (mot-clé à ajouter, cas à gérer)._", ""]
             for r in rows:
                 lignes.append(f"• [{r['kind']}] {_md_clean(r['text'])[:120]}  ·  _{r['ts'][11:16]} {r['canal']}_")
@@ -7785,6 +7822,17 @@ JSON: {{"action":"<commande ou vide>","argument":"<texte ou vide>","then":{{"act
     message = _sanitize_advisor_msg(message)
     if not _raw_msg:   # ni action ni réponse du LLM -> message pas compris : on le journalise.
         _log_miss(session, t, "nlu_fallback")
+    elif not _ACQUIT_RE.match(t or ""):
+        # Aucune action déclenchée : le déterministe n'a rien reconnu et le modèle a dû
+        # improviser une réponse. Ce n'est pas forcément une faute — mais c'est toujours
+        # un candidat à une nouvelle route, et c'est ce qui coûte des tokens et du délai.
+        # C'était LE trou de l'instrument : on ne journalisait que les réponses VIDES du
+        # modèle, qui n'arrivent presque jamais. Le journal restait donc vide.
+        # (Un bonjour ou un merci ne compte pas : la conversation EST la bonne réponse.)
+        _note_routage("sans_route")
+        if (t or "").strip() != (session.get("_dernier_miss") or ""):
+            session["_dernier_miss"] = (t or "").strip()
+            _log_miss(session, t, "sans_route")
     _push(session, "user", t); _push(session, "assistant", message)
     # Profilage progressif : on capte en douceur ce que la personne révèle d'elle (sans l'interroger).
     try:

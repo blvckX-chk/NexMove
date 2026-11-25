@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.11 — Le journal des ratés était vide par construction
+Trouvé en testant la v4.10 en production : `/misses jeu` a répondu « Aucun raté à exporter » sur un bot qui en avait forcément. L'instrument livré la veille n'avait aucune entrée.
+
+- **La cause** : un raté n'était enregistré que si le modèle renvoyait **une réponse littéralement vide**. Ça n'arrive presque jamais — le modèle dit toujours quelque chose. Le journal restait donc vide, `/misses` affichait « aucun raté », et la boucle d'amélioration n'avait pas de carburant.
+- **Le bon signal** : un message de fond auquel **aucune action n'a répondu**. Le déterministe n'a rien reconnu, le modèle a improvisé une phrase. Ce n'est pas toujours une faute, mais c'est toujours un candidat à une nouvelle route — et c'est exactement ce qui coûte des tokens et du délai.
+- **Sans noyer le signal** : « bonjour », « merci beaucoup », « ok deh » ne comptent pas, la conversation est la bonne réponse pour eux. La liste des intensificateurs tolérés est fermée, donc « merci de m'aider à trouver du travail » reste une vraie demande. Un message répété n'est journalisé qu'une fois.
+- **`/misses` donne maintenant un taux** : « 7/9 messages libres compris (78 %) · 3 bonjour/merci mis de côté ». C'est la contrepartie en production du jeu d'évaluation : le test mesure sur des cas écrits, ce compteur mesure sur de vrais messages. Il compte à l'entrée du traitement, pas en fin de chaîne — sinon tous les messages attrapés par un handler précoce manquent à l'appel et le taux est faux.
+
 ## v4.10 — On mesure enfin le routage du langage naturel
 - **Le constat, en un chiffre** : le bot route le langage libre avec **218 mots-clés** répartis dans une cascade de **21 branches**, et personne ne savait si ça marchait. Aucune mesure n'existait. Chaque ajout de mot-clé était un pari, et une régression passait inaperçue.
 - **`tests/jeu_routage.jsonl` + `tests/test_routage.py`** : 64 messages réalistes, le score imprimé à chaque exécution, la liste nominative des ratés, et un **plancher qui fait échouer la CI** si le score descend. Le test affiche aussi combien de messages partent au modèle faute de route — c'est-à-dire le coût et la latence évitables.
