@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.09.0"
+VERSION         = "4.10.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -1666,6 +1666,52 @@ def _nl_intent_route(low: str, t: str) -> str:
         return (cmd + " " + cible).strip()
     return ""
 
+def _outil_depuis_probleme(low: str) -> str:
+    """Quel outil résout le problème décrit ?
+
+    Les gens ne demandent pas « /compresser » : ils disent « mon pdf est trop lourd » ou
+    « le site refuse mon fichier ». Aucune de ces phrases n'avait de route, elles partaient
+    toutes au modèle. C'est pourtant le cas le plus simple à trancher dans le code : le
+    vocabulaire est fermé (fichier, pdf, image, page, texte) et les verbes sont peu nombreux.
+    """
+    fichier = r"(pdf|fichier|document|doc|scan|image|photo|capture)"
+    regles = (
+        # Alléger : le besoin est dit par le poids, pas par le verbe.
+        (rf"\b{fichier}\b[^.?!]{{0,30}}\b(trop\s+(lourd|gros|volumineux)|d[ée]passe|refus[ée]|"
+         rf"accepte\s+pas|passe\s+pas|r[ée]duire|all[ée]ger|compress\w*)\b"
+         rf"|\b(trop\s+(lourd|gros|volumineux)|r[ée]duire\s+la\s+taille|all[ée]ger|compress\w*)\b[^.?!]{{0,30}}\b{fichier}\b", None),
+        # Assembler : « mettre mes diplômes scannés dans un seul document » ne contient
+        # ni « fusionner » ni « pdf ». C'est « un seul » qui porte le sens.
+        (rf"\b(fusionn\w*|regroup\w*|assembl\w*|r[ée]uni\w*|joindre|mettre\s+ensemble|combin\w*)\b"
+         rf"[^.?!]{{0,30}}\b(pdf|fichiers?|documents?|pages?)\b"
+         rf"|\b(deux|2|plusieurs|mes|tous\s+mes)\b[^.?!]{{0,40}}\b(dans|en)\s+un\s+seul\s+(pdf|fichier|document)\b"
+         rf"|\b(deux|2|plusieurs|mes)\s+pdf\b[^.?!]{{0,20}}\b(en\s+un|ensemble)\b", "/fusionner"),
+        # Images -> PDF
+        (r"\b(photos?|images?|captures?)\b[^.?!]{0,30}\b(en\s+pdf|vers\s+pdf|en\s+un\s+pdf|format\s+pdf)\b"
+         r"|\b(transform\w*|convert\w*|mettre|passer)\b[^.?!]{0,25}\b(photos?|images?)\b[^.?!]{0,20}\bpdf\b", "/enpdf"),
+        # PDF -> images
+        (r"\bpdf\b[^.?!]{0,25}\b(en\s+images?|en\s+photos?|en\s+png|en\s+jpg)\b", "/enimages"),
+        # Extraire le texte (OCR). « lire ce qui est écrit sur la photo » ne dit pas « texte ».
+        (r"\b(r[ée]cup[ée]r\w*|extrai\w*|sortir|copier|lire|avoir)\b[^.?!]{0,25}\ble\s+texte\b"
+         r"|\btexte\s+d'?une?\s+(photo|image|capture|scan|pdf)\b|\bocr\b"
+         r"|\b(lire|d[ée]chiffrer|savoir)\b[^.?!]{0,30}\b(ce\s+qui\s+est\s+[ée]crit|ce\s+qu'?il\s+y\s+a\s+[ée]crit)\b"
+         r"|\bce\s+qui\s+est\s+[ée]crit\b[^.?!]{0,20}\b(photo|image|capture|scan|document|pdf)\b", "/extraire"),
+        # Découper
+        (r"\b(d[ée]coup\w*|extrai\w*|s[ée]par\w*|garder)\b[^.?!]{0,25}\b(pages?)\b", "/decouper"),
+        # Traduire. « mets ça en anglais » ne contient pas le mot « traduire ».
+        (r"\b(tradui\w*|traduction)\b"
+         r"|\b(mets?|mettre|passe[rz]?|convertis?)\b[^.?!]{0,20}\ben\s+(anglais|fran[çc]ais|espagnol|allemand|portugais)\b"
+         r"|\b(version|dis[- ]le)\b[^.?!]{0,15}\ben\s+(anglais|fran[çc]ais|espagnol)\b", "/traduire"),
+    )
+    for motif, cmd in regles:
+        if re.search(motif, low):
+            if cmd:
+                return cmd
+            # Alléger : image ou document ?
+            return "/compresserimage" if re.search(r"\b(image|photo|capture)s?\b", low) else "/compresser"
+    return ""
+
+
 def _free_text_to_command(low: str, t: str) -> str:
     """Route un message libre (utilisateur actif) vers la bonne commande selon l'intention."""
     if any(k in low for k in ("comment postuler", "comment candidater", "comment je postule",
@@ -1673,6 +1719,16 @@ def _free_text_to_command(low: str, t: str) -> str:
         cible = re.sub(r".*?(comment\s+(postuler|candidater|je\s+postule|envoyer\s+ma\s+candidature|faire\s+la\s+candidature|déposer\s+ma\s+candidature))\s*(à|a|au|aux|pour|chez|sur|en)?\s*",
                        "", t, flags=re.I).strip(" ?.")
         return "/commentpostuler " + cible
+    # « dossier » veut dire deux choses : un dossier de candidature, et un fichier informatique.
+    # « mon dossier fait 8 Mo » partait en /dossier. On tranche sur le contexte AVANT la table,
+    # parce qu'un poids ou un format ne laisse aucun doute.
+    if re.search(r"\bdossiers?\b", low) and re.search(
+            r"\b(\d+\s*(mo|ko|mb|kb|go)|trop\s+(lourd|gros|volumineux)|taille|poids|octets?)\b", low):
+        return _outil_depuis_probleme(low) or "/compresser"
+    # « je suis où dans mon dossier » demande un état d'avancement, pas d'ouvrir un dossier.
+    if re.search(r"\b(ou|où)\s+j'?en\s+suis\b|\bj'?en\s+suis\s+(ou|où)\b"
+                 r"|\bje\s+suis\s+(ou|où)\s+(dans|avec|sur)\b|\bmon\s+avancement\b", low):
+        return "/status"
     # Intentions critiques (table unique, source de vérité) — AVANT le reste.
     _ir = _nl_intent_route(low, t)
     if _ir:
@@ -1686,7 +1742,10 @@ def _free_text_to_command(low: str, t: str) -> str:
     _sequence = bool(re.search(r"\b(puis|ensuite|apr[èe]s|d'abord|aussi)\b", low))
     if not _sequence and (re.search(r"\b(cr[ée]er?|cr[ée]e|faire|r[ée]dige\w*|monte\w*|g[ée]n[èe]re\w*|refaire|refais|"
                  r"refai\w*)\b[^.?!]{0,25}\b(cv|curriculum)\b", low)
-            or _nolow in ("creercv", "creationcv", "nouveaucv", "creemoncv", "creeruncv", "fairemoncv")):
+            or _nolow in ("creercv", "creationcv", "nouveaucv", "creemoncv", "creeruncv", "fairemoncv")
+            # « je n'ai pas de CV » : toujours le même besoin, quel que soit le contexte.
+            or re.search(r"\b(j'?ai\s+pas|je\s+n'?ai\s+pas|pas\s+encore|j'?en\s+ai\s+pas)\b[^.?!]{0,20}\bde\s+cv\b"
+                         r"|\bsans\s+cv\b|\bje\s+n'?ai\s+aucun\s+cv\b", low)):
         return "/creercv"
     # Suppression de compte/profil/données (RGPD) — routage DÉTERMINISTE (sinon le LLM demandait « quoi ? »
     # ou on retombait sur /profil qui AFFICHE le profil au lieu de le supprimer).
@@ -1705,9 +1764,12 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/orientation " + t
     if any(k in low for k in ("formation", "certif", "cours en ligne", "me former", "se former")):
         return "/formations " + t
-    if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")):
+    if any(k in low for k in ("logement", "loger", "appartement", "crous", "résidence", "residence")) \
+            or re.search(r"\b(chambre|studio|colocation|coloc|se\s+loger|où\s+(dormir|habiter)|ou\s+(dormir|habiter))\b", low):
         return "/logement " + t
-    if "budget" in low or "coût de la vie" in low or "cout de la vie" in low:
+    if "budget" in low or "coût de la vie" in low or "cout de la vie" in low \
+            or re.search(r"\bcombien\b[^.?!]{0,30}\b(pour\s+vivre|par\s+mois|faut\s+il\s+pour|il\s+faut\s+pour|"
+                         r"co[uû]te\s+la\s+vie|pr[ée]voir)\b", low):
         return "/budget " + t
     if any(k in low for k in ("école", "ecole", "universit", "quelle formation", "quel master", "programme d'étude")):
         return "/ecoles " + t
@@ -1728,8 +1790,36 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/recours"
     if low in ("version", "quelle version", "c'est quelle version", "numero de version") or "version du bot" in low:
         return "/version"
-    if any(k in low for k in ("contact", "contacter", "joindre", "rencontrer", "rendez-vous", "rendez vous", "rdv", "parler à quelqu'un", "parler a quelqu'un", "un humain", "un conseiller")):
+    # BOÎTE À OUTILS : les gens décrivent le PROBLÈME, pas l'outil (« mon pdf est trop lourd »,
+    # « le site refuse mon fichier »). Ces messages partaient tous à l'IA faute de mot-clé.
+    _outil = _outil_depuis_probleme(low)
+    if _outil:
+        return _outil
+    # « joindre » appartenait à /contact, donc « joindre deux pdf en un seul » demandait un rendez-vous.
+    # On exclut le sens « assembler des fichiers », traité juste au-dessus.
+    if any(k in low for k in ("contact", "contacter", "rencontrer", "rendez-vous", "rendez vous", "rdv",
+                              "parler à quelqu'un", "parler a quelqu'un", "un humain", "un conseiller")) \
+            or ("joindre" in low and not re.search(r"\b(pdf|fichier|document|page|image|photo)s?\b", low)):
         return "/contact" + ((" " + t) if len(t) > 15 else "")
+    # PRIX : question très fréquente, aucune route. Avant /offres, qui captait « combien ça coûte ».
+    if re.search(r"\b(combien\s+(ça|ca|cela)\s+(coute|coûte|fait)|c'?est\s+(gratuit|payant|combien)|"
+                 r"quel\s+est\s+le\s+(prix|tarif)|vos\s+(prix|tarifs)|ça\s+coute\s+combien|ca\s+coute\s+combien|"
+                 r"je\s+dois\s+payer|faut\s+payer|y\s+a\s+t[- ]il\s+un\s+abonnement|"
+                 r"(vous|tu)\s+(prene?z|prends)\s+combien|combien\s+(vous|tu)\s+(prene?z|prends))\b", low):
+        return "/offres"
+    if re.search(r"\b(quelle?\s+version|version\s+du\s+bot|tu\s+tournes?\s+en\s+quelle|"
+                 r"tu\s+es\s+en\s+quelle\s+version)\b", low):
+        return "/version"
+    # « où j'en suis », « j'en suis où » : état d'avancement, pas une recherche.
+    if re.search(r"\b(ou\s+j'?en\s+suis|où\s+j'?en\s+suis|j'?en\s+suis\s+ou|j'?en\s+suis\s+où|"
+                 r"mon\s+avancement|où\s+on\s+en\s+est|ou\s+on\s+en\s+est|"
+                 r"je\s+suis\s+(ou|où)\s+(dans|avec)\b)", low):
+        return "/status"
+    # « est-ce que j'ai le niveau », « je suis éligible ? » : évaluation, pas une recherche.
+    if re.search(r"\b(j'?ai\s+(le\s+niveau|mes\s+chances|une\s+chance)|ai[- ]je\s+(le\s+niveau|mes\s+chances)|"
+                 r"suis[- ]je\s+(eligible|éligible|admissible)|je\s+suis\s+(eligible|éligible|admissible)|"
+                 r"mes\s+chances\s+(pour|de|d'))\b", low):
+        return "/chances " + t
     if "campus france" in low or "études en france" in low or "etudes en france" in low:
         return "/campusfrance"
     if "canada" in low or "québec" in low or "quebec" in low:
@@ -6280,7 +6370,24 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                       "_Chaque ligne = une occasion d'améliorer (mot-clé à ajouter, cas à gérer)._", ""]
             for r in rows:
                 lignes.append(f"• [{r['kind']}] {_md_clean(r['text'])[:120]}  ·  _{r['ts'][11:16]} {r['canal']}_")
+            lignes.append("\n📋 `/misses jeu` donne ces mêmes messages au format du jeu "
+                          "d'évaluation du routage (`tests/jeu_routage.jsonl`).")
             msg = "\n".join(lignes)
+        # Export : les ratés du terrain sont la SEULE mesure honnête du routage. Les cas
+        # écrits par celui qui code le routeur mesurent sa mémoire, pas la compréhension.
+        if low.split()[1:2] in (["jeu"], ["json"], ["export"]):
+            if not rows:
+                msg = "Aucun raté à exporter."
+            else:
+                lignes = ["Colle ces lignes dans `tests/jeu_routage.jsonl`, "
+                          "remplis `attendu` avec la ou les commandes correctes "
+                          "(`[]` si le conseiller doit répondre lui-même), puis relance "
+                          "`python3 -m pytest tests/test_routage.py -q -s`.", ""]
+                for r in rows:
+                    txt = json.dumps((r.get("text") or "")[:120], ensure_ascii=False)
+                    lignes.append('{"msg": ' + txt + ', "attendu": [], "source": "terrain", '
+                                  + f'"note": "{r["kind"]} · {r["ts"][:10]}"}}')
+                msg = "\n".join(lignes)
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 

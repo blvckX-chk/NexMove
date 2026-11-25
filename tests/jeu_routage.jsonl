@@ -1,0 +1,77 @@
+{"_": "JEU D'ÉVALUATION DU ROUTAGE. Une ligne = un message réel ou réaliste + ce que le bot devrait en faire."}
+{"_": "attendu : liste des commandes acceptables (plusieurs quand deux routes se valent). [] = aucune route déterministe, le conseiller doit répondre lui-même."}
+{"_": "source : 'terrain' = vu dans /misses ou une vraie conversation · 'écrit' = formulé à la main pour couvrir un cas."}
+{"_": "AJOUTER UNE LIGNE EST LE GESTE UTILE : chaque message que le bot rate devient un cas ici, et ne peut plus repasser."}
+
+{"msg": "je cherche un stage en logistique", "attendu": ["/mobilite", "/veille"], "source": "écrit", "note": "demande directe"}
+{"msg": "y a pas de boulot pour moi ici", "attendu": ["/mobilite", "/veille"], "source": "écrit", "note": "plainte, pas de verbe de recherche"}
+{"msg": "abeg aide moi à trouver du travail", "attendu": ["/mobilite", "/veille"], "source": "écrit", "note": "nigérian-béninois courant"}
+{"msg": "je veux travailler à l'étranger", "attendu": ["/mobilite"], "source": "écrit"}
+{"msg": "bourse pour étudier en france", "attendu": ["/mobilite", "/veille"], "source": "écrit"}
+{"msg": "des offres d'emploi à cotonou", "attendu": ["/mobilite", "/veille"], "source": "écrit"}
+{"msg": "stp trouve moi quelque chose", "attendu": [], "source": "écrit", "note": "trop vague : il faut demander le domaine"}
+
+{"msg": "je sais pas quoi faire après le bac", "attendu": ["/orientation"], "source": "écrit"}
+{"msg": "j'ai fini le lycée et je suis perdu", "attendu": ["/orientation"], "source": "écrit", "note": "pas de mot-clé d'orientation"}
+{"msg": "mon papa veut que je fasse médecine mais bon", "attendu": ["/orientation"], "source": "écrit", "note": "pression familiale, aucun mot-clé"}
+{"msg": "je veux me reconvertir", "attendu": ["/orientation"], "source": "écrit"}
+{"msg": "quel métier avec un bac D", "attendu": ["/orientation"], "source": "écrit"}
+{"msg": "entre droit et compta je choisis quoi", "attendu": ["/orientation"], "source": "écrit", "note": "hésitation entre deux voies"}
+{"msg": "je veux faire le test", "attendu": ["/testorientation"], "source": "écrit"}
+{"msg": "je galère depuis 2 ans", "attendu": [], "source": "écrit", "note": "détresse douce : écouter avant de router"}
+
+{"msg": "comment je fais pour campus france", "attendu": ["/campusfrance"], "source": "écrit"}
+{"msg": "on fait comment pour le visa", "attendu": ["/visa", "/procedure"], "source": "écrit"}
+{"msg": "je veux étudier au canada", "attendu": ["/canada"], "source": "écrit"}
+{"msg": "combien il faut pour vivre à dakar", "attendu": ["/budget"], "source": "écrit"}
+{"msg": "quelles écoles pour l'informatique", "attendu": ["/ecoles"], "source": "écrit"}
+{"msg": "des formations en comptabilité", "attendu": ["/formations"], "source": "écrit"}
+{"msg": "trouver une chambre à lomé", "attendu": ["/logement"], "source": "écrit"}
+
+{"msg": "tu peux corriger mon cv", "attendu": [], "source": "écrit", "note": "dépend du contexte : si un CV est en mémoire on conseille, sinon on le demande. Volontairement hors des mots-clés depuis la v3.91."}
+{"msg": "je n'ai pas de cv", "attendu": ["/creercv"], "source": "écrit"}
+{"msg": "mon pdf est trop lourd", "attendu": ["/compresser"], "source": "écrit", "note": "problème exprimé, pas la solution"}
+{"msg": "le site refuse mon fichier il est trop gros", "attendu": ["/compresser"], "source": "écrit"}
+{"msg": "mettre mes photos en pdf", "attendu": ["/enpdf"], "source": "écrit"}
+{"msg": "joindre deux pdf en un seul", "attendu": ["/fusionner"], "source": "écrit"}
+{"msg": "récupérer le texte d'une photo", "attendu": ["/extraire"], "source": "écrit"}
+{"msg": "traduis ça en anglais", "attendu": ["/traduire"], "source": "écrit"}
+
+{"msg": "mes chances pour l'ENA", "attendu": ["/chances", "/eligibilite"], "source": "écrit"}
+{"msg": "est ce que j'ai le niveau pour ce master", "attendu": ["/chances", "/eligibilite"], "source": "écrit"}
+{"msg": "prépare moi à l'entretien", "attendu": ["/simulation", "/entretien"], "source": "écrit"}
+{"msg": "où j'en suis", "attendu": ["/status", "/parcours"], "source": "écrit"}
+{"msg": "mes candidatures", "attendu": ["/mescandidatures"], "source": "écrit"}
+
+{"msg": "combien ça coûte", "attendu": ["/offres", "/tarifs", "/premium"], "source": "écrit", "note": "question prix"}
+{"msg": "c'est gratuit ?", "attendu": ["/offres", "/tarifs", "/premium"], "source": "écrit"}
+{"msg": "je veux parler à quelqu'un", "attendu": ["/contact", "/rencontrer"], "source": "écrit"}
+{"msg": "efface mes données", "attendu": ["/supprimer"], "source": "écrit"}
+{"msg": "tu tournes en quelle version", "attendu": ["/version"], "source": "écrit"}
+
+{"msg": "bonjour", "attendu": [], "source": "écrit", "note": "salutation : répondre, ne pas router"}
+{"msg": "merci beaucoup", "attendu": [], "source": "écrit"}
+{"msg": "ok", "attendu": [], "source": "écrit"}
+{"msg": "tu es qui exactement", "attendu": [], "source": "écrit", "note": "réponse d'identité, déjà déterministe ailleurs"}
+
+{"_": "LOT 2 — écrit APRÈS les corrections du lot 1, pour mesurer si le routage généralise. Score à la première mesure : 70 %."}
+{"msg": "faut que je trouve un taf avant décembre", "attendu": ["/mobilite", "/veille"], "source": "écrit"}
+{"msg": "y'a quoi comme bourse pour le maroc", "attendu": ["/mobilite", "/veille"], "source": "écrit"}
+{"msg": "ma mère insiste pour que je devienne avocat", "attendu": ["/orientation"], "source": "écrit"}
+{"msg": "c'est quoi les débouchés en agronomie", "attendu": ["/orientation"], "source": "écrit"}
+{"msg": "j'hésite entre la fac et une école privée", "attendu": ["/orientation"], "source": "écrit"}
+{"msg": "mon dossier fait 8 mo c'est trop", "attendu": ["/compresser"], "source": "écrit", "note": "« dossier » = fichier ici, pas candidature"}
+{"msg": "comment mettre mes diplômes scannés dans un seul document", "attendu": ["/fusionner", "/enpdf"], "source": "écrit"}
+{"msg": "je veux lire ce qui est écrit sur la photo", "attendu": ["/extraire"], "source": "écrit"}
+{"msg": "mets ça en anglais stp", "attendu": ["/traduire"], "source": "écrit"}
+{"msg": "une chambre pas chère vers calavi", "attendu": ["/logement"], "source": "écrit"}
+{"msg": "je prévois combien par mois à abidjan", "attendu": ["/budget"], "source": "écrit"}
+{"msg": "vous prenez combien", "attendu": ["/offres", "/tarifs", "/premium"], "source": "écrit"}
+{"msg": "on peut faire le test ?", "attendu": ["/testorientation"], "source": "écrit"}
+{"msg": "je suis où dans mon dossier", "attendu": ["/status"], "source": "écrit", "note": "« dossier » = candidature, mais la question porte sur l'avancement"}
+{"msg": "quelles universités acceptent les bac F2", "attendu": ["/ecoles"], "source": "écrit"}
+{"msg": "aide moi à préparer l'entretien de demain", "attendu": ["/simulation", "/entretien"], "source": "écrit"}
+{"msg": "bonsoir", "attendu": [], "source": "écrit"}
+{"msg": "d'accord merci", "attendu": [], "source": "écrit"}
+{"msg": "je redouble ma licence et j'en ai marre", "attendu": [], "source": "écrit", "note": "découragement : écouter avant de router"}
+{"msg": "est ce que je peux avoir le master avec ma licence", "attendu": [], "source": "écrit", "note": "dépend du dossier réel, le conseiller doit creuser"}
