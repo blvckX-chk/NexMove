@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.12.0"
+VERSION         = "4.13.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -620,6 +620,54 @@ def _relance_en_boucle(message: str, session: dict) -> bool:
         return False
     session["relance_suite"] = int(session.get("relance_suite") or 0) + 1
     return session["relance_suite"] >= 2
+
+
+_VOUS_RE = re.compile(r"\b(vous|votre|vos|v[ôo]tres?)\b", re.I)
+
+# Conversions sûres, vérifiées une à une. Tout ce qui n'est pas ici n'est PAS converti :
+# un vouvoiement résiduel se lit comme un ton un peu formel, une conjugaison ratée se lit
+# comme une faute. Entre les deux, le choix est vite fait.
+_TUTOIE_REGLES = [
+    (r"\bvous\s+pourrez\b", "tu pourras"), (r"\bvous\s+pouvez\b", "tu peux"),
+    (r"\bvous\s+devez\b", "tu dois"), (r"\bvous\s+devrez\b", "tu devras"),
+    (r"\bvous\s+avez\b", "tu as"), (r"\bvous\s+aurez\b", "tu auras"),
+    (r"\bvous\s+[êe]tes\b", "tu es"), (r"\bvous\s+serez\b", "tu seras"),
+    (r"\bvous\s+souhaitez\b", "tu souhaites"), (r"\bvous\s+voulez\b", "tu veux"),
+    (r"\bvous\s+visez\b", "tu vises"), (r"\bvous\s+cherchez\b", "tu cherches"),
+    (r"\bvous\s+permettra\b", "te permettra"), (r"\bvous\s+permettront\b", "te permettront"),
+    (r"\bvous\s+d[ée]marquer\b", "te démarquer"), (r"\bvous\s+former\b", "te former"),
+    (r"\bvous\s+lancer\b", "te lancer"), (r"\bvous\s+orienter\b", "t'orienter"),
+    (r"\bcommencez\b", "commence"), (r"\bprivil[ée]giez\b", "privilégie"),
+    (r"\bvisez\b", "vise"), (r"\bchoisissez\b", "choisis"), (r"\bpensez\b", "pense"),
+    (r"\bn'h[ée]sitez\s+pas\b", "n'hésite pas"), (r"\bgardez\b", "garde"),
+    (r"\bvotre\s+cv\b", "ton CV"), (r"\bvotre\s+profil\b", "ton profil"),
+    (r"\bvotre\s+parcours\b", "ton parcours"), (r"\bvotre\s+expertise\b", "ton expertise"),
+    (r"\bvotre\s+niveau\b", "ton niveau"), (r"\bvotre\s+dossier\b", "ton dossier"),
+    (r"\bvotre\s+candidature\b", "ta candidature"), (r"\bvotre\s+formation\b", "ta formation"),
+    (r"\bvos\s+(comp[ée]tences|chances|options|atouts|acquis|projets)\b", r"tes \1"),
+]
+
+
+def _tutoie(texte: str) -> str:
+    """Passe un texte au tutoiement — mais seulement si la conversion est COMPLÈTE.
+
+    Le bot tutoie partout ; une invite demandait déjà le tutoiement, mais une invite n'est
+    pas un garde-fou (constaté : « Commencez par… pour enrichir votre CV »). On convertit
+    donc dans le code, avec une liste de règles vérifiées. S'il reste du vouvoiement après
+    coup, on rend le texte D'ORIGINE : un ton formel se pardonne, une conjugaison cassée non.
+    """
+    t = texte or ""
+    if not _VOUS_RE.search(t):
+        return t
+    out = t
+    for motif, rempl in _TUTOIE_REGLES:
+        out = re.sub(motif, rempl, out, flags=re.I)
+    if _VOUS_RE.search(out):
+        logger.info("[ton] vouvoiement non converti, texte laissé tel quel")
+        return t
+    if t[:1].isupper() and out[:1].islower():
+        out = out[0].upper() + out[1:]      # « Commencez » ne doit pas devenir « commence »
+    return out
 
 
 def _refus_admin(session: dict) -> str:
@@ -1635,11 +1683,42 @@ def _offers_feedback_multi(text: str, session: dict) -> dict:
                 pending = []
     return res
 
+# Une suite implicite introduit rarement un NOUVEAU sujet. Ces mots, eux, en introduisent un :
+# s'ils sont là, c'est une vraie nouvelle recherche, pas une question sur la liste précédente.
+# Volontairement court. Les deux erreurs ne coûtent pas pareil : prendre une suite pour une
+# nouvelle recherche donne des résultats hors sujet présentés comme une réponse (constaté) ;
+# l'inverse laisse simplement l'orchestrateur trancher, avec la liste sous les yeux. On penche
+# donc du côté de la suite. « et pour les débutants ? » précise la liste, il ne la remplace pas.
+_NOUVEAU_SUJET_RE = re.compile(
+    r"\b(cherche|recherche|trouve|trouver|donne[- ]moi|envoie|montre|liste|autre\s+chose|"
+    r"plut[ôo]t|sinon|au\s+lieu|change|nouvelle\s+recherche)\b", re.I)
+
+
+def _suite_implicite(low: str, t: str, session: dict) -> bool:
+    """Question posée JUSTE APRÈS une liste, sans mot qui désigne la liste.
+
+    Cas réel : après cinq formations en hacking, « il y a des certificats à la fin ? ».
+    Aucun « ces », aucun « parmi », donc l'ancien détecteur ne voyait rien — et la question
+    partait comme REQUÊTE d'une nouvelle recherche. Résultat : des formations marketing.
+    La question portait évidemment sur la liste qui venait d'être affichée.
+    """
+    liste = session.get("last_liste") or {}
+    if not liste.get("titres"):
+        return False
+    if "?" not in (t or "") and not re.match(r"^\s*(et|donc|ok\s+mais|mais)\b", low or ""):
+        return False
+    if len((t or "").split()) > 14:          # une phrase longue réintroduit son propre sujet
+        return False
+    return not _NOUVEAU_SUJET_RE.search(low or "")
+
+
 def _refers_to_prior_list(low: str, session: dict) -> bool:
     """Vrai si le message est une QUESTION sur des opportunités déjà listées (portail/dernières offres),
     donc à traiter en conversation (ancré) et NON comme une nouvelle recherche web."""
     has_ctx = bool((session.get("last_portail") or {}).get("exemples")) or bool(session.get("last_offers"))
-    return has_ctx and bool(_REFER_PRIOR_RE.search(low or ""))
+    if has_ctx and _REFER_PRIOR_RE.search(low or ""):
+        return True
+    return _suite_implicite(low, low, session)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TABLE D'INTENTIONS (source de vérité unique) — routage NL DÉTERMINISTE des commandes
@@ -1695,7 +1774,14 @@ _NL_INTENTS = [
                 r"fais[ -]?moi\s+(un\s+)?cv\s+et\s+(une\s+)?lettre)\b", re.I),
      "/postuler", True,
      re.compile(r".*?(je\s+veux\s+postuler|postule[rz]?|postuler|candidate[rz]?|candidater|ma\s+candidature)\s*" + _PREP + r"?\s*", re.I),
-     re.compile(r"\bcomment\b|\bcherch\w+\b|\btrouve\w*\b|\bdes\s+offres?\b|\bune\s+offre\b", re.I)),
+     # Exclusions. « postuler » dans une subordonnée ne demande PAS de candidater :
+     # « est-ce qu'il reste des programmes au Canada auxquels je peux postuler ? » demande
+     # ce qui EXISTE. Vu en vrai : la phrase partait en /postuler avec une cible vide.
+     re.compile(r"\bcomment\b|\bcherch\w+\b|\btrouve\w*\b|\bdes\s+offres?\b|\bune\s+offre\b"
+                r"|\b(est[- ]ce\s+qu|y\s+a[- ]t[- ]il|il\s+reste|reste[- ]t[- ]il|quels?\s+sont|"
+                r"quelles?\s+sont|existe[- ]t[- ]il|il\s+y\s+a[- ]t[- ]il)\b"
+                r"|\b(auquel|auxquels?|[àa]\s+laquelle|auxquelles)\b"
+                r"|\b(encore|toujours)\s+(ouvert\w*|possible|dispo\w*)\b", re.I)),
 ]
 
 def _nl_intent_route(low: str, t: str) -> str:
@@ -1867,6 +1953,13 @@ def _free_text_to_command(low: str, t: str) -> str:
                  r"suis[- ]je\s+(eligible|éligible|admissible)|je\s+suis\s+(eligible|éligible|admissible)|"
                  r"mes\s+chances\s+(pour|de|d'))\b", low):
         return "/chances " + t
+    # « tout ce qui peut me faire voyager », « je veux partir d'ici » : une intention de mobilité
+    # internationale, sans aucun mot-clé d'emploi. N'avait aucune route.
+    if re.search(r"\b(me\s+faire\s+voyager|partir\s+(d'?ici|du\s+pays|[àa]\s+l'?[ée]tranger)|"
+                 r"quitter\s+(le\s+pays|le\s+b[ée]nin|ici)|aller\s+[àa]\s+l'?[ée]tranger|"
+                 r"m'?expatrier|expatriation|vivre\s+[àa]\s+l'?[ée]tranger|"
+                 r"(voyager|bouger)\s+(pour|et)\s+(travailler|[ée]tudier))\b", low):
+        return "/mobilite " + t
     if "campus france" in low or "études en france" in low or "etudes en france" in low:
         return "/campusfrance"
     if "canada" in low or "québec" in low or "quebec" in low:
@@ -3981,6 +4074,13 @@ def _conversation_context(session: dict) -> str:
     if _port.get("exemples"):
         lignes.append("- Opportunités listées sur le dernier portail analysé (c'est de CELLES-CI que « ça/ces bourses/ces offres » parle) : "
                       + " ; ".join(str(x) for x in _port["exemples"][:4]))
+    # Dernière liste affichée (formations, écoles…). Sans ce rappel, une question de suite
+    # comme « il y a des certificats à la fin ? » repartait en recherche sur la QUESTION.
+    _liste = session.get("last_liste") or {}
+    if _liste.get("titres"):
+        lignes.append(f"- Dernière liste affichée ({_liste.get('type', 'liste')} · sujet : {_liste.get('sujet', '?')}) — "
+                      "une question posée juste après porte sur CELLES-CI, pas sur un nouveau sujet : "
+                      + " ; ".join(str(x) for x in _liste["titres"][:5]))
     try:
         cands = (opp_store.list_candidatures(session.get("user_id")) or [])[:3]
         if cands:
@@ -5015,7 +5115,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if docs:
                 msg += "📎 *Documents à préparer :*\n" + "\n".join(f"• {_md_clean(d)}" for d in docs[:8]) + "\n\n"
             if r.get("conseil"):
-                msg += f"💡 {_md_clean(r['conseil'])}\n\n"
+                msg += f"💡 {_md_clean(_tutoie(r['conseil']))}\n\n"
             msg += "🌐 _Vérifie toujours les dates sur campusfrance.org._\n\n"
             msg += ("✍️ *Je t'accompagne pas à pas :*\n"
                     "• /ecoles <domaine> · trouver les bonnes écoles\n"
@@ -5215,7 +5315,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             if r.get("verdict"):
                 msg += f"\n{_md_clean(r['verdict'])}\n"
             if r.get("conseil"):
-                msg += f"💡 {_md_clean(r['conseil'])}\n"
+                msg += f"💡 {_md_clean(_tutoie(r['conseil']))}\n"
             msg += "\n▶️ /postuler <cible> (CV + lettre adaptés) · /formations <domaine> (combler les manques)."
             if used_credit:
                 msg += _credit_note(session, True)
@@ -6172,7 +6272,10 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                 for s in grounded[:6]) if grounded else "(pas de résultat web)"
             system = ("Tu es conseiller en développement de carrière. Recommande des formations/certifications RÉELLES "
                       "(Coursera, edX, OpenClassrooms, Google, AWS, Cisco, (ISC)²...) qui aident à se distinguer. "
-                      "Base-toi sur les sources web, garde les URL exactes. JSON uniquement.")
+                      "Base-toi sur les sources web, garde les URL exactes. "
+                      # Le « conseil » final partait en « vous » alors que tout le reste du bot tutoie.
+                      "TUTOIE toujours dans le champ \"conseil\" : « tu », « ton », jamais « vous » ni « votre ». "
+                      "Si la demande précise GRATUIT, ne propose que du gratuit. JSON uniquement.")
             prompt = f"""DOMAINE: {domaine}
 PROFIL: compétences={(profil.get('competences', {}).get('techniques', []))[:8]}
 SOURCES WEB:
@@ -6182,6 +6285,19 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
             r = await call_groq(system, prompt, temperature=0.2, max_tokens=1300)
             forms = r.get("formations", [])
             forms = sorted(forms, key=lambda f: 0 if "gratuit" in str(f.get("cout", "")).lower() else 1)
+            # Si la personne a demandé du GRATUIT, on ne lui propose pas du payant.
+            # Retour terrain : « une formation gratuite en hacking » renvoyait une certification Cisco payante.
+            if re.search(r"\bgratuit\w*\b|\bsans\s+payer\b|\bfree\b|\bpas\s+(cher|payant)\b", domaine.lower()):
+                _libres = [f for f in forms if "gratuit" in str(f.get("cout", "")).lower()]
+                if _libres:
+                    forms = _libres
+            # Mémoire de la liste : sans elle, « il y a des certificats à la fin ? » relançait une
+            # recherche avec la QUESTION comme requête, et renvoyait des formations sans rapport.
+            session["last_liste"] = {
+                "type": "formations", "sujet": domaine[:80],
+                "titres": [str(f.get("titre", ""))[:70] for f in forms[:5] if f.get("titre")],
+                "ts": now,
+            }
             msg = f"🎓 *Formations pour te distinguer · {_md_clean(domaine)[:40]}*\n━━━━━━━━━━━━━━━━━━\n\n"
             for i, f in enumerate(forms[:5], 1):
                 titre = _md_clean(f.get("titre", ""))[:60]
@@ -6202,7 +6318,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                     msg += f"   💬 {_md_clean(f.get('raison', ''))}\n"
                 msg += "\n"
             if r.get("conseil"):
-                msg += f"💡 {_md_clean(r['conseil'])}\n\n"
+                msg += f"💡 {_md_clean(_tutoie(r['conseil']))}\n\n"
             if not forms:
                 msg = f"Aucune formation trouvée pour « {_md_clean(domaine)} ». Précise un domaine : /formations data science"
             else:
