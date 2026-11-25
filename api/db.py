@@ -361,6 +361,36 @@ class OppStore:
         con.close()
         return [dict(zip(("ts", "uid", "canal", "kind", "etape", "text"), r)) for r in rows]
 
+    # ---- compteurs de routage ----
+    # En mémoire, ces compteurs mentaient deux fois : uvicorn tourne avec 2 workers, donc
+    # chacun ne voyait que la moitié du trafic et `/misses` affichait l'un ou l'autre au
+    # hasard ; et tout repartait à zéro à chaque déploiement. Un taux de compréhension qui
+    # dépend du worker qui répond ne vaut rien.
+    def _ensure_compteurs(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("CREATE TABLE IF NOT EXISTS compteurs (nom TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0)")
+        con.commit(); con.close()
+
+    def bump_counter(self, nom: str, n: int = 1) -> None:
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("INSERT INTO compteurs(nom, n) VALUES(?, ?) "
+                    "ON CONFLICT(nom) DO UPDATE SET n = n + excluded.n", (str(nom)[:40], int(n)))
+        con.commit(); con.close()
+
+    def get_counters(self) -> dict:
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT nom, n FROM compteurs").fetchall()
+        con.close()
+        return {r[0]: int(r[1]) for r in rows}
+
+    def reset_counters(self, noms=None) -> None:
+        con = sqlite3.connect(self._path, timeout=10)
+        if noms:
+            con.executemany("DELETE FROM compteurs WHERE nom = ?", [(str(x),) for x in noms])
+        else:
+            con.execute("DELETE FROM compteurs")
+        con.commit(); con.close()
+
     # ---- journal /contact ----
     def _ensure_contacts(self):
         con = sqlite3.connect(self._path, timeout=10)
@@ -940,6 +970,7 @@ opp_store._ensure_feedback()
 opp_store._ensure_contacts()
 opp_store._ensure_broadcasts()
 opp_store._ensure_misses()
+opp_store._ensure_compteurs()
 profile_store = ProfileStore()
 usage_store = UsageStore()
 premium_store = PremiumStore()
