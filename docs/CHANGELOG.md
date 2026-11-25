@@ -2,6 +2,16 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.14 — Programme testeurs : les retours entrent enfin dans le produit
+**Le constat** : le meilleur retour d'une testeuse (« ce que j'ai testé marche bien », « en fait ça facilite vraiment tout ! ») est arrivé dans le **WhatsApp personnel du propriétaire**, jamais dans `/retours`. Le propriétaire faisait donc la collecte à la main, et devenait le goulot d'étranglement. Trois causes : un testeur ne sait pas qu'il est testeur, le retour est à son initiative, et dire « ça marche pas » au bot ne comptait pas comme un retour.
+
+- **Palier `testeur`** : ni gratuit ni client. Même confort que le Premium (pas de quota, pas de filigrane) parce qu'on lui demande un service, et surtout **le bot sait qu'il en est un** — il peut donc lui demander un retour au bon moment, sur ce qu'il vient réellement de faire. `/gencodes testeur 60 10`.
+- **Un retour dit en français est entendu.** « ça marche pas », « j'ai pas compris », « c'est bizarre », « ça n'a rien à voir » : le bot l'enregistre, remercie, transmet — **avec la réponse qui précédait**, sans quoi « ça marche pas » ne dit pas ce qui ne marche pas. Puis il pose la seule question qui manque : « qu'est-ce que tu attendais à la place ? ». Une vraie demande qui contient les mêmes mots (« trouve une formation qui marche bien ») n'est pas confondue.
+- **`/mission`** : cinq tâches précises, cochées au fur et à mesure. « Teste comme un sadique » n'est pas une consigne ; personne ne sait par où commencer. La cinquième est la plus utile : *trouve une réponse à côté de la plaque*.
+- **👍/👎 d'un tap** après les formations et l'orientation, **réservés aux testeurs** — pour tout le monde ce serait un sondage permanent qui fatigue. Un 👎 déclenche la question « qu'est-ce qui n'allait pas ? », et la phrase suivante est captée comme retour.
+- **`/rapport`** : le bot écrit lui-même un fichier Markdown de tout ce que le terrain a appris, et te l'envoie. **Il l'écrit lui-même parce que les données sont dans sa base, sur le VPS — personne d'autre ne peut les lire.** Les messages sans route y sont déjà au format du jeu d'évaluation : zéro recopie. Automatique chaque soir et le dimanche via `scripts/nex-cron.sh rapport`, et **silencieux s'il n'y a rien à dire** : un rapport vide chaque soir finit par ne plus être ouvert.
+- **Rappel aux testeurs silencieux** (`rappel-testeurs`), avec une question *précise* tirée de ce qu'ils n'ont pas encore fait. Un « alors, ça donne quoi ? » ne reçoit que « ça va ».
+
 ## v4.13 — Quatre défauts trouvés dans une seule vraie conversation
 Première version entièrement tirée de messages réels plutôt que de cas imaginés. Une conversation WhatsApp de quatre minutes a montré plus que deux jours de relecture de code.
 
