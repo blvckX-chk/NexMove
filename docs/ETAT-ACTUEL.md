@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.15.0** · 26 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.16.0** · 26 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -46,8 +46,8 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **922**, exécutés en ~13 s (`python3 -m pytest tests -q`) |
-| Fichiers de test | 19, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, RGPD, sauvegarde, déploiement, pages légales…) |
+| Tests | **935**, exécutés en ~13 s (`python3 -m pytest tests -q`) |
+| Fichiers de test | 20, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
@@ -66,6 +66,22 @@ API      api-nexmove.blvckunlimited.space
 | Suivre le terrain | `/rapport` ou `/rapport semaine` → fichier `.md` envoyé sur Telegram. Automatique via `scripts/nex-cron.sh rapport` (crontab, voir l'en-tête du script). |
 | Recruter des testeurs | `/gencodes testeur 60 10` · le testeur tape `/mission` pour savoir quoi essayer |
 | En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
+
+## Sources d'opportunités
+18 sources dans `SOURCE_CATALOG` (`api/main.py`), plus Adzuna, Himalayas, The Muse, Arbeitnow,
+RemoteOK, Remotive, Jobicy et EURAXESS en API. Chaque entrée porte un `scope` — `local`,
+`intl` ou `both` — et `_sources_for_profile` écarte les sources 100 % internationales quand
+l'objectif déclaré est purement local.
+
+**Deux formats sont lus** : les flux RSS (`fetch_rss`) et, depuis la v4.16, les **pages de
+liste rendues par le serveur** (`fetch_html_listing`), parce que la plupart des sites d'emploi
+ouest-africains n'ont pas de flux. Une source HTML déclare `"kind": "html"` et un `"motif"`
+d'URL d'offre ; un test échoue si le motif manque.
+
+**Ce qu'on ne peut pas lire, et pourquoi** : les sites dont la liste est construite en
+JavaScript (`emploisbenin.bj`, `jobbenin.com` — vérifiés le 26/11/2026) n'exposent aucun lien
+d'offre dans leur HTML. Aucun lecteur côté serveur ne les voit. Ils ne sont **pas** déclarés :
+une source muette est pire qu'une source absente. Ils restent atteignables par la recherche web.
 
 ## Garde-fous déterministes (jamais confiés au modèle)
 Trois situations où une réponse improvisée coûterait trop cher. Toutes détectées par
