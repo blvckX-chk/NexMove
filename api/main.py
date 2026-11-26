@@ -4,7 +4,7 @@ from html.parser import HTMLParser
 import xml.etree.ElementTree as ET
 from urllib.parse import quote, urlparse, urljoin
 import ipaddress, socket
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta, date, time as dtime
 from typing import Optional, Any
 from collections import deque
 
@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.17.0"
+VERSION         = "4.18.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -948,6 +948,7 @@ _CMD_SUGGESTIONS = (
     "/budget", "/dossier", "/postuler", "/creercv", "/cv", "/simulation", "/chances",
     "/outils", "/traduire", "/compresser", "/fusionner", "/enpdf", "/extraire",
     "/premium", "/moncode", "/parrainage", "/retour", "/supprimer", "/version", "/id",
+    "/testeur", "/mission",
     "/admin", "/stats", "/codes", "/gencodes", "/annonces", "/misses", "/ia",
 )
 
@@ -995,6 +996,71 @@ def _user_tier(session: dict) -> str:
         except Exception:
             pass
     return "free"
+
+
+# ── Offre de lancement : tout est gratuit jusqu'au 1er mars, contre un retour ──
+# Décision du Propriétaire (26/11/2026) : les packs restent affichés et gardent leurs
+# prix — on n'efface pas le modèle économique — mais pendant le lancement tout est
+# accessible à qui accepte d'être testeur. Ce qu'on achète avec cette gratuité, ce
+# n'est pas du volume : c'est du retour de terrain, la seule chose qui a jamais trouvé
+# un défaut dans ce produit.
+#
+# L'échéance est une DATE, pas un drapeau à baisser à la main : le 1er mars, l'offre
+# s'arrête d'elle-même et les quotas gratuits reprennent, sans qu'une ligne change.
+# C'est la leçon du bandeau Campus France, appliquée au tarif.
+LANCEMENT_FIN = os.getenv("LANCEMENT_FIN", "2027-03-01")
+
+
+def _lancement_actif(today=None) -> bool:
+    """Vrai jusqu'au dernier jour inclus de l'offre de lancement."""
+    d = today or datetime.now(timezone.utc).date()
+    try:
+        return d <= date.fromisoformat(LANCEMENT_FIN)
+    except Exception:          # date mal saisie en variable d'environnement
+        return False           # on retombe sur le tarif normal, jamais sur du gratuit perpétuel
+
+
+def _lancement_jours(today=None) -> int:
+    """Jours restants (0 si c'est le dernier jour, négatif si l'offre est passée)."""
+    d = today or datetime.now(timezone.utc).date()
+    try:
+        return (date.fromisoformat(LANCEMENT_FIN) - d).days
+    except Exception:
+        return -1
+
+
+def _lancement_fin_fr() -> str:
+    try:
+        f = date.fromisoformat(LANCEMENT_FIN)
+        return f"{f.day} {_MOIS_FR[f.month - 1]} {f.year}"   # _MOIS_FR est défini plus bas, appel à l'exécution
+    except Exception:
+        return LANCEMENT_FIN
+
+
+def _rejoindre_testeur(session: dict) -> tuple[bool, str]:
+    """Inscrit la personne au programme testeur jusqu'à la fin de l'offre.
+
+    Renvoie (inscrit, raison). On n'écrase JAMAIS un abonnement payant qui va plus
+    loin que l'offre : quelqu'un qui a payé six mois de Pro ne doit pas se retrouver
+    « testeur jusqu'au 1er mars » pour avoir tapé une commande.
+    """
+    if not _lancement_actif():
+        return False, "fermee"
+    exp = session.get("premium_until")
+    if exp:
+        try:
+            if datetime.fromisoformat(exp).date() > date.fromisoformat(LANCEMENT_FIN):
+                return False, "deja_mieux"
+        except Exception:
+            pass
+    if session.get("premium_tier") == _TIER_TESTEUR:
+        return False, "deja_testeur"
+    # Fin de journée : être testeur « jusqu'au 1er mars » inclut le 1er mars.
+    session["premium_tier"] = _TIER_TESTEUR
+    session["premium_until"] = datetime.combine(
+        date.fromisoformat(LANCEMENT_FIN), dtime(23, 59, 59), tzinfo=timezone.utc).isoformat()
+    session["testeur_depuis"] = datetime.now(timezone.utc).isoformat()
+    return True, "ok"
 
 
 def _est_testeur(session: dict) -> bool:
@@ -2204,6 +2270,24 @@ def _free_text_to_command(low: str, t: str) -> str:
                  r"je\s+dois\s+payer|faut\s+payer|y\s+a\s+t[- ]il\s+un\s+abonnement|"
                  r"(vous|tu)\s+(prene?z|prends)\s+combien|combien\s+(vous|tu)\s+(prene?z|prends))\b", low):
         return "/offres"
+    # Accepter d'être testeur du programme de lancement.
+    #
+    # Deux pièges évités, tous deux constatés en écrivant les tests :
+    # 1. « j'accepte » / « d'accord » tout seul répond à trop d'autres choses — une étape
+    #    de questionnaire, les CGU, une proposition de rendez-vous. Le mot « testeur »
+    #    (ou « tester ») est donc exigé.
+    # 2. « testeur » est AUSSI un métier. « je veux être testeur de logiciels » est une
+    #    question d'orientation, et la première version de cette règle la détournait vers
+    #    l'inscription au programme — elle changeait le statut de quelqu'un qui parlait de
+    #    sa carrière. D'où l'exigence : rien derrière « testeur », ou alors une mention
+    #    explicite du produit. « comment devenir testeur ? » reste volontairement à
+    #    /orientation : sans précision, le métier est la lecture la plus courante.
+    if re.search(r"(je\s+(veux|voudrais|peux)|j'?aimerais|ok\s+pour|d'?accord\s+pour|"
+                 r"j'?accepte\s+(d'?être|d'?etre|detre|de)|je\s+suis\s+d'?accord\s+pour)"
+                 r"\s+(être\s+|etre\s+|devenir\s+)?test(eur|er)"
+                 r"(\s*[!?.…]*$|\s+(du\s+bot|le\s+bot|ce\s+bot|de\s+nexmove|nexmove|"
+                 r"chez\s+(toi|vous)|pour\s+(toi|vous|nexmove)|l'?appli|en\s+b[eê]ta|b[eê]ta))", low):
+        return "/testeur"
     if re.search(r"\b(quelle?\s+version|version\s+du\s+bot|tu\s+tournes?\s+en\s+quelle|"
                  r"tu\s+es\s+en\s+quelle\s+version)\b", low):
         return "/version"
@@ -3217,6 +3301,30 @@ _FR_MONTHS = {
     "jan": 1, "feb": 2, "fev": 2, "fév": 2, "apr": 4, "avr": 4, "jun": 6, "jul": 7,
     "jui": 6, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12, "déc": 12,
 }
+
+# ── Dates : ne jamais servir une information périmée ──────────────────────────
+# Défaut constaté le 26/11/2026 : quinze recherches web portaient « 2026 » écrit
+# en dur. Le 2 janvier 2027, /parcours, /visa, /canada, /logement et /ecoles
+# seraient allés chercher le calendrier de l'année précédente — sans lever
+# aucune erreur, sans qu'une ligne de log le dise. Une année écrite en dur dans
+# une requête n'est pas une faute de frappe : c'est une information périmée à
+# retardement, qui se déclenche toute seule au 1er janvier.
+
+def _annee_courante(today=None):
+    """L'année en cours. Pour tout ce qui se renouvelle par année civile :
+    frais de visa, coût de la vie, rondes d'Entrée express, barèmes."""
+    d = today or datetime.now(timezone.utc).date()
+    return str(d.year)
+
+
+def _annee_scolaire(today=None):
+    """L'année universitaire telle que les calendriers officiels l'écrivent :
+    « 2026 2027 ». Une campagne Campus France ouvre à l'automne et se ferme
+    l'été suivant : de septembre à décembre on vise l'année suivante, de
+    janvier à août celle qui est déjà en cours."""
+    d = today or datetime.now(timezone.utc).date()
+    return f"{d.year} {d.year + 1}" if d.month >= 9 else f"{d.year - 1} {d.year}"
+
 
 def _deadline_is_past(text, today):
     """Best-effort : renvoie True seulement si le texte contient une date clairement
@@ -5451,7 +5559,7 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
     if low.startswith("/campusfrance") or low.startswith("/campus"):
         try:
             grounded = await tavily_search(
-                "Campus France Études en France procédure calendrier 2026 2027 bourse Eiffel dossier étudiant international", 6)
+                f"Campus France Études en France procédure calendrier {_annee_scolaire()} bourse Eiffel dossier étudiant international", 6)
             profil = session.get("profil", {}) or {}
             comp = (profil.get("competences", {}).get("techniques", []))[:4]
             sources = "\n".join(
@@ -5599,7 +5707,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             try:
                 msg = await conseil_grounded(profil,
                     f"🏫 *Écoles & programmes · {_md_clean(domaine)}*",
-                    f"meilleures écoles universités programmes {domaine} {pays} admission candidature 2026 étudiant international",
+                    f"meilleures écoles universités programmes {domaine} {pays} admission candidature {_annee_scolaire()} étudiant international",
                     "Recommande 4 à 6 écoles/programmes RÉELS et ADAPTÉS au profil (niveau, domaine, budget/bourse), du plus accessible au plus sélectif, avec pour chacun comment et quand postuler.",
                     cta="Ensuite : /dossier <programme> (préparer le dossier) · /logement <ville> · /entretien.")
             except Exception as e:
@@ -5614,7 +5722,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         try:
             msg = await conseil_grounded(profil,
                 f"🏠 *Logement étudiant · {_md_clean(ville)}*",
-                f"logement étudiant {ville} CROUS résidence universitaire garant Visale plateforme fiable budget arnaque 2026",
+                f"logement étudiant {ville} CROUS résidence universitaire garant Visale plateforme fiable budget arnaque {_annee_courante()}",
                 "Explique concrètement comment trouver un logement étudiant abordable et ÉVITER LES ARNAQUES : CROUS/résidences, plateformes fiables, dispositif garant Visale, budget réaliste, pièces à préparer, délais.",
                 cta="🔎 Commence tôt, les logements partent vite. /entretien pour la suite.")
         except Exception as e:
@@ -5629,7 +5737,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         try:
             msg = await conseil_grounded(profil,
                 f"🎤 *Préparation entretien · {_md_clean(sujet)}*",
-                f"questions entretien {sujet} Campus France Institut Français entretien visa étudiant conseils réponses 2026",
+                f"questions entretien {sujet} Campus France Institut Français entretien visa étudiant conseils réponses {_annee_courante()}",
                 "Prépare l'utilisateur à l'entretien (Campus France/Institut Français et/ou entretien visa type Capago/VFS). Donne 5 à 7 QUESTIONS TYPES avec, pour chacune, une PISTE de réponse ADAPTÉE à son profil, plus les erreurs à éviter et la posture attendue (projet cohérent, financement, retour au pays).",
                 cta="Cible si besoin : /entretien visa Capago · /entretien Campus France.")
         except Exception as e:
@@ -5785,7 +5893,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
                                  f"appuie-toi dessus pour dire quelles catégories tirent en ce moment) :\n{rounds_txt}")
                 msg = await conseil_grounded(profil,
                     "🇨🇦 *Immigration Canada · voies adaptées à ton profil*",
-                    f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} 2026 conditions",
+                    f"immigration Canada IRCC permis d'études PGWP Entrée express catégories prioritaires rondes fondées catégories francophones santé métiers spécialisés STIM transports éducation agriculture PEQ Arrima Québec {prefs.get('objectif','')} {prefs.get('niveau','')} {_annee_courante()} conditions",
                     consigne,
                     cta="Ensuite : /dossier <programme canadien> · /entretien visa · /logement <ville>.")
                 if rounds_txt:
@@ -5998,7 +6106,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
         try:
             msg = await conseil_grounded(profil,
                 f"💶 *Budget & coût de la vie · {_md_clean(ville)}*",
-                f"coût de la vie étudiant {ville} loyer transport nourriture budget mensuel preuve de ressources visa 2026",
+                f"coût de la vie étudiant {ville} loyer transport nourriture budget mensuel preuve de ressources visa {_annee_courante()}",
                 "Donne un budget mensuel étudiant réaliste (loyer, nourriture, transport, santé, divers) en euros · et l'ordre de grandeur en FCFA · puis rappelle le montant de RESSOURCES à justifier pour le visa/Campus France si connu.",
                 cta="Ensuite : /eligibilite <programme> · /compresser (justificatifs).")
         except Exception as e:
@@ -6018,7 +6126,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             try:
                 msg = await conseil_grounded(profil,
                     f"🎯 *Éligibilité · {_md_clean(cible)}*",
-                    f"{cible} conditions éligibilité critères admission prérequis dossier requis 2026",
+                    f"{cible} conditions éligibilité critères admission prérequis dossier requis {_annee_scolaire()}",
                     "Compare HONNÊTEMENT le profil aux exigences réelles : dis s'il est éligible / limite / non éligible, liste précisément ce qui MANQUE et comment le combler. Pas de faux espoirs.",
                     cta="Prêt ? /dossier <cible> pour monter le dossier.")
             except Exception as e:
@@ -6060,7 +6168,7 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             try:
                 msg = await conseil_grounded(profil,
                     f"🌍 *{_md_clean(pays)} · études & immigration (selon ton profil)*",
-                    f"{pays} étudier travailler immigration étudiant permis visa bourse programme officiel procédure {(profil.get('preferences', {}) or {}).get('objectif','')} 2026",
+                    f"{pays} étudier travailler immigration étudiant permis visa bourse programme officiel procédure {(profil.get('preferences', {}) or {}).get('objectif','')} {_annee_courante()}",
                     f"Explique la ou les VOIES OFFICIELLES adaptées à CE profil pour {pays} (études : université + permis étudiant + preuve de fonds ; travail : permis/visa et programmes officiels). Étapes concrètes, conditions honnêtes, organismes RÉELS.",
                     cta="Ensuite : /ecoles · /budget <ville> · /dossier <programme> · /entretien.")
             except Exception as e:
@@ -6071,27 +6179,27 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
     # --- Procédures françaises PARALLÈLES à Campus France (grosse demande du terrain) ---
     _FR_PROCS = {
         "parcoursup":   ("🎓 *Parcoursup · 1ʳᵉ année Licence/BUT/BTS/CPGE en France*",
-                         "Parcoursup 2026 candidature calendrier étudiant international vœux formations sélectives non sélectives dossier",
+                         f"Parcoursup {_annee_scolaire()} candidature calendrier étudiant international vœux formations sélectives non sélectives dossier",
                          "Explique CLAIREMENT Parcoursup pour un étudiant international : qui est concerné (bac étranger), calendrier de la campagne EN COURS (inscription, vœux, réponses), types de formations, dossier (bulletins, lettre de motivation par vœu, projet), lien avec Études en France quand nécessaire.",
                          "Ensuite : /ecoles <domaine> · /dossier Parcoursup <formation> · /entretien."),
         "monmaster":    ("📘 *MonMaster · candidatures Master en France*",
-                         "MonMaster 2026 candidature master université France calendrier étudiant international dossier lettre projet",
+                         f"MonMaster {_annee_scolaire()} candidature master université France calendrier étudiant international dossier lettre projet",
                          "Explique la plateforme MonMaster pour candidater en M1 : calendrier RÉEL en cours, nombre de vœux, critères, différences avec Études en France (Campus France reste souvent obligatoire pour les étudiants hors UE), pièces à préparer.",
                          "Ensuite : /ecoles master <domaine> · /dossier MonMaster <mention> · /campusfrance."),
         "ecandidat":    ("🧾 *eCandidat · candidatures directes université (procédure parallèle)*",
-                         "eCandidat 2026 procédure université France candidature directe étudiant international dossier",
+                         f"eCandidat {_annee_scolaire()} procédure université France candidature directe étudiant international dossier",
                          "Explique eCandidat : quelles universités l'utilisent, quand cette voie remplace/complète Campus France (procédure blanche vs procédure Études en France), calendrier propre à chaque université, dossier type.",
                          "Ensuite : /ecoles <domaine> · /dossier eCandidat <université> · /campusfrance."),
         "dap":          ("📜 *DAP · Demande d'Admission Préalable (1ʳᵉ année licence hors UE)*",
-                         "DAP demande admission préalable Campus France 2026 calendrier hors UE licence université France dossier",
+                         f"DAP demande admission préalable Campus France {_annee_scolaire()} calendrier hors UE licence université France dossier",
                          "Explique la DAP (obligatoire pour candidater en L1 hors UE via Études en France) : qui est concerné, calendrier, épreuves de langue (TCF-DAP/DELF B2), pièces, différences avec Parcoursup.",
                          "Ensuite : /campusfrance · /dossier DAP · /entretien."),
         "visa":         ("🛂 *Visa étudiant France · phase consulaire (VFS/Capago)*",
-                         "visa étudiant France VFS Capago 2026 rendez-vous dépôt pièces preuves ressources OFII validation",
+                         f"visa étudiant France VFS Capago {_annee_courante()} rendez-vous dépôt pièces preuves ressources OFII validation",
                          "Détaille la phase CONSULAIRE APRÈS Campus France : prise de rendez-vous VFS/Capago, pièces à préparer, preuve de ressources (montant à jour), délais, retrait du visa, validation OFII à l'arrivée.",
                          "Ensuite : /budget <ville> · /logement <ville> · /entretien visa."),
         "recours":      ("⚖️ *Recours · refus Campus France ou refus de visa*",
-                         "recours refus Campus France refus visa étudiant France 2026 procédure appel commission délais",
+                         f"recours refus Campus France refus visa étudiant France {_annee_courante()} procédure appel commission délais",
                          "Explique HONNÊTEMENT les recours possibles : recours gracieux auprès de Campus France, recours contentieux, refus de visa (Commission de recours contre les décisions de refus de visa d'entrée en France), délais impératifs, pièces à joindre. Reste réaliste sur les chances.",
                          "En parallèle : /procedure Belgique · /procedure Allemagne · /canada."),
     }
@@ -6796,14 +6904,61 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/testeur") or low.startswith("/tester"):
+        inscrit, raison = _rejoindre_testeur(session)
+        if inscrit:
+            msg = ("✅ *C'est noté : tu es testeur.*\n━━━━━━━━━━━━━━━━━━\n\n"
+                   f"Tout est ouvert pour toi jusqu'au *{_lancement_fin_fr()}* : CV, /guide, "
+                   "/simulation, /chances, veille — sans quota, sans filigrane.\n\n"
+                   "*Ce que j'attends, et rien de plus* : quand quelque chose ne marche pas, "
+                   "ou que ma réponse te paraît à côté, dis-le-moi sur le moment. Deux mots "
+                   "suffisent — « ça marche pas », « j'ai pas compris ». Pas de formulaire.\n\n"
+                   "Tape */mission* pour voir ce qui est neuf et mérite un essai.\n"
+                   "_Tu peux arrêter quand tu veux : /contact._")
+        elif raison == "deja_testeur":
+            n = _lancement_jours()
+            msg = ("🧪 *Tu es déjà testeur* — rien à refaire.\n\n"
+                   f"Accès complet jusqu'au *{_lancement_fin_fr()}*"
+                   + (f" (encore {n} jour{'s' if n > 1 else ''}).\n\n" if n > 0 else ".\n\n")
+                   + "Du neuf à essayer ? Tape */mission*.")
+        elif raison == "deja_mieux":
+            msg = ("👍 Ton abonnement actuel va *plus loin* que l'offre de lancement : je n'y touche pas.\n\n"
+                   "Tes retours restent les bienvenus — dis-moi simplement quand quelque chose coince.")
+        else:
+            msg = ("⏳ *L'offre de lancement est terminée* "
+                   f"(elle courait jusqu'au {_lancement_fin_fr()}).\n\n"
+                   "Les formules et les packs de crédits sont dans /offres. "
+                   "Et tes retours comptent toujours : /retour.")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/offres") or low.startswith("/tarifs") or low.startswith("/abonnement"):
-        msg = ("💎 *Passe au niveau supérieur*\n\n"
-               "*Premium* · CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
-               "*Pro* · tout Premium + sources premium, alertes illimitées, relecture.\n\n"
-               "🎟️ *Pas envie d'abonnement ?* Prends un *pack de crédits* : 1 crédit = 1 action (CV, score, "
-               "simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas → /credits.\n\n"
-               "👉 Récupère ton code, puis tape */premium TON-CODE* (abonnement) ou */credits TON-CODE* (pack).\n"
-               "Besoin d'aide ? Tape /contact.")
+        # Les formules restent affichées pendant le lancement : on annonce une gratuité
+        # DATÉE, pas un produit gratuit. Après le 1er mars, ce bloc disparaît tout seul.
+        formules = ("*Premium* · CV, /guide et /simulation *illimités*, veille quotidienne, 10 alertes.\n"
+                    "*Pro* · tout Premium + sources premium, alertes illimitées, relecture.\n\n"
+                    "🎟️ *Pas envie d'abonnement ?* Prends un *pack de crédits* : 1 crédit = 1 action (CV, score, "
+                    "simulation…) quand ta limite gratuite est atteinte. Ils ne périment pas → /credits.\n\n"
+                    "👉 Récupère ton code, puis tape */premium TON-CODE* (abonnement) ou */credits TON-CODE* (pack).\n"
+                    "Besoin d'aide ? Tape /contact.")
+        if _lancement_actif() and _est_testeur(session):
+            n = _lancement_jours()
+            msg = (f"🧪 *Tu es testeur : tout est déjà ouvert* jusqu'au *{_lancement_fin_fr()}*"
+                   + (f" (encore {n} jour{'s' if n > 1 else ''})" if n > 0 else "") + ".\n\n"
+                   "Rien à acheter d'ici là. Pour information, voici ce qui s'appliquera ensuite :\n\n"
+                   + formules)
+        elif _lancement_actif():
+            msg = (f"🎁 *Tout est gratuit jusqu'au {_lancement_fin_fr()}*\n━━━━━━━━━━━━━━━━━━\n\n"
+                   "Pas de version bridée, pas de carte bancaire : CV, /guide, /simulation, "
+                   "/chances, veille — *tout*, sans quota.\n\n"
+                   "*En échange, une seule chose* : accepter d'être testeur. Quand quelque chose "
+                   "ne marche pas ou que ma réponse tombe à côté, tu me le dis sur le moment. "
+                   "Deux mots suffisent. Pas de formulaire, pas de réunion.\n\n"
+                   "👉 Tape */testeur* pour accepter.\n\n"
+                   f"_Après le {_lancement_fin_fr()}, les quotas gratuits reprennent et "
+                   "voici ce qui s'applique :_\n\n" + formules)
+        else:
+            msg = "💎 *Passe au niveau supérieur*\n\n" + formules
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -7417,7 +7572,7 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
                    "Ex : /dossier Master Université de Montréal")
         else:
             try:
-                grounded = await tavily_search(f"{cible_desc} documents requis dossier candidature éligibilité deadline 2026", 6)
+                grounded = await tavily_search(f"{cible_desc} documents requis dossier candidature éligibilité deadline {_annee_scolaire()}", 6)
                 sources = "\n".join(
                     f"- {s.get('title','')} | {s.get('url','')} | {(s.get('content','') or '')[:200]}"
                     for s in grounded[:6]) if grounded else "(pas de résultat web)"
