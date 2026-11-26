@@ -38,8 +38,31 @@ Opportunités : `/veille` · `/mobilite <pays ou domaine>` · `/formations <doma
 Démarches : `/campusfrance` · `/parcours` · `/canada` · `/procedure <pays>` · `/visa` · `/budget <ville>`
 Candidater : `/dossier <cible>` · `/postuler <cible>` · `/creercv` · `/simulation` · `/chances <cible>`
 Outils & compte : `/outils` · `/traduire <texte>` · `/profil` · `/status` · `/supprimer`
+Testeurs : `/mission` (les 5 choses à essayer)
 
-`/aide` affiche le menu complet. Le langage naturel fonctionne aussi bien que les commandes.
+`/aide` affiche le menu complet. Le langage naturel fonctionne aussi bien que les commandes —
+y compris pour dire que quelque chose ne va pas : « ça marche pas », « j'ai pas compris »
+sont entendus comme des retours, pas comme des demandes.
+
+Le test d'orientation se fait aussi **sans ouvrir le bot**, sur
+[nexmove.blvckunlimited.space/orientation.html](https://nexmove.blvckunlimited.space/orientation.html)
+(6 questions, sans inscription, rien d'enregistré).
+
+### Côté administrateur
+`/admin` donne le sommaire. L'essentiel :
+
+| Commande | À quoi ça sert |
+|---|---|
+| `/rapport` · `/rapport semaine` | rapport terrain en fichier `.md` (compréhension, ratés, retours) |
+| `/misses` | taux de compréhension + messages sans route |
+| `/misses jeu` | ces messages au format de `tests/jeu_routage.jsonl`, prêts à coller |
+| `/misses reset` | repartir d'une fenêtre de mesure propre |
+| `/codes` · `/codes valides` | les codes générés, et ceux encore libres |
+| `/gencodes testeur 60 10` | créer des accès testeur |
+| `/stats` · `/ia` · `/retours` | traction · cascade IA · retours reçus |
+
+Les tâches automatiques (rapport du soir, relance des testeurs) se posent en crontab :
+voir l'en-tête de `scripts/nex-cron.sh`.
 
 ## Développement
 

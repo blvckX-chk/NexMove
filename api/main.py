@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.14.0"
+VERSION         = "4.15.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -117,14 +117,17 @@ ADMIN_CHAT_ID       = os.getenv("ADMIN_CHAT_ID", "")   # chat_id Telegram princi
 # Admins multiples (Telegram chat_id ET/OU numéro WhatsApp) : ADMIN_CHAT_ID + ADMIN_IDS (séparés par virgules).
 _ADMIN_IDS = {x.strip() for x in (ADMIN_CHAT_ID + "," + os.getenv("ADMIN_IDS", "")).split(",") if x.strip()}
 # Quotas journaliers des utilisateurs GRATUITS pour les options coûteuses (l'admin est illimité).
-FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "8"))       # analyses de CV / jour
-FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "12"))   # captures guidées (vision) / jour
-FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour (gratuit)
-FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "20"))   # messages vocaux transcrits / jour (gratuit)
-FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "2"))    # /chances (score d'admissibilité) / jour (gratuit)
-FREE_APPLY_DAILY    = int(os.getenv("FREE_APPLY_DAILY", "3"))    # /commentpostuler (guide de candidature) / jour (gratuit)
-FREE_LINK_DAILY     = int(os.getenv("FREE_LINK_DAILY", "4"))     # audit d'un lien d'opportunité / jour (gratuit)
-FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "6"))   # recherches /veille + /mobilite / jour (gratuit) — borne le coût Tavily/LLM
+# Quotas gratuits — DIVISÉS PAR DEUX le 26/11/2026 (décision du Propriétaire) : règle appliquée
+# « moitié, arrondie à l'inférieur, jamais en dessous de 1 ». Chacun reste surchargeable par
+# variable d'environnement, sans redéploiement de l'image.
+FREE_CV_DAILY       = int(os.getenv("FREE_CV_DAILY", "4"))       # analyses de CV / jour (était 8)
+FREE_GUIDE_DAILY    = int(os.getenv("FREE_GUIDE_DAILY", "6"))    # captures guidées (vision) / jour (était 12)
+FREE_SIM_DAILY      = int(os.getenv("FREE_SIM_DAILY", "1"))      # simulations d'entretien / jour — déjà au plancher
+FREE_VOICE_DAILY    = int(os.getenv("FREE_VOICE_DAILY", "10"))   # messages vocaux transcrits / jour (était 20)
+FREE_SCORE_DAILY    = int(os.getenv("FREE_SCORE_DAILY", "1"))    # /chances (score d'admissibilité) / jour (était 2)
+FREE_APPLY_DAILY    = int(os.getenv("FREE_APPLY_DAILY", "1"))    # /commentpostuler / jour (était 3)
+FREE_LINK_DAILY     = int(os.getenv("FREE_LINK_DAILY", "2"))     # audit d'un lien d'opportunité / jour (était 4)
+FREE_VEILLE_DAILY   = int(os.getenv("FREE_VEILLE_DAILY", "3"))   # recherches /veille + /mobilite / jour (était 6) — borne le coût Tavily/LLM
 # Onboarding CONVERSATIONNEL piloté par le LLM (comprend n'importe quel scénario) ; 0 = ancien questionnaire scripté.
 LLM_ONBOARDING      = os.getenv("LLM_ONBOARDING", "1").strip().lower() in ("1", "true", "yes", "on", "oui")
 VEILLE_COOLDOWN_SEC = int(os.getenv("VEILLE_COOLDOWN_SEC", "8")) # anti-spam en rafale d'une recherche à l'autre
@@ -1560,7 +1563,7 @@ _NOM_STOP = {"c'est", "cest", "est", "le", "la", "mon", "ma", "ton", "ta", "votr
              "corriger", "mets", "mettre", "ajoute", "ajouter", "pas", "bon", "mauvais", "erreur", "vrai"}
 
 def _extract_name_correction(t: str) -> str:
-    """Capte une correction de nom en langage libre : « Mensah ketsia le nom », « le nom c'est X »,
+    """Capte une correction de nom en langage libre : « Dupont marie le nom », « le nom c'est X »,
     « je m'appelle X ». Retourne le nom propre, ou "" si ce n'en est pas une."""
     txt = (t or "").strip()
     if not txt or txt.startswith("/") or len(txt) > 80 or "?" in txt:
@@ -2118,11 +2121,14 @@ def _free_text_to_command(low: str, t: str) -> str:
         return "/dap"
     # Mots ENTIERS (v3.96) : « visage » n'est pas un visa ; « je m'appelle », « rappelle-moi »,
     # « je refuse » ne sont pas des recours.
-    if re.search(r"\b(visas?|capago|vfs|consulat|consulaire)\b", low):
-        return "/visa"
+    # LE RECOURS PASSE AVANT LE VISA. « on m'a refusé le visa » renvoyait l'information
+    # générale sur les visas à quelqu'un qui venait d'essuyer un refus — le pire moment pour
+    # lui réexpliquer comment déposer. Le refus est plus spécifique : il gagne.
     if re.search(r"\brecours\b|\brefus\b|\bcontest\w*|\bfaire\s+appel\b|\b(visa|admission|demande|dossier)\b[^.?!]{0,20}\brefus\w*"
                  r"|\brefus\w*\b[^.?!]{0,25}\b(visa|admission|demande|dossier|inscription)\b|\b(on\s+m'?a|j'?ai\s+(été|ete))\s+refus\w*", low):
         return "/recours"
+    if re.search(r"\b(visas?|capago|vfs|consulat|consulaire)\b", low):
+        return "/visa"
     if low in ("version", "quelle version", "c'est quelle version", "numero de version") or "version du bot" in low:
         return "/version"
     # BOÎTE À OUTILS : les gens décrivent le PROBLÈME, pas l'outil (« mon pdf est trop lourd »,
@@ -4929,6 +4935,22 @@ async def process_text_message(session: dict, text: str) -> tuple[str, dict]:
         session.pop("orient_test", None)
         session["sim_mode"] = False
         msg = ori.MESSAGE_DETRESSE
+        _push(session, "user", t); _push(session, "assistant", msg)
+        session["derniere_activite"] = now
+        return msg, session
+
+    # ARNAQUE : quelqu'un décrit qu'on lui demande de l'argent contre un visa ou un emploi,
+    # ou envisage une voie illégale. C'est le moment où un conseiller sert le plus — et le
+    # seul où se taire peut coûter cher. Déterministe, prioritaire, jamais confié à l'IA.
+    if not low.startswith("/") and ori.detecte_arnaque(t):
+        _leave_flow(session)
+        session.pop("orient_test", None)
+        session["sim_mode"] = False
+        msg = ori.MESSAGE_ARNAQUE
+        try:
+            opp_store.bump_counter("alerte_arnaque")
+        except Exception:
+            pass
         _push(session, "user", t); _push(session, "assistant", msg)
         session["derniere_activite"] = now
         return msg, session
@@ -7792,7 +7814,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
 
     # CV_RECU, réponse NON positive (v3.59) : beaucoup ne cliquent pas « ✅ C'est correct ».
     # On capte en langage libre : (1) un refus (« c'est faux », « non ») -> on propose de corriger /
-    # recommencer sans perdre le profil ; (2) une correction de champ (« nom : Ketsia », « mon email… »)
+    # recommencer sans perdre le profil ; (2) une correction de champ (« nom : Marie », « mon email… »)
     # -> on l'applique et on re-propose. Sinon on NE bloque PAS (créer cv / postuler… restent routés).
     if etape == "CV_RECU":
         # Correction du NOM en langage libre (« X le nom », « mon nom c'est X ») : avant, l'IA
@@ -7819,7 +7841,7 @@ JSON: {{"documents":["..."],"a_traduire":["..."],"deadline":"","deadline_iso":""
         if _is_explicit_negative(t):
             _push(session, "user", t)
             msg = ("Pas de souci 🙂 Deux options :\n"
-                   "• *Corrige directement* le champ faux : ex. « nom : Ketsia Mensah », « email : toi@mail.com ».\n"
+                   "• *Corrige directement* le champ faux : ex. « nom : ton nom exact », « email : toi@mail.com ».\n"
                    "• Ou *renvoie ton CV* (ou tape /creercv) pour tout refaire.")
             session["_kb_options"] = [("🔄 Recommencer", "onb:reset")]
             _push(session, "assistant", msg); session["derniere_activite"] = now
@@ -9873,7 +9895,8 @@ Document: {cv_text[:6000]}"""
         await deliver_text(session, message, with_menu=True)
         return
     message += ("\nCes informations sont-elles correctes ? Confirme ci-dessous 👇 (ou réponds *Oui*).\n"
-                "_Une erreur ? Écris-la simplement, ex. « mon nom c'est Ketsia Mensah »._")
+                "_Une erreur ? Écris-la simplement, ex. « mon nom s'écrit autrement » "
+                "ou « je suis en licence 3, pas en master »._")
     session["etape"] = "CV_RECU"
     _push(session, "assistant", message)
     session_manager.set(session.get("user_id"), session)
