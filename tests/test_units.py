@@ -1932,7 +1932,7 @@ def test_creercv_routage_deterministe():
 def test_profile_is_usable():
     assert not main._profile_is_usable({})
     assert not main._profile_is_usable({"cv_parsed": True, "profil": {"identite": {"nom": "Candidat"}}})
-    assert main._profile_is_usable({"cv_parsed": True, "profil": {"identite": {"nom": "Ketsia Mensah"}}})
+    assert main._profile_is_usable({"cv_parsed": True, "profil": {"identite": {"nom": "Marie Dupont"}}})
     assert main._profile_is_usable({"cv_parsed": True, "profil": {"formation": [{"diplome": "Bac"}]}})
 
 def test_creercv_ne_repart_pas_de_zero_si_cv_analyse(monkeypatch):
@@ -1941,7 +1941,7 @@ def test_creercv_ne_repart_pas_de_zero_si_cv_analyse(monkeypatch):
         return True
     monkeypatch.setattr(main, "_deliver_cv", fake_deliver_cv)
     s = {"user_id": "kc", "chat_id": "1", "historique": [], "onboarding_complete": True, "etape": "CV_RECU",
-         "cv_parsed": True, "profil": {"identite": {"nom": "Ketsia Mensah"},
+         "cv_parsed": True, "profil": {"identite": {"nom": "Marie Dupont"},
                                        "competences": {"techniques": ["Couture"]}}}
     msg, s = _run(main.process_text_message(s, "/creercv"))
     assert s.get("etape") != "CVBUILD" and "déjà analysé" in msg
@@ -1982,17 +1982,17 @@ def test_link_followup_langage_naturel():
     assert main._link_followup("mes chances", {}) == ""
 
 def test_cv_recu_correction_champ_en_langage_libre():
-    # À CV_RECU, « nom : Ketsia Mensah » corrige sans perdre le profil (pas besoin de bouton).
+    # À CV_RECU, « nom : Marie Dupont » corrige sans perdre le profil (pas besoin de bouton).
     s = {"user_id": "r", "chat_id": "1", "historique": [], "onboarding_complete": False, "etape": "CV_RECU",
          "cv_parsed": True, "profil": {"identite": {"nom": "Mauvais Nom"}, "preferences": {}}}
-    msg, s = _run(main.process_text_message(s, "nom : Ketsia Mensah"))
-    assert s.get("etape") == "CV_RECU" and s["profil"]["identite"]["nom"].lower().startswith("ketsia")
+    msg, s = _run(main.process_text_message(s, "nom : Marie Dupont"))
+    assert s.get("etape") == "CV_RECU" and s["profil"]["identite"]["nom"].lower().startswith("marie")
 
 def test_cv_recu_refus_ne_perd_pas_le_profil():
     s = {"user_id": "r2", "chat_id": "1", "historique": [], "onboarding_complete": False, "etape": "CV_RECU",
-         "cv_parsed": True, "profil": {"identite": {"nom": "Ketsia"}, "preferences": {}}}
+         "cv_parsed": True, "profil": {"identite": {"nom": "Marie"}, "preferences": {}}}
     msg, s = _run(main.process_text_message(s, "c'est faux"))
-    assert "Corrige" in msg and s.get("profil", {}).get("identite", {}).get("nom") == "Ketsia"
+    assert "Corrige" in msg and s.get("profil", {}).get("identite", {}).get("nom") == "Marie"
 
 def test_reupload_meme_cv_pas_de_reanalyse(monkeypatch):
     sent = {}
@@ -2000,9 +2000,9 @@ def test_reupload_meme_cv_pas_de_reanalyse(monkeypatch):
         sent["msg"] = text; return True
     monkeypatch.setattr(main, "deliver_text", fake_deliver)
     data = b"%PDF-xxxxxxxxxx"
-    s = {"user_id": "u", "chat_id": "1", "cv_parsed": True, "last_cv_filename": "cv de ketsia.pdf",
-         "last_cv_size": len(data), "profil": {"identite": {"nom": "Ketsia"}}}
-    _run(main.process_cv(s, data, filename="CV de Ketsia.pdf"))
+    s = {"user_id": "u", "chat_id": "1", "cv_parsed": True, "last_cv_filename": "cv de marie.pdf",
+         "last_cv_size": len(data), "profil": {"identite": {"nom": "Marie"}}}
+    _run(main.process_cv(s, data, filename="CV de Marie.pdf"))
     assert "déjà" in sent.get("msg", "")
 
 def test_reupload_qc_nom_generique_ou_taille_differente(monkeypatch):
@@ -2046,15 +2046,15 @@ def test_reupload_cv_different_preserve_preferences(monkeypatch):
         sent["msg"] = text; return True
     monkeypatch.setattr(main, "deliver_text", cap)
     monkeypatch.setattr(main, "_quota_or_credit", lambda *a, **k: (True, False, 5))
-    monkeypatch.setattr(main, "extract_text_pdf", lambda *a, **k: "Ketsia Mensah, styliste modéliste, licence en mode, compétences couture, coupe, montage et moulage sur mannequin, expérience en atelier.")
+    monkeypatch.setattr(main, "extract_text_pdf", lambda *a, **k: "Marie Dupont, styliste modéliste, licence en mode, compétences couture, coupe, montage et moulage sur mannequin, expérience en atelier.")
     # On patche la structuration du profil (désormais via le consensus multi-modèles).
     async def fake_consensus(system, user, **k):
-        return {"est_cv": True, "identite": {"nom": "Ketsia Mensah"},
+        return {"est_cv": True, "identite": {"nom": "Marie Dupont"},
                 "formation": [{"diplome": "Licence mode"}], "competences": {"techniques": ["Couture"]},
                 "preferences": {"objectif": "etudier"}, "bilan": {"forces": ["Créativité"]}}
     monkeypatch.setattr(main, "build_profile_consensus", fake_consensus)
     s = {"user_id": "up1", "chat_id": "1", "onboarding_complete": True, "etape": "ACTIF", "cv_parsed": True,
-         "historique": [], "profil": {"identite": {"nom": "Ketsia"},
+         "historique": [], "profil": {"identite": {"nom": "Marie"},
                                        "preferences": {"objectif": "travailler", "mots_cles": "stylisme"}}}
     _run(main.process_cv(s, b"%PDF-nouveau-cv-different", filename="CV v2.pdf"))
     # Préférences conservées, pas de retour à l'onboarding.
@@ -4398,9 +4398,9 @@ def test_clean_formations_vs_name_v388():
     assert out[0]["etablissement"] == "" and out[1]["etablissement"] == "Univ"
 
 def test_extract_name_correction_v388():
-    assert main._extract_name_correction("Mensah ketsia le nom") == "Mensah Ketsia"
+    assert main._extract_name_correction("Dupont marie le nom") == "Dupont Marie"
     assert main._extract_name_correction("Le nom c'est AXA") == "AXA"
-    assert main._extract_name_correction("je m'appelle ketsia mensah") == "Ketsia Mensah"
+    assert main._extract_name_correction("je m'appelle marie dupont") == "Marie Dupont"
     for s in ("c'est quoi le nom ?", "corrige le nom", "Créer un nouveau", "le nom de l'entreprise"):
         assert main._extract_name_correction(s) == ""
 
@@ -4412,7 +4412,7 @@ def test_wants_create_cv_v388():
     assert not main._wants_create_cv("créer un compte", sess)
 
 def test_norm_md_double_asterisques_v388():
-    assert main._norm_md("ton nom est **Ketsia**. Tape **/creercv**") == "ton nom est *Ketsia*. Tape */creercv*"
+    assert main._norm_md("ton nom est **Marie**. Tape **/creercv**") == "ton nom est *Marie*. Tape */creercv*"
 
 def test_split_message_ne_tronque_plus_v388():
     import channels
@@ -4457,7 +4457,7 @@ def test_doc_owner_v391():
 
 def test_cvbuild_plausible_v391():
     P = main._cvbuild_plausible
-    assert P("nom", "Ketsia Mensah") and not P("nom", "Conseils pour améliorer le CV de manière générale")
+    assert P("nom", "Marie Dupont") and not P("nom", "Conseils pour améliorer le CV de manière générale")
     assert P("formation", "Licence 3 SPI, ENSIATE, 2026") and not P("formation", "Il est sur le CV envoyé")
     assert P("experience", "aucune") and P("experience", "Aide-comptable chez Sobebra, 2023")
     assert not P("competences", "Je veux les codes valide")

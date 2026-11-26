@@ -140,3 +140,42 @@ def test_pas_de_lien_interne_casse():
             if not (p.parent / cible).resolve().exists():
                 casses.append(f"{p.name} -> {cible}")
     assert not casses, f"liens cassés : {casses}"
+
+
+def test_les_commandes_admin_importantes_sont_documentees():
+    """Le garde ne vérifiait que le NUMÉRO de version, pas le contenu.
+
+    Résultat constaté le 26/11/2026 : `/rapport`, `/mission`, `/misses jeu` et `/misses reset`
+    existaient dans le code depuis plusieurs versions sans apparaître nulle part dans la
+    documentation. Une page de référence qui ne mentionne pas ce qui existe est pire qu'absente :
+    on la croit complète.
+    """
+    code = (API / "main.py").read_text(encoding="utf-8")
+    etat = ETAT.read_text(encoding="utf-8")
+    readme = (RACINE / "README.md").read_text(encoding="utf-8")
+    manquantes = []
+    for cmd in ("/admin", "/rapport", "/mission", "/misses", "/stats", "/codes", "/gencodes", "/ia"):
+        if f'"{cmd}' not in code and f"({cmd}" not in code:
+            continue                       # la commande n'existe pas (encore) : rien à documenter
+        if cmd not in etat and cmd not in readme:
+            manquantes.append(cmd)
+    assert not manquantes, (
+        f"commandes présentes dans le code mais dans aucune doc : {manquantes}. "
+        "Ajoute-les à docs/ETAT-ACTUEL.md ou au README.")
+
+
+def test_les_quotas_annonces_sont_ceux_du_code():
+    """Un quota faux dans la doc se découvre quand un utilisateur est bloqué sans comprendre."""
+    code = (API / "main.py").read_text(encoding="utf-8")
+    etat = ETAT.read_text(encoding="utf-8")
+    ecarts = []
+    for var in ("FREE_CV_DAILY", "FREE_VEILLE_DAILY", "FREE_GUIDE_DAILY", "FREE_VOICE_DAILY",
+                "FREE_LINK_DAILY", "FREE_SCORE_DAILY", "FREE_APPLY_DAILY", "FREE_SIM_DAILY"):
+        m = re.search(rf'{var}\s*=\s*int\(os\.getenv\("{var}",\s*"(\d+)"\)\)', code)
+        if not m or var not in etat:
+            continue
+        reel = m.group(1)
+        ligne = next((l for l in etat.splitlines() if var in l), "")
+        assert re.search(rf"\|\s*{reel}\s*\|", ligne), \
+            f"{var} vaut {reel} dans le code — la doc dit autre chose : « {ligne.strip()[:80]} »"
+    assert not ecarts, ecarts

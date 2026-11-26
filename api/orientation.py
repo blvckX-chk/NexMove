@@ -69,6 +69,12 @@ _ORIENT_PATTERNS = [
     r"\b(je\s+veux|j'?aimerais|je\s+voudrais|envie\s+d')\s*(entreprendre|creer\s+(mon|ma|une)\s+(entreprise|boite|business|startup)|me\s+lancer\s+a\s+mon\s+compte|lancer\s+mon\s+(business|activite))",
     # contrainte financière sur les études
     r"\bpas\s+(les\s+)?moyens\b[^.?!]{0,40}\b(etudes|universite|fac|ecole|formation|etudier)",
+    r"\b(pas|n'?ont\s+pas|j'?ai\s+pas)\s+(les\s+)?moyens\b|\bpas\s+assez\s+d'?argent\s+pour\s+(les\s+)?(etudes|ecole|fac)",
+    # le diplôme qui ne mène nulle part : c'est une question de réorientation, pas de recherche
+    r"\b(licence|master|bts|dut|diplome|doctorat|cap)\b[^.?!]{0,50}\b(depuis\s+\d+\s+ans?|"
+    r"ne\s+sert\s+(a\s+)?rien|sert\s+a\s+rien|trouve\s+(rien|pas)|ne\s+trouve\s+rien|sans\s+emploi|"
+    r"au\s+chomage|rien\s+trouve)",
+    r"\bmon\s+diplome\b[^.?!]{0,30}\b(inutile|sert\s+a\s+rien|vaut\s+rien)",
 ]
 _ORIENT_RE = re.compile("|".join(f"(?:{p})" for p in _ORIENT_PATTERNS))
 
@@ -314,6 +320,69 @@ def detecte_detresse(text: str) -> bool:
     if _DETRESSE_FAUX.search(low):
         return False
     return bool(_DETRESSE_RE.search(low))
+
+
+# ── Arnaque : la protection la plus utile de tout le produit ───────────────────────────────
+# Dans ce marché, l'escroquerie à l'avance de frais est partout : « paie 50 000 F et je te
+# garantis le visa », « frais de dossier pour une offre au Canada », « mon contact à
+# l'ambassade ». Un conseiller qui parle de départ à l'étranger et qui se tait quand on lui
+# décrit une arnaque échoue au moment où il sert le plus. Déterministe, jamais confié à l'IA.
+
+_ARG = r"(?:\d[\d\s.,]{2,}\s*(?:f\s*cfa|fcfa|francs?|f\b|euros?|€|\$)|\d+\s*(?:mille|million\w*)|de\s+l'?argent|une\s+somme|des\s+frais)"
+_PROMESSE = r"(?:visa|emploi|travail|job|contrat|billet|bourse|place|admission|passeport|dossier|papiers?)"
+
+_ARNAQUE_RE = re.compile(
+    # On me demande de payer pour obtenir quelque chose
+    # « me demande » suffit, quel que soit le sujet : « on », « il », « un gars », « le monsieur ».
+    rf"\b(?:me\s+(?:demande\w*|reclame\w*|exige\w*)|ils?\s+demandent|"
+    rf"je\s+dois\s+(?:payer|verser|envoyer)|faut\s+(?:payer|verser)|il\s+faut\s+donner)\b"
+    rf"[^.?!]{{0,60}}{_ARG}"
+    rf"|{_ARG}[^.?!]{{0,60}}\b(?:pour\s+(?:avoir|obtenir|le|la|un|une|mon|ma)\s*{_PROMESSE}|"
+    rf"pour\s+(?:que|m'?)\s*\w*\s*(?:aide|arrange|fasse))"
+    # Garanties impossibles
+    rf"|\b{_PROMESSE}\s+(?:garanti\w*|assure\w*|100\s*%|sans\s+(?:entretien|dossier|refus))"
+    rf"|\b(?:garanti\w*|assure\w*)\s+(?:a\s+)?100\s*%"
+    # Le piston qui se paie
+    rf"|\b(?:mon|son|un)\s+(?:contact|ami|gars|type|monsieur)\s+(?:a|de|dans)\s+l'?(?:ambassade|immigration|consulat)"
+    rf"|\bquelqu'?un\s+(?:qui\s+)?(?:peut|pourrait)\s+(?:arranger|faire\s+passer|debloquer)\b"
+    # Voies illégales
+    rf"|\b(?:faux|fausse)\s+(?:papiers?|visa|passeport|diplome|attestation|contrat)"
+    rf"|\bacheter\s+(?:un|le|mon)\s+(?:visa|diplome|passeport|contrat)"
+    rf"|\bpasser\s+par\s+(?:la\s+)?(?:brousse|mer|libye|desert)\b")
+
+# Ce qui ressemble mais n'est PAS une arnaque : les frais officiels existent vraiment.
+_ARNAQUE_FAUX = re.compile(
+    r"\b(?:campus\s*france|frais\s+de\s+(?:scolarite|inscription|concours|visa\s+officiel)|"
+    r"tls\s*contact|vfs|capago|timbre\s+fiscal|caution\s+du\s+logement|loyer)\b")
+
+
+def detecte_arnaque(text: str) -> bool:
+    """Signal qu'on décrit une escroquerie ou une voie illégale. Haute précision assumée."""
+    low = _fold(text)
+    if _ARNAQUE_FAUX.search(low):
+        return False
+    return bool(_ARNAQUE_RE.search(low))
+
+
+# On ne fait pas la morale et on ne dramatise pas : on donne LA règle qui protège, et on
+# propose la suite légale. Quelqu'un qui envisage ça n'est pas naïf — il est pressé.
+MESSAGE_ARNAQUE = (
+    "⚠️ *Attends, là il faut que je te dise quelque chose.*\n\n"
+    "Ce que tu décris ressemble à une arnaque, et elles sont nombreuses ici. La règle, "
+    "elle est simple et elle ne souffre aucune exception :\n\n"
+    "🔒 *Un vrai employeur, une vraie école, une vraie ambassade ne te demandent JAMAIS "
+    "d'argent pour t'obtenir un emploi, un visa ou une admission.*\n\n"
+    "Les seuls frais qui existent vraiment se paient *au guichet officiel* (Campus France, "
+    "TLS/VFS/Capago, l'université elle-même), avec un reçu à ton nom, jamais à un "
+    "intermédiaire, jamais par Mobile Money à un particulier.\n\n"
+    "Les signes qui ne trompent pas : on te *garantit* le résultat · on te presse · on te "
+    "demande de payer avant tout document · ton interlocuteur n'a ni adresse ni structure "
+    "vérifiable.\n\n"
+    "Et pour un départ par la route ou la mer : des gens y meurent chaque semaine. Il existe "
+    "des voies légales plus lentes, et elles arrivent au bout.\n\n"
+    "👉 Dis-moi ce que tu cherches vraiment — travailler, étudier, partir — et je te montre "
+    "le chemin officiel, gratuit ou à coût réel."
+)
 
 
 # Message d'accueil : chaleureux, sans dramatiser, sans jouer au thérapeute, et SANS

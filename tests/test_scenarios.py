@@ -223,8 +223,8 @@ def test_scn_reference_au_cv_analyse_sort_du_questionnaire(monkeypatch):
 
 def test_scn_questionnaire_ne_piege_plus(monkeypatch):
     s = _sess(channel="telegram", etape="CVBUILD", cvbuild_step=0, cvbuild_data={})
-    msg, s = _run(main.process_text_message(s, "Ketsia Mensah"))          # vrai nom -> accepté
-    assert s["cvbuild_data"].get("nom") == "Ketsia Mensah" and s["cvbuild_step"] == 1
+    msg, s = _run(main.process_text_message(s, "Marie Dupont"))          # vrai nom -> accepté
+    assert s["cvbuild_data"].get("nom") == "Marie Dupont" and s["cvbuild_step"] == 1
     msg, s = _run(main.process_text_message(s, "Il est sur le CV envoyé"))   # pas un diplôme
     assert "formation" not in s["cvbuild_data"] and s["etape"] == "CVBUILD"
     assert "pas sûr" in msg

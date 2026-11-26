@@ -2,6 +2,14 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.15 — Le nom d'une vraie utilisatrice dans le dépôt public, et l'arnaque enfin nommée
+- **Vie privée, le plus grave** : le bot disait à **tous** ses utilisateurs « Une erreur ? Écris-la simplement, ex. « mon nom c'est *prénom nom* » » — avec le nom d'une **vraie utilisatrice**. Le dépôt est public, et le nom y était depuis la **v3.59** : personne ne l'avait vu parce que personne ne cherchait. Retiré de partout (code, tests, journal). Les exemples n'utilisent plus de nom de personne du tout : « ton nom exact » dit la même chose sans risque. Un test interdit désormais la *forme* — un prénom et un nom accolés dans un exemple — sans avoir à lister qui que ce soit.
+- **Arnaque : le trou le plus grave du produit, et il était béant.** Dans ce marché, l'escroquerie à l'avance de frais est partout (« paie 150 000 F et je te garantis le visa », « mon contact à l'ambassade »). Le bot n'avait **aucune** détection. Un conseiller qui parle de départ à l'étranger et se tait là échoue au moment où il sert le plus. Détection déterministe, jamais confiée au modèle, prioritaire sur tous les flux guidés — y compris les voies illégales (faux papiers, passage par la Libye ou la mer). Le message énonce **la** règle qui protège, nomme les guichets officiels, puis propose la voie légale. Les frais légitimes (Campus France, TLS/VFS, scolarité, loyer, caution) ne déclenchent rien : crier au loup les rendrait suspects. **18 cas réels vérifiés, 0 faux positif.**
+- **Un refus de visa part maintenant sur `/recours`**, pas sur l'information générale des visas. « on m'a refusé le visa France » tombait sur `/visa` parce que ce test passait en premier — le pire moment pour réexpliquer à quelqu'un comment déposer.
+- **Le diplôme qui ne mène nulle part** (« une licence depuis 3 ans et je ne trouve rien ») et **la contrainte d'argent** (« mes parents n'ont pas les moyens ») sont reconnus comme des questions d'orientation. Ils n'avaient aucune route.
+- **Quotas gratuits divisés par deux** (décision du Propriétaire) : CV 8→4, recherches 6→3, vision 12→6, vocaux 20→10, liens 4→2, `/chances` 2→1, `/commentpostuler` 3→1. Règle appliquée : moitié arrondie à l'inférieur, jamais sous 1. Tous surchargeables par variable d'environnement.
+- **Documentation rattrapée, et le garde-fou renforcé** : il ne vérifiait que le *numéro de version*. `/rapport`, `/mission`, `/misses jeu` et `/misses reset` existaient depuis plusieurs versions sans apparaître nulle part. Deux tests de plus : toute commande admin présente dans le code doit être documentée, et les quotas annoncés doivent être ceux du code.
+
 ## v4.14 — Programme testeurs : les retours entrent enfin dans le produit
 **Le constat** : le meilleur retour d'une testeuse (« ce que j'ai testé marche bien », « en fait ça facilite vraiment tout ! ») est arrivé dans le **WhatsApp personnel du propriétaire**, jamais dans `/retours`. Le propriétaire faisait donc la collecte à la main, et devenait le goulot d'étranglement. Trois causes : un testeur ne sait pas qu'il est testeur, le retour est à son initiative, et dire « ça marche pas » au bot ne comptait pas comme un retour.
 
@@ -375,12 +383,12 @@ Retour terrain Telegram : un conseiller envoie le CV d'une candidate (« pour qu
 
 ## v3.59 — Liens propres dans le digest + 3 angles « ils ne cliquent pas »
 - **Liens en clair dans les offres du jour (capture Telegram).** Le digest quotidien affichait l'URL technique complète (`adzuna.fr/land/ad/…?se=…&v=…`). Désormais il réutilise `_offer_link` : **lien masqué cliquable** « 👉 Voir l'offre » sur Telegram/Messenger, lien court maison sur WhatsApp. Idem `/formations` et le récap d'offres post-CV. Garde-fou anti-Markdown cassé.
-- **Angle A — confirmation CV sans bouton.** À l'écran « CV analysé », taper « c'est faux » ou « nom : Ketsia Mensah » (au lieu de cliquer) **corrige le champ** ou propose de recommencer, **sans perdre le profil**.
+- **Angle A — confirmation CV sans bouton.** À l'écran « CV analysé », taper « c'est faux » ou « nom : Marie Dupont » (au lieu de cliquer) **corrige le champ** ou propose de recommencer, **sans perdre le profil**.
 - **Angle B — boutons de lien en langage naturel.** Après l'analyse d'un lien, « comment postuler », « mes chances », « suivre cette bourse » tapés en clair déclenchent la bonne action sur la cible mémorisée.
 - **Angle C — re-upload du même CV.** Renvoyer le **même fichier** déjà analysé ne relance plus l'analyse (ni le quota ni la boucle « donne-moi tes infos ») : le bot dit qu'il l'a déjà et propose `/cv`, `/postuler` ou un CV *différent*.
 
 ## v3.58 — Création de CV cohérente + « ils ne cliquent pas les boutons »
-- **Bug capture WhatsApp (Ketsia).** CV analysé avec succès, puis « Créercv » → le bot **repartait de zéro** et redemandait nom/parcours/expériences (boucle). Corrigé :
+- **Bug capture WhatsApp (remonté par une testeuse).** CV analysé avec succès, puis « Créercv » → le bot **repartait de zéro** et redemandait nom/parcours/expériences (boucle). Corrigé :
   - `/creercv` **détecte un CV déjà analysé** (`_profile_is_usable`) et **génère directement** depuis le profil, avec boutons *Version graphique · Repartir de zéro · Postuler* (au lieu du questionnaire vierge).
   - **« Créercv » / « créer mon CV » / « faire mon CV » routés de façon DÉTERMINISTE** vers `/creercv` (avant : ça dépendait du LLM, qui répondait vaguement « utilise /creercv »). Les enchaînements (« … puis crée un cv ») restent gérés par l'orchestrateur.
 - **Malformation d'affichage « • · ESDAM »** : une formation sans diplôme laissait un séparateur `·` orphelin. Le récap n'assemble plus que les morceaux présents (`_render_formation_recap`).

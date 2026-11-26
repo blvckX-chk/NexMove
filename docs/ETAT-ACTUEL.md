@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.14.0** · 25 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.15.0** · 26 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -46,8 +46,8 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **871**, exécutés en ~13 s (`python3 -m pytest tests -q`) |
-| Fichiers de test | 16, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, RGPD, sauvegarde, déploiement, pages légales…) |
+| Tests | **922**, exécutés en ~13 s (`python3 -m pytest tests -q`) |
+| Fichiers de test | 19, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
@@ -62,7 +62,51 @@ API      api-nexmove.blvckunlimited.space
 | Restaurer | `./scripts/restore.sh` |
 | Secrets | `.env` du dossier de déploiement, **jamais dans le dépôt** — voir [SECURITE.md](SECURITE.md) |
 | Surveiller | Message Telegram au démarrage (alerte si un secret manque) · `/ia` en admin et `/api/admin/llm` : qui répond, latence, bascules |
+| Mesurer la compréhension | `/misses` (taux + messages sans route) · `/misses jeu` (au format du jeu d'évaluation) · `/misses reset` (fenêtre propre) |
+| Suivre le terrain | `/rapport` ou `/rapport semaine` → fichier `.md` envoyé sur Telegram. Automatique via `scripts/nex-cron.sh rapport` (crontab, voir l'en-tête du script). |
+| Recruter des testeurs | `/gencodes testeur 60 10` · le testeur tape `/mission` pour savoir quoi essayer |
 | En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
+
+## Garde-fous déterministes (jamais confiés au modèle)
+Trois situations où une réponse improvisée coûterait trop cher. Toutes détectées par
+expression régulière dans `api/orientation.py`, testées, et placées **avant** tous les flux
+guidés — un questionnaire en cours ne retient jamais quelqu'un dans l'une de ces situations.
+
+| Situation | Ce que fait le bot |
+|---|---|
+| **Arnaque** (« paie et je te garantis le visa », voie illégale) | Énonce la règle : un vrai employeur, une vraie école, une vraie ambassade ne demandent **jamais** d'argent. Nomme les guichets officiels, puis propose la voie légale. |
+| **Détresse** (souffrance profonde) | Accueille, dit qu'il n'est pas la bonne personne, oriente vers un humain de confiance, et reste disponible. |
+| **Refus de visa ou d'admission** | Part sur `/recours`, pas sur l'information générale — le pire moment pour réexpliquer comment déposer. |
+
+Les frais légitimes (Campus France, TLS/VFS/Capago, scolarité, loyer, caution) ne déclenchent
+rien : crier au loup les rendrait suspects.
+
+## Programme testeurs
+Le palier **testeur** n'est ni gratuit ni payant : même confort que le Premium (pas de quota,
+pas de filigrane), mais surtout **le bot sait qu'il parle à un testeur** et peut lui demander
+un retour au bon moment.
+
+Un retour n'a pas besoin de commande : « ça marche pas », « j'ai pas compris », « c'est bizarre »
+sont enregistrés, transmis à l'admin **avec la réponse qui précédait**, et comptés dans `/rapport`.
+C'est la correction d'un défaut constaté : les meilleurs retours arrivaient dans le WhatsApp
+personnel du propriétaire et n'entraient jamais dans le produit.
+
+## Quotas gratuits (par jour)
+Divisés par deux le 26/11/2026. Chacun est surchargeable par variable d'environnement.
+
+| Action | Gratuit | Variable |
+|---|---|---|
+| Analyse de CV | 4 | `FREE_CV_DAILY` |
+| Recherches `/veille` + `/mobilite` | 3 | `FREE_VEILLE_DAILY` |
+| Captures guidées (vision) | 6 | `FREE_GUIDE_DAILY` |
+| Messages vocaux | 10 | `FREE_VOICE_DAILY` |
+| Audit d'un lien | 2 | `FREE_LINK_DAILY` |
+| `/chances` | 1 | `FREE_SCORE_DAILY` |
+| `/commentpostuler` | 1 | `FREE_APPLY_DAILY` |
+| Simulation d'entretien | 1 | `FREE_SIM_DAILY` |
+
+Admin, testeurs et abonnés : aucun quota. Au-delà de la limite gratuite, un **crédit** peut
+être consommé à la place.
 
 ## Ce qui est connu et non réglé
 - `main.py` reste un monolithe de ~11 700 lignes : extraction progressive vers des modules purs
