@@ -391,6 +391,128 @@ class OppStore:
             con.execute("DELETE FROM compteurs")
         con.commit(); con.close()
 
+    # ---- bannières de la vitrine ----
+    #
+    # Une file de programmes datés, de pays différents. Celui « à la une » y reste
+    # JUSQU'À SON EXPIRATION, puis le suivant prend la place — décision du Propriétaire
+    # du 26/11/2026. D'où le drapeau `vedette` en base plutôt qu'un calcul à la volée :
+    # sans mémoire, un programme ajouté entre-temps avec une échéance plus proche
+    # volerait la une à celui en cours, et la vitrine changerait de sujet sans raison
+    # visible pour quelqu'un qui revient.
+    #
+    # Règle d'or : rien n'entre ici sans une `fin` (date limite réelle) et une `url`
+    # (source vérifiable). Un bandeau est une affirmation publique ; une date approximative
+    # y fait plus de dégâts qu'une absence de bandeau.
+    def _ensure_bannieres(self):
+        con = sqlite3.connect(self._path, timeout=10)
+        con.execute("""CREATE TABLE IF NOT EXISTS bannieres (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pays TEXT NOT NULL, titre TEXT NOT NULL, texte TEXT NOT NULL,
+            url TEXT NOT NULL UNIQUE, debut TEXT NOT NULL, fin TEXT NOT NULL,
+            vedette INTEGER DEFAULT 0, retiree INTEGER DEFAULT 0,
+            origine TEXT DEFAULT 'cron', created_at TEXT)""")
+        con.commit(); con.close()
+
+    def banniere_add(self, pays: str, titre: str, texte: str, url: str,
+                     debut: str, fin: str, origine: str = "cron") -> int:
+        """Ajoute un programme à la file. Renvoie son id, ou 0 si l'URL est déjà connue
+        (l'unicité par URL évite qu'un cron quotidien empile dix fois le même programme)."""
+        if not (pays and titre and texte and url and debut and fin):
+            return 0
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            cur = con.execute(
+                "INSERT INTO bannieres(pays,titre,texte,url,debut,fin,origine,created_at) "
+                "VALUES(?,?,?,?,?,?,?,?)",
+                (str(pays)[:60], str(titre)[:200], str(texte)[:400], str(url)[:500],
+                 str(debut)[:10], str(fin)[:10], str(origine)[:20],
+                 datetime.now(timezone.utc).isoformat()))
+            con.commit()
+            return int(cur.lastrowid or 0)
+        except sqlite3.IntegrityError:
+            return 0
+        finally:
+            con.close()
+
+    def banniere_liste(self, inclure_retirees: bool = False) -> list:
+        con = sqlite3.connect(self._path, timeout=10)
+        q = ("SELECT id,pays,titre,texte,url,debut,fin,vedette,retiree,origine "
+             "FROM bannieres")
+        if not inclure_retirees:
+            q += " WHERE retiree = 0"
+        q += " ORDER BY fin ASC"
+        rows = con.execute(q).fetchall()
+        con.close()
+        return [{"id": r[0], "pays": r[1], "titre": r[2], "texte": r[3], "url": r[4],
+                 "debut": r[5], "fin": r[6], "vedette": bool(r[7]), "retiree": bool(r[8]),
+                 "origine": r[9]} for r in rows]
+
+    def banniere_vedette(self, aujourdhui: str) -> dict:
+        """Le programme à afficher aujourd'hui, ou {} s'il n'y en a aucun.
+
+        La vedette en cours est conservée tant que sa fenêtre est ouverte. Quand elle
+        expire, on prend parmi les ouvertes celle dont l'échéance est la plus proche, en
+        **évitant le pays de la vedette sortante** quand un autre pays est disponible :
+        le Propriétaire veut des programmes de pays différents, et deux bandeaux français
+        de suite donneraient l'impression d'un outil qui ne connaît que la France.
+        """
+        con = sqlite3.connect(self._path, timeout=10)
+        try:
+            cur = con.execute(
+                "SELECT id,pays,titre,texte,url,debut,fin FROM bannieres "
+                "WHERE retiree = 0 AND vedette = 1 AND debut <= ? AND fin >= ? LIMIT 1",
+                (aujourdhui, aujourdhui))
+            row = cur.fetchone()
+            if row:
+                return {"id": row[0], "pays": row[1], "titre": row[2], "texte": row[3],
+                        "url": row[4], "debut": row[5], "fin": row[6]}
+            # La vedette a expiré (ou il n'y en avait pas) : on passe à la suivante.
+            sortant = con.execute(
+                "SELECT pays FROM bannieres WHERE vedette = 1 LIMIT 1").fetchone()
+            pays_sortant = (sortant[0] if sortant else "") or ""
+            ouvertes = con.execute(
+                "SELECT id,pays,titre,texte,url,debut,fin FROM bannieres "
+                "WHERE retiree = 0 AND debut <= ? AND fin >= ? ORDER BY fin ASC",
+                (aujourdhui, aujourdhui)).fetchall()
+            if not ouvertes:
+                con.execute("UPDATE bannieres SET vedette = 0 WHERE vedette = 1")
+                con.commit()
+                return {}
+            autre_pays = [r for r in ouvertes if (r[1] or "") != pays_sortant]
+            choix = (autre_pays or ouvertes)[0]
+            con.execute("UPDATE bannieres SET vedette = 0 WHERE vedette = 1")
+            con.execute("UPDATE bannieres SET vedette = 1 WHERE id = ?", (choix[0],))
+            con.commit()
+            return {"id": choix[0], "pays": choix[1], "titre": choix[2], "texte": choix[3],
+                    "url": choix[4], "debut": choix[5], "fin": choix[6]}
+        finally:
+            con.close()
+
+    def banniere_retirer(self, bid: int) -> bool:
+        """Retire sans supprimer : on garde la trace de ce qui a été affiché publiquement."""
+        con = sqlite3.connect(self._path, timeout=10)
+        cur = con.execute("UPDATE bannieres SET retiree = 1, vedette = 0 WHERE id = ?", (int(bid),))
+        con.commit(); con.close()
+        return bool(cur.rowcount)
+
+    def banniere_pays_en_file(self, aujourdhui: str) -> list:
+        """Les pays déjà présents dans la file et non expirés — pour que le cron cherche
+        AILLEURS plutôt que d'empiler cinq programmes du même pays."""
+        con = sqlite3.connect(self._path, timeout=10)
+        rows = con.execute("SELECT DISTINCT pays FROM bannieres "
+                           "WHERE retiree = 0 AND fin >= ?", (aujourdhui,)).fetchall()
+        con.close()
+        return [r[0] for r in rows if r[0]]
+
+    def banniere_purge(self, avant: str) -> int:
+        """Marque retirées les bannières expirées depuis longtemps (hygiène, pas affichage :
+        l'expiration est déjà gérée par la fenêtre)."""
+        con = sqlite3.connect(self._path, timeout=10)
+        cur = con.execute("UPDATE bannieres SET retiree = 1, vedette = 0 "
+                          "WHERE retiree = 0 AND fin < ?", (str(avant)[:10],))
+        con.commit(); con.close()
+        return int(cur.rowcount or 0)
+
     # ---- journal /contact ----
     def _ensure_contacts(self):
         con = sqlite3.connect(self._path, timeout=10)
@@ -971,6 +1093,7 @@ opp_store._ensure_contacts()
 opp_store._ensure_broadcasts()
 opp_store._ensure_misses()
 opp_store._ensure_compteurs()
+opp_store._ensure_bannieres()
 profile_store = ProfileStore()
 usage_store = UsageStore()
 premium_store = PremiumStore()

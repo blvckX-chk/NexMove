@@ -2,6 +2,27 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.19 — Bannières multi-pays, rotation par cron
+**Le contexte, qui explique tout le reste.** La campagne de décembre est **passive** : décision du Propriétaire du 26/11/2026. Le raisonnement est juste — on ne demande pas à quelqu'un de confier un dossier Campus France à un outil qui n'a encore rien prouvé, et aucune personne n'est passée par NexMove jusqu'ici sans accompagnement direct. Pas de communication active, donc. Ceux qui arrivent sur le site voient les bandeaux et s'en servent s'ils veulent.
+
+**Conséquence directe : le bandeau devient la seule surface d'acquisition.** La seule chose qui travaille quand on ne parle pas. Un bandeau faux coûterait alors deux fois — il rate une candidature, et il brûle le peu de confiance qu'on cherche à construire.
+
+D'où une file de programmes datés, de **pays différents**. Celui à la une y reste **jusqu'à son expiration**, puis le suivant prend la place.
+
+- **Table `bannieres`** : pays, titre, phrase affichée, URL source, fenêtre, drapeau `vedette`. Unicité par URL, pour qu'un cron quotidien n'empile pas dix fois le même programme.
+- **`GET /api/banniere`** (public, sans clé) : le bandeau du jour, ou `{}` quand rien n'est ouvert. **`POST /api/banniere/refresh`** (cron) : complète la file avec des programmes de pays *absents* de la file. `scripts/nex-cron.sh banniere`, lundi et jeudi.
+- **`/banniere`** en admin : voir la file et l'état de chaque entrée, en ajouter une à la main (`/banniere ajouter Pays | Titre | URL | AAAA-MM-JJ`), en retirer une. La saisie manuelle existe parce que le Propriétaire peut vérifier une source mieux qu'un cron.
+
+**Le modèle n'écrit jamais la phrase affichée.** Il extrait quatre champs — pays, titre, URL, date limite — et la phrase est assemblée par le code. La date montrée au visiteur est donc *par construction* celle qui est en base. C'est l'invariant central de la version, et il est testé sur quatre dates : faire rédiger le bandeau au modèle reviendrait à publier de la prose non vérifiée, avec une date dedans, sur une page publique.
+
+**Une URL absente des résultats de recherche est rejetée.** C'est la garde anti-invention la plus efficace qu'on ait trouvée : un modèle qui invente une source invente une URL qui ne figure nulle part. S'y ajoute un plancher de dix jours — une échéance plus proche ne laisse pas le temps de monter un dossier, et la montrer ferait plus de mal que de bien.
+
+**Pourquoi le drapeau `vedette` est en base** et non recalculé à chaque appel : sans mémoire du choix, un programme ajouté entre-temps avec une échéance plus proche volerait la une à celui en cours, et la vitrine changerait de sujet sans raison visible pour quelqu'un qui revient. Quand la vedette expire, la suivante est choisie parmi les ouvertes, **en évitant le pays de la sortante** quand un autre est disponible : deux bandeaux français de suite donneraient l'impression d'un outil qui ne connaît que la France. La variété reste une préférence, pas une condition — un bandeau du même pays vaut mieux que pas de bandeau.
+
+**Rotation des pays par jour de l'année, pas au hasard** : deux passages le même jour cherchent les mêmes pays, donc le second ne redépense rien, les jours suivants explorent ailleurs, et un test peut prédire le résultat.
+
+**Côté vitrine** : le repli officiel (liste `CAMPAGNES`, relevé Campus France) s'affiche tout de suite, sans attendre le réseau — une page qui attend une requête pour montrer son bandeau ne le montre pas sur une connexion lente. Si l'API répond ensuite, elle remplace. Vérifié au navigateur sur cinq chemins : API injoignable (le repli reste), API qui répond (remplacement), `{}` (repli), fenêtre périmée venue de l'API (**refusée une seconde fois dans le navigateur**), et tentative d'injection HTML (rendue en texte littéral — le texte de l'API entre par `textContent`, et il est déjà échappé côté serveur).
+
 ## v4.18 — Le système sait quel jour on est · offre de lancement datée
 **Le raisonnement.** Une information datée qui ne porte pas sa date devient fausse toute seule : pas d'erreur, pas de log, personne pour s'en apercevoir. C'est le pire type de défaut, parce qu'il s'aggrave en silence — et ici il coûte une candidature à quelqu'un.
 

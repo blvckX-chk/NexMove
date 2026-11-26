@@ -908,26 +908,57 @@
     var annonce = document.getElementById('annonce');
     if(annonce){
       var hui = isoLocal(new Date());
-      var camp = choisirCampagne(CAMPAGNES, hui);
-      // Le choix de masquer suit la CAMPAGNE : avoir fermé le bandeau Campus France
-      // en novembre ne doit pas cacher celui de Parcoursup en janvier.
-      var masquee = false;
-      try{ masquee = camp && localStorage.getItem('nex-annonce-vu') === camp.id; }catch(e){}
-      if(camp && !masquee){
-        var n = joursRestants(hui, camp.au);
-        // « Nouveau » serait faux sur une campagne ouverte depuis des semaines.
-        var pill = camp.pill || 'Ouvert';
-        if(n <= 0) pill = 'Dernier jour';
-        else if(n <= 10) pill = 'Plus que ' + n + (n > 1 ? ' jours' : ' jour');
-        document.getElementById('annoncePill').textContent = pill;
-        document.getElementById('annonceTxt').innerHTML = camp.txt;
+      var campActive = null;
+
+      /* Pastille : « Ouvert », ou un compte à rebours quand l'échéance approche.
+         Dix jours, parce qu'en dessous l'urgence est réelle et au-dessus elle est fausse. */
+      function pastille(finIso, defaut){
+        var n = joursRestants(hui, finIso);
+        if(n <= 0) return 'Dernier jour';
+        if(n <= 10) return 'Plus que ' + n + (n > 1 ? ' jours' : ' jour');
+        return defaut || 'Ouvert';
+      }
+
+      function afficher(id, finIso, defautPill, texte, estHtml){
+        // Avoir fermé un bandeau ne doit pas cacher le suivant : la mémoire du masquage
+        // porte sur CETTE campagne, pas sur le bandeau en général.
+        try{ if(localStorage.getItem('nex-annonce-vu') === id) return false; }catch(e){}
+        document.getElementById('annoncePill').textContent = pastille(finIso, defautPill);
+        var cible = document.getElementById('annonceTxt');
+        // Le texte venant de l'API est assemblé côté serveur depuis un titre de page web :
+        // il entre par textContent, jamais par innerHTML.
+        if(estHtml){ cible.innerHTML = texte; } else { cible.textContent = texte; }
         annonce.hidden = false;
         annonce.classList.remove('is-hidden');
+        campActive = id;
+        return true;
       }
+
+      /* Deux sources, dans cet ordre de confiance :
+         1. l'API (`/api/banniere`) — la file de programmes de pays différents, tenue par
+            le cron et par l'admin. C'est elle qui fait foi quand elle répond ;
+         2. la liste CAMPAGNES ci-dessus — repli hors ligne, relevé officiel Campus France.
+         Le repli s'affiche TOUT DE SUITE, sans attendre le réseau : une page qui attend
+         une requête pour montrer son bandeau ne le montre pas sur une connexion lente.
+         Si l'API répond ensuite autre chose, elle remplace. */
+      var repli = choisirCampagne(CAMPAGNES, hui);
+      if(repli) afficher(repli.id, repli.au, repli.pill, repli.txt, true);
+
+      try{
+        fetch('https://api-nexmove.blvckunlimited.space/api/banniere', {mode: 'cors'})
+          .then(function(r){ return r.ok ? r.json() : null; })
+          .then(function(b){
+            if(!b || !b.texte || !b.fin) return;      // {} = aucun programme ouvert
+            if(b.debut > hui || b.fin < hui) return;  // ceinture : on revérifie la fenêtre ici
+            afficher('api:' + b.fin + ':' + (b.pays || ''), b.fin, 'Ouvert', b.texte, false);
+          })
+          .catch(function(){ /* API injoignable : le repli reste affiché, c'est voulu */ });
+      }catch(e){}
+
       var ac = document.getElementById('annonceClose');
       if(ac){ ac.addEventListener('click', function(){
         annonce.classList.add('is-hidden');
-        try{ if(camp) localStorage.setItem('nex-annonce-vu', camp.id); }catch(e){}
+        try{ if(campActive) localStorage.setItem('nex-annonce-vu', campActive); }catch(e){}
       }); }
     }
 
