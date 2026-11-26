@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.16.0"
+VERSION         = "4.17.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -140,9 +140,65 @@ DIFFUSION_BASE_COST = int(os.getenv("DIFFUSION_BASE_COST", "3"))      # coût pl
 DIFFUSION_PER_RECIP = int(os.getenv("DIFFUSION_PER_RECIP", "50"))     # +1 crédit par tranche de N destinataires
 DIFFUSION_ALL_EXTRA = int(os.getenv("DIFFUSION_ALL_EXTRA", "3"))      # surcoût d'une diffusion « à tous » (hors candidats ciblés)
 
-def _diffusion_cost(n_targets: int, tous: bool = False) -> int:
+# ── Diffusion GRATUITE pour l'apprentissage et les métiers manuels (v4.17) ─────────────────
+# Le raisonnement : les offres du secteur informel — coiffure, couture, mécanique, soudure,
+# menuiserie, restauration, agriculture — ne sont publiées NULLE PART en ligne. Elles passent
+# de bouche à oreille. Aucun agrégateur ne les trouvera jamais : il faut être l'endroit où
+# elles se publient. NexMove a déjà cette machinerie (/publier → validation → diffusion ciblée),
+# mais elle était payante en crédits — et un salon de coiffure de Calavi ne paiera jamais des
+# crédits pour chercher un apprenti. Le canal qui résout le problème était fermé à ceux qui en
+# ont besoin. Ces offres sont donc diffusées gratuitement.
+APPRENTISSAGE_GRATUIT = os.getenv("APPRENTISSAGE_GRATUIT", "1").strip().lower() in ("1", "true", "yes", "on", "oui")
+
+# Métiers et contrats concernés. Liste VOLONTAIREMENT large côté métiers (c'est le public qu'on
+# veut atteindre) et stricte côté contrat (« apprenti » ou « apprentissage » doit être explicite,
+# sinon un CDI de développeur passerait gratuitement).
+_METIERS_MANUELS = (
+    "coiffure", "coiffeur", "coiffeuse", "tresse", "tress", "esthetique", "esthéticienne", "beaute",
+    "couture", "couturier", "couturiere", "couturière", "styliste", "modeliste", "modéliste", "tailleur",
+    "menuiserie", "menuisier", "ebenist", "ébénist", "charpent",
+    "mecanique", "mécanique", "mecanicien", "mécanicien", "garagiste", "tolerie", "tôlerie",
+    "soudure", "soudeur", "ferronnerie", "forge",
+    "maconnerie", "maçonnerie", "macon", "maçon", "carrelage", "carreleur", "peintre en batiment",
+    "plomberie", "plombier", "electricien", "électricien", "electricite batiment",
+    "froid et climatisation", "frigoriste", "climatis",
+    "restauration", "cuisinier", "cuisiniere", "cuisinière", "patissier", "pâtissier", "boulanger",
+    "agricult", "maraich", "maraîch", "elevage", "élevage", "aviculture", "pisciculture", "agro",
+    "artisan", "artisanat", "metier manuel", "métier manuel",
+    "mototaxi", "zemidjan", "zem", "transport", "chauffeur",
+    "serigraphie", "sérigraphie", "imprimerie", "reliure",
+    "informatique de base", "bureautique", "saisie",
+    "aide-soignant", "aide soignante",
+)
+_CONTRATS_APPRENTISSAGE = ("apprenti", "apprentissage", "stage d'apprentissage", "formation en atelier",
+                           "contrat d'apprentissage", "aide-apprenti", "stagiaire atelier")
+
+
+def _offre_apprentissage(offre: dict) -> bool:
+    """L'offre relève-t-elle de l'apprentissage ou d'un métier manuel ?
+
+    On regarde l'intitulé, le contrat et le profil recherché — pas la description libre, trop
+    bavarde pour un test fiable. Deux portes d'entrée : soit le CONTRAT dit explicitement
+    apprentissage, soit le MÉTIER est manuel. L'une ou l'autre suffit.
+    """
+    if not APPRENTISSAGE_GRATUIT:
+        return False
+    champs = " ".join(str(offre.get(k, "") or "") for k in ("titre", "contrat", "profil_recherche"))
+    low = champs.lower().translate(str.maketrans("àâäéèêëïîôöùûüç", "aaaeeeeiioouuuc"))
+    if any(c in low for c in _CONTRATS_APPRENTISSAGE):
+        return True
+    return any(m.lower().translate(str.maketrans("àâäéèêëïîôöùûüç", "aaaeeeeiioouuuc")) in low
+               for m in _METIERS_MANUELS)
+
+
+def _diffusion_cost(n_targets: int, tous: bool = False, offre: dict = None) -> int:
     """Crédits consommés par une diffusion. Barème simple et CONFIGURABLE (à affiner selon les
-    critères business) : plancher + 1 crédit par tranche de destinataires + surcoût si « à tous »."""
+    critères business) : plancher + 1 crédit par tranche de destinataires + surcoût si « à tous ».
+
+    **0 crédit** pour l'apprentissage et les métiers manuels : voir APPRENTISSAGE_GRATUIT.
+    """
+    if offre and _offre_apprentissage(offre):
+        return 0
     cost = DIFFUSION_BASE_COST + (max(0, int(n_targets)) // max(1, DIFFUSION_PER_RECIP))
     if tous:
         cost += DIFFUSION_ALL_EXTRA
@@ -3806,6 +3862,17 @@ def _recruit_buy_line() -> str:
     return "🛒 Pour acheter des crédits de diffusion, contacte-nous (notre équipe te recontacte)."
 
 def _recruit_price_line() -> str:
+    """Le verrou réel n'était pas le débit, c'était CETTE phrase.
+
+    « La diffusion est payante » en tête du questionnaire : un patron de salon la lit et
+    s'arrête là. L'exonération ne sert à rien si personne n'arrive jusqu'au bout. On annonce
+    donc la gratuité AVANT de parler de crédits.
+    """
+    if APPRENTISSAGE_GRATUIT:
+        return ("🎓 *Gratuit* pour l'*apprentissage* et les *métiers manuels* — coiffure, couture, "
+                "mécanique, soudure, menuiserie, restauration, agriculture… Aucun crédit à acheter.\n"
+                "💼 Pour les autres postes, la diffusion consomme des *crédits*.\n"
+                + _recruit_buy_line())
     return ("💼 La diffusion d'une offre est *payante* : elle consomme des *crédits de diffusion*.\n"
             + _recruit_buy_line())
 
@@ -3862,8 +3929,10 @@ async def _recruit_finish(session: dict) -> tuple[str, dict]:
         full = dict(data, recruiter_name=recruiter["name"], recruiter_id=recruiter["user_id"],
                     recruiter_channel=recruiter["channel"])
         try:
+            _etiq = ("🎓 *APPRENTISSAGE / MÉTIER MANUEL · diffusion gratuite*"
+                     if _offre_apprentissage(data) else "(à valider + paiement)")
             await _alert_admin(
-                f"🆕 *Nouvelle offre recruteur · #{offer_id}* (à valider + paiement)\n\n"
+                f"🆕 *Nouvelle offre recruteur · #{offer_id}* {_etiq}\n\n"
                 + _format_recruiter_offer(full, for_admin=True)
                 + f"\n\n👀 Aperçu + coût : `/valider {offer_id}` (candidats) · `/valider {offer_id} tous`"
                 + f"\n▶️ Diffuser : ajoute `envoyer` · 🎁 offert : ajoute `envoyer force`"
@@ -3873,11 +3942,18 @@ async def _recruit_finish(session: dict) -> tuple[str, dict]:
     bal = _credit_balance(session)
     msg = ("✅ *Offre bien reçue* — merci !\n"
            f"Référence : *#{offer_id}*.\n\n" if offer_id else "✅ *Offre bien reçue* — merci !\n\n")
-    msg += (_recruit_price_line()
-            + f"\n\n🎟️ Tes crédits de diffusion : *{bal}*."
-            + ("" if bal > 0 else " Tu n'en as pas encore — achète un pack pour qu'on puisse diffuser.")
-            + "\n\nDès réception de ton paiement, je valide et je diffuse aux candidats dont le profil correspond. "
-            "Tu veux en publier une autre ? Tape /publier.")
+    if _offre_apprentissage(data):
+        # On le dit tout de suite et sans condition : c'est la raison d'être de l'exonération.
+        msg += ("🎓 *Cette offre est diffusée gratuitement* — apprentissage et métier manuel. "
+                "Rien à payer, rien à acheter.\n\n"
+                "Elle passe en validation, puis part aux candidats dont le profil correspond. "
+                "Tu veux en publier une autre ? Tape /publier.")
+    else:
+        msg += (_recruit_price_line()
+                + f"\n\n🎟️ Tes crédits de diffusion : *{bal}*."
+                + ("" if bal > 0 else " Tu n'en as pas encore — achète un pack pour qu'on puisse diffuser.")
+                + "\n\nDès réception de ton paiement, je valide et je diffuse aux candidats dont le profil correspond. "
+                "Tu veux en publier une autre ? Tape /publier.")
     _push(session, "assistant", msg); session["derniere_activite"] = datetime.now(timezone.utc).isoformat()
     return msg, session
 
@@ -6326,7 +6402,8 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
             return msg, session
         targets = _recruit_targets(tous=tous, actif_jours=0 if inclure_dormants else 30)
-        cost = _diffusion_cost(len(targets), tous)
+        cost = _diffusion_cost(len(targets), tous, offre=o)
+        _gratuit_appr = cost == 0 and _offre_apprentissage(o)
         # Solde de crédits du RECRUTEUR (son portefeuille), chargé depuis sa session.
         rec_sess = session_manager.get(o.get("recruiter_id")) if o.get("recruiter_id") else None
         rec_bal = _credit_balance(rec_sess) if rec_sess else 0
@@ -6341,8 +6418,10 @@ JSON: {{"etapes":["..."],"bourses":["nom + portail"],"documents":["..."],"deadli
             msg = (f"📣 *Aperçu diffusion · offre #{oid}*\n"
                    f"{_md_clean(o.get('titre',''))} · {_md_clean(o.get('entreprise',''))}\n"
                    f"Portée : {portee}\nDestinataires : *{len(targets)}*\n"
-                   f"Coût : *{cost}* crédit(s) · solde recruteur : *{rec_bal}*"
-                   + ("  ✅ suffisant" if rec_bal >= cost else "  ❌ insuffisant") + exp_warn
+                   + ("Coût : *gratuit* 🎓 _(apprentissage / métier manuel)_"
+                      if _gratuit_appr else
+                      f"Coût : *{cost}* crédit(s) · solde recruteur : *{rec_bal}*"
+                      + ("  ✅ suffisant" if rec_bal >= cost else "  ❌ insuffisant")) + exp_warn
                    + f"\n\n▶️ Pour diffuser : `/valider {oid}{' tous' if tous else ''} envoyer`"
                    + f"\n🎁 Diffuser SANS débiter (offert) : `/valider {oid}{' tous' if tous else ''} envoyer force`")
             _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
