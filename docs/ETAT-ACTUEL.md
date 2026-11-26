@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.17.0** · 26 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.18.0** · 26 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -46,8 +46,8 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **961**, exécutés en ~13 s (`python3 -m pytest tests -q`) |
-| Fichiers de test | 21, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, RGPD, sauvegarde, déploiement, pages légales…) |
+| Tests | **1003**, exécutés en ~19 s (`python3 -m pytest tests -q`) |
+| Fichiers de test | 24, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, bandeau daté, offre de lancement, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
@@ -83,6 +83,28 @@ JavaScript (`emploisbenin.bj`, `jobbenin.com` — vérifiés le 26/11/2026) n'ex
 d'offre dans leur HTML. Aucun lecteur côté serveur ne les voit. Ils ne sont **pas** déclarés :
 une source muette est pire qu'une source absente. Ils restent atteignables par la recherche web.
 
+## Dates : ne jamais servir une information périmée
+Une information datée qui ne porte pas sa date devient fausse toute seule, sans erreur, sans
+log, sans que personne ne s'en aperçoive. Trois endroits où ça se jouait, corrigés le
+26/11/2026 (v4.18) :
+
+| Où | Avant | Maintenant |
+|---|---|---|
+| **Recherches web** (`/parcours`, `/visa`, `/canada`, `/logement`, `/ecoles`, `/recours`…) | « 2026 » écrit en dur dans 15 requêtes. Le 2 janvier, elles seraient allées chercher le calendrier de l'année passée. | `_annee_courante()` pour ce qui se renouvelle par année civile (frais, barèmes, rondes) et `_annee_scolaire()` pour les calendriers universitaires, qui rend « 2026 2027 » comme les sources officielles l'écrivent. |
+| **Prompts du modèle** | Aucun ne disait quel jour on était : le modèle raisonnait sur la date de son entraînement et parlait au présent d'éditions closes. | `llm.bloc_date()` est préfixé à **tous** les prompts système dans `call_groq` — le seul passage obligé des 28 appels. Recalculé à chaque appel, jamais à l'import. |
+| **Bandeau de la vitrine** | Texte figé, aucune date : il invitait depuis des semaines à préparer un dossier Campus France sans que rien ne sache si la campagne était ouverte. | Liste `CAMPAGNES` datée dans `web/index.html`. Parmi les fenêtres ouvertes aujourd'hui, celle dont l'échéance est la plus proche s'affiche ; quand aucune ne correspond, **il n'y a pas de bandeau**. |
+
+**Pourquoi « la plus proche » et non « la première »** : les fenêtres se chevauchent (entretiens
+Campus France jusqu'au 15 mars, vœux Parcoursup jusqu'au 11), et un classement par ordre
+d'écriture aurait caché la date couperet derrière la période qui dure.
+
+**Comment on apprend que la liste s'épuise** : `tests/test_banniere.py` échoue quand il reste
+moins de 21 jours de campagnes. Un mécanisme qui se tait quand il n'a plus rien à dire est un
+mécanisme qu'on oublie ; ici c'est la CI qui prévient, avec trois semaines d'avance. Les dates
+se relèvent sur **benin.campusfrance.org** — et seulement là : en novembre 2026 les
+agrégateurs tiers annonçaient le 15 et le 20 novembre, la page officielle disait le 1er
+décembre.
+
 ## Garde-fous déterministes (jamais confiés au modèle)
 Trois situations où une réponse improvisée coûterait trop cher. Toutes détectées par
 expression régulière dans `api/orientation.py`, testées, et placées **avant** tous les flux
@@ -107,8 +129,29 @@ sont enregistrés, transmis à l'admin **avec la réponse qui précédait**, et 
 C'est la correction d'un défaut constaté : les meilleurs retours arrivaient dans le WhatsApp
 personnel du propriétaire et n'entraient jamais dans le produit.
 
+## Offre de lancement : tout est gratuit jusqu'au 1er mars 2027
+Les formules et les packs de crédits **restent affichés avec leurs prix** — le modèle
+économique n'est pas effacé, c'est la gratuité qui est datée. Pendant le lancement, qui
+accepte d'être testeur (`/testeur`, ou « je veux être testeur ») obtient l'accès complet
+sans quota jusqu'au `LANCEMENT_FIN`.
+
+Ce que la gratuité achète n'est pas du volume, c'est du retour de terrain : la seule chose
+qui ait jamais trouvé un défaut dans ce produit.
+
+**L'offre s'arrête d'elle-même.** L'échéance est une date (`LANCEMENT_FIN`, surchargeable par
+variable d'environnement), et le statut testeur expire par le mécanisme d'abonnement qui
+existait déjà — `premium_until`. Le 2 mars, `/offres` redevient une page de tarifs et les
+quotas ci-dessous reprennent, sans qu'une ligne de code change. Une promotion qui ne sait pas
+s'arrêter devient un produit gratuit par oubli.
+
+Deux pièges verrouillés par `tests/test_lancement.py` : un abonnement payant plus long que
+l'offre n'est **jamais** dégradé en « testeur jusqu'au 1er mars » ; et « je veux être testeur
+de logiciels » est une question de métier, pas une adhésion — la première version de la règle
+de langage changeait le statut de qui parlait de sa carrière.
+
 ## Quotas gratuits (par jour)
 Divisés par deux le 26/11/2026. Chacun est surchargeable par variable d'environnement.
+Ils ne s'appliquent pas aux testeurs, donc en pratique pas avant le 2 mars 2027.
 
 | Action | Gratuit | Variable |
 |---|---|---|
@@ -129,8 +172,12 @@ Admin, testeurs et abonnés : aucun quota. Au-delà de la limite gratuite, un **
   et testés (modèle : `orientation.py`), au fil des zones qu'on touche. Pas de réécriture globale.
 - Quotas et verrous par utilisateur vivent **en mémoire de chaque worker** (il y en a 2) : la
   limite réelle est donc le double de l'annoncée. Sans volume, c'est théorique.
-- La politique de confidentialité nomme les catégories de sous-traitants IA, pas chaque
-  fournisseur, ni les durées de conservation chez eux.
+- La politique de confidentialité ne connaît pas les **durées de conservation** chez les
+  fournisseurs d'IA, et le dit plutôt que de les inventer. Le reste est désormais nommé :
+  chaque fournisseur figure au tableau, et le lieu de stockage est renseigné — serveur loué
+  chez Contabo, **dans l'Union européenne** (relevé sur le panneau Contabo le 26/11/2026).
+  Le stockage est européen, le traitement par les modèles est américain et ne reçoit jamais
+  l'identité de la personne.
 
 ## Documents de `docs/`
 `docs/` ne contient **que** de la documentation opérationnelle : de quoi faire tourner, mettre à

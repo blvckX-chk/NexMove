@@ -358,11 +358,14 @@
 <main id="top">
 
   <!-- BANDEAU LANCEMENT : campagne Études en France (masquable par le visiteur) -->
-  <div class="annonce" id="annonce">
+  <!-- Bandeau de campagne — vide et masqué dans le HTML, rempli par script depuis la liste
+       CAMPAGNES (en bas de page). Mieux vaut aucun bandeau qu'une échéance périmée : c'est
+       pour ça qu'il ne contient aucun texte en dur. -->
+  <div class="annonce is-hidden" id="annonce" hidden>
     <div class="wrap">
-      <span class="pill-new">Nouveau</span>
-      <span>Campagne <strong>Études en France</strong> : prépare ton dossier Campus France, ta lettre et ton entretien avec NexMove.</span>
-      <a class="js-start" href="https://t.me/nex_move_bot">Démarrer gratuitement →</a>
+      <span class="pill-new" id="annoncePill"></span>
+      <span id="annonceTxt"></span>
+      <a class="js-start" id="annonceCta" href="https://t.me/nex_move_bot">Démarrer gratuitement →</a>
       <button class="annonce-close" id="annonceClose" type="button" aria-label="Masquer ce bandeau" title="Masquer">×</button>
     </div>
   </div>
@@ -836,14 +839,95 @@
     });
     var y = document.getElementById('y'); if(y) y.textContent = new Date().getFullYear();
 
-    // Bandeau d'annonce : masquable par le visiteur, choix mémorisé
+    /* ── Bandeau de campagne, piloté par les dates ─────────────────────────────
+       Le bandeau précédent était écrit en dur et ne portait aucune date : il a
+       annoncé « prépare ton dossier Campus France » pendant des semaines, sans
+       moyen de savoir si la campagne était encore ouverte. Une échéance affichée
+       après sa date ne vieillit pas mal, elle fait rater une candidature.
+
+       Désormais chaque campagne porte sa fenêtre. Parmi celles qui sont ouvertes
+       aujourd'hui on affiche celle dont l'échéance est la PLUS PROCHE ; quand
+       aucune ne correspond, il n'y a pas de bandeau. Ce qui retire une échéance
+       passée est donc le mécanisme, pas un rappel dans un agenda.
+
+       « La plus proche » et non « la première de la liste » : les fenêtres se
+       chevauchent (les entretiens pédagogiques courent jusqu'au 15 mars, les
+       vœux Parcoursup se ferment le 11), et un classement par ordre d'écriture
+       aurait caché la date couperet derrière la période qui dure. La règle ne
+       dépend donc pas de l'ordre dans lequel les lignes sont écrites.
+
+       Dates relevées sur les pages officielles de Campus France Bénin
+       (« Calendrier de la procédure de candidatures classiques 2026-2027 », mise
+       à jour le 20/11/2026, et « Ouverture de Parcoursup 2027 », 19/11/2026),
+       consultées le 26/11/2026. Aucune date n'est de mémoire : les agrégateurs
+       tiers donnaient le 15 et le 20 novembre, la page officielle dit le 1er
+       décembre — c'est elle qui fait foi.
+
+       tests/test_banniere.py échoue quand la dernière fenêtre est dépassée : le
+       jour où la liste s'épuise, c'est la CI qui le dit, pas le silence. */
+    var CAMPAGNES = [
+      { id:'cf-soumission-1', du:'2026-11-01', au:'2026-12-01',
+        txt:'<strong>Campus France</strong> · première soumission du dossier jusqu\'au <strong>1<sup>er</sup> décembre</strong>. Lettre, projet d\'études, entretien : NexMove te prépare.' },
+      { id:'cf-soumission-2', du:'2026-12-02', au:'2026-12-15',
+        txt:'<strong>Campus France</strong> · tu peux encore corriger et resoumettre ton dossier jusqu\'au <strong>15 décembre</strong>.' },
+      { id:'cf-entretien', du:'2026-12-16', au:'2027-03-15',
+        txt:'<strong>Entretiens pédagogiques Campus France</strong> jusqu\'au 15 mars. Prépare le tien avec NexMove.',
+        pill:'En cours' },
+      { id:'parcoursup-voeux', du:'2027-01-18', au:'2027-03-11',
+        txt:'<strong>Parcoursup 2027</strong> · formule tes vœux jusqu\'au <strong>11 mars</strong>. NexMove t\'aide à les choisir et à rédiger.' },
+      { id:'parcoursup-confirmation', du:'2027-03-12', au:'2027-04-01',
+        txt:'<strong>Parcoursup 2027</strong> · confirme tes vœux et complète ton dossier avant le <strong>1<sup>er</sup> avril</strong>.' }
+    ];
+
+    /* Date locale du visiteur en AAAA-MM-JJ. Construite champ par champ et non via
+       toISOString(), qui renvoie la date UTC : au Bénin (UTC+1) un bandeau aurait
+       expiré une heure trop tôt, chaque soir. */
+    function isoLocal(d){
+      var m = String(d.getMonth() + 1), j = String(d.getDate());
+      return d.getFullYear() + '-' + (m.length < 2 ? '0' + m : m) + '-' + (j.length < 2 ? '0' + j : j);
+    }
+
+    /* Pure, et c'est volontaire : tests/test_banniere.py l'appelle sur une
+       vingtaine de dates, dont les veilles et lendemains de chaque bascule.
+       Comparaison de chaînes AAAA-MM-JJ : à format fixe, l'ordre alphabétique
+       est l'ordre chronologique, et aucun fuseau ne s'en mêle. */
+    function choisirCampagne(liste, iso){
+      var choix = null;
+      for(var i = 0; i < liste.length; i++){
+        var c = liste[i];
+        if(c.du <= iso && iso <= c.au && (choix === null || c.au < choix.au)) choix = c;
+      }
+      return choix;
+    }
+
+    function joursRestants(iso, fin){
+      var a = new Date(iso + 'T00:00:00Z'), b = new Date(fin + 'T00:00:00Z');
+      return Math.round((b - a) / 86400000);
+    }
+
     var annonce = document.getElementById('annonce');
     if(annonce){
-      try{ if(localStorage.getItem('nex-annonce-hidden')==='1') annonce.classList.add('is-hidden'); }catch(e){}
+      var hui = isoLocal(new Date());
+      var camp = choisirCampagne(CAMPAGNES, hui);
+      // Le choix de masquer suit la CAMPAGNE : avoir fermé le bandeau Campus France
+      // en novembre ne doit pas cacher celui de Parcoursup en janvier.
+      var masquee = false;
+      try{ masquee = camp && localStorage.getItem('nex-annonce-vu') === camp.id; }catch(e){}
+      if(camp && !masquee){
+        var n = joursRestants(hui, camp.au);
+        // « Nouveau » serait faux sur une campagne ouverte depuis des semaines.
+        var pill = camp.pill || 'Ouvert';
+        if(n <= 0) pill = 'Dernier jour';
+        else if(n <= 10) pill = 'Plus que ' + n + (n > 1 ? ' jours' : ' jour');
+        document.getElementById('annoncePill').textContent = pill;
+        document.getElementById('annonceTxt').innerHTML = camp.txt;
+        annonce.hidden = false;
+        annonce.classList.remove('is-hidden');
+      }
       var ac = document.getElementById('annonceClose');
       if(ac){ ac.addEventListener('click', function(){
         annonce.classList.add('is-hidden');
-        try{ localStorage.setItem('nex-annonce-hidden','1'); }catch(e){}
+        try{ if(camp) localStorage.setItem('nex-annonce-vu', camp.id); }catch(e){}
       }); }
     }
 

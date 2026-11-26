@@ -191,12 +191,43 @@ async def _llm_gemini(prov, system_prompt, user_prompt, temperature, max_tokens,
     return "".join(p.get("text", "") for p in cands[0].get("content", {}).get("parts", []))
 
 
+_MOIS_FR = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet",
+            "août", "septembre", "octobre", "novembre", "décembre")
+
+
+def bloc_date() -> str:
+    """La date du jour, ajoutée à TOUT prompt système.
+
+    Défaut constaté le 26/11/2026 : aucun prompt ne disait quel jour on était. Un modèle
+    sans date raisonne sur celle de son entraînement — il annonce « les candidatures
+    ouvrent en janvier » pour une campagne close depuis des mois, avec l'aplomb du
+    présent. L'interdiction d'inventer une date existait déjà ; elle ne suffisait pas,
+    parce qu'un modèle qui ignore le jour ne peut même pas savoir qu'il se trompe.
+
+    Recalculé à CHAQUE appel, jamais à l'import : le conteneur tourne des semaines
+    d'affilée, une constante de module figerait la date du déploiement — exactement
+    le défaut qu'on corrige, déplacé d'un cran.
+
+    Placé dans `call_groq` et non dans chaque prompt : c'est le seul passage obligé des
+    28 appels au modèle, donc le seul endroit qu'un prompt futur ne peut pas oublier.
+    """
+    d = datetime.now(timezone.utc)
+    return (f"CONTEXTE TEMPOREL : nous sommes le {d.day} {_MOIS_FR[d.month - 1]} {d.year}. "
+            "Sers-t'en pour dire si une échéance est passée ou encore à venir, et pour ne "
+            "jamais parler d'une édition révolue au présent. En revanche tu ne connais PAS "
+            "les calendriers en cours : n'annonce JAMAIS de mémoire une date d'ouverture, de "
+            "clôture, de rentrée ou de concours — dis ce qui est vérifiable et renvoie vers "
+            "la commande qui va chercher l'information réelle.\n\n")
+
+
 async def call_groq(system_prompt: str, user_prompt: str, temperature: float = 0.2,
                     max_tokens: int = 1000, json_mode: bool = True, retries: int = 2,
                     tier: str = "smart") -> Any:
     """Routeur LLM multi-fournisseurs. tier="fast" = petit modèle (conversation) ;
     tier="smart" (défaut) = haut de gamme (analyse, sélection) ;
     tier="quality" = passe par le modèle PREMIUM OpenRouter EN PREMIER (rédaction CV/lettre), sinon smart."""
+    # La date du jour en tête de CHAQUE prompt système — voir bloc_date().
+    system_prompt = bloc_date() + system_prompt
     approx = (len(system_prompt) + len(user_prompt)) // 4 + max_tokens
     last = None
     tried = False
