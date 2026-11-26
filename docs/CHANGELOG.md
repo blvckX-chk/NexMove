@@ -2,6 +2,15 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.17 — Diffusion gratuite pour l'apprentissage et les métiers manuels
+**Le raisonnement.** Les offres du secteur informel — coiffure, couture, mécanique, soudure, menuiserie, restauration, agriculture — ne sont publiées **nulle part** en ligne. Elles circulent de bouche à oreille, dans des groupes WhatsApp, sur des pancartes. Aucun agrégateur ne les trouvera jamais : il faut **être l'endroit où elles se publient**. Cette machinerie existait déjà (`/publier` → validation → diffusion ciblée) — mais elle était payante en crédits, et un patron de salon à Calavi ne paiera jamais des crédits pour chercher un apprenti. **Le canal qui résolvait le problème était fermé précisément à ceux qui en ont besoin.**
+
+- **0 crédit** pour ces offres. Deux portes d'entrée : soit le contrat dit explicitement « apprentissage » (y compris en informatique — un vrai contrat d'apprentissage est exactement ce qu'on veut encourager), soit le métier figure dans une liste volontairement large de métiers manuels. Le test porte sur l'intitulé, le contrat et le profil recherché, pas sur la description libre, trop bavarde pour être fiable.
+- **Le verrou réel n'était pas le débit, c'était la phrase d'accueil.** « La diffusion d'une offre est payante » en tête du questionnaire : un patron d'atelier la lit et s'arrête là. Une exonération ne sert à rien si personne n'arrive au bout. La gratuité est donc annoncée **avant** qu'on parle de crédits, avec les métiers cités nommément — et un test vérifie cet ordre.
+- **Personne ne parle de crédits à qui n'en a pas besoin** : à la fin du dépôt, une offre d'apprentissage reçoit « diffusée gratuitement, rien à payer, rien à acheter », sans un mot sur les packs. L'alerte admin porte l'étiquette « 🎓 APPRENTISSAGE / MÉTIER MANUEL · diffusion gratuite ».
+- **Réversible par variable d'environnement** (`APPRENTISSAGE_GRATUIT=0`) si le modèle économique change.
+- Un test historique vérifiait la présence du mot « payante » dans l'accueil : c'est précisément le mot retiré. Son intention est préservée — le coût reste annoncé d'emblée, mais après la gratuité.
+
 ## v4.16 — Des sources d'opportunités au Bénin, enfin
 **L'angle mort du produit** : les 16 sources de veille étaient **toutes internationales**. Quelqu'un qui cherchait du travail à Cotonou recevait des bourses pour l'Europe. C'est exactement ce qu'un testeur a constaté le 25/11 — trois postes de développeur Python proposés à quelqu'un qui avait écrit « tout ce qui peut me faire voyager ».
 

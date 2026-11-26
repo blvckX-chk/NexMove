@@ -3313,7 +3313,11 @@ def test_recruit_flow_depot(monkeypatch):
     session = {"user_id": "recX", "channel": "whatsapp", "chat_id": "22990", "username": "DRH",
                "etape": "ACTIF", "profil": {}, "historique": []}
     msg, session = _run(main.process_text_message(session, "je veux publier une offre"))
-    assert session["etape"] == "RECRUIT" and "payante" in msg.lower()
+    # Le mot « payante » a quitté l'en-tête en v4.17 : il faisait abandonner les patrons
+    # d'atelier avant la première question. Le tarif est toujours annoncé, mais après la
+    # gratuité de l'apprentissage. Ce qui compte ici : le flux démarre ET le coût est dit.
+    assert session["etape"] == "RECRUIT"
+    assert "crédit" in msg.lower(), "le coût de diffusion doit rester annoncé d'emblée"
     reponses = ["Développeur web", "ACME", "Cotonou, Bénin", "CDI", "coder des sites",
                 "Licence info, 2 ans", "à négocier", "rh@acme.bj", "30/11/2026"]
     for r in reponses:
