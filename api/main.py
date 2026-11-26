@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.15.0"
+VERSION         = "4.16.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -11032,7 +11032,25 @@ SOURCE_CATALOG = [
     # Humanitaire / ONG (emplois & consultances) · activable via ENABLE_RELIEFWEB=1
     {"url": "https://reliefweb.int/jobs/rss.xml",              "type": "ong",        "scope": "both",
      "active_env": "ENABLE_RELIEFWEB"},
+    # ── BÉNIN · sources LOCALES (ajoutées en v4.16) ───────────────────────────────────────
+    # L'angle mort du produit : les 16 sources ci-dessus sont toutes internationales. Quelqu'un
+    # qui cherche du travail À COTONOU recevait des bourses pour l'Europe. Vérifié le 26/11/2026
+    # avant ajout — ce qui suit est mesuré, pas supposé.
+    #
+    # Novojob Bénin : vrai flux RSS par pays, mais **0 offre au Bénin ce jour-là** (le flux et la
+    # page sont vides ; Sénégal 3, Côte d'Ivoire 20). On l'ajoute quand même : il ne coûte rien
+    # tant qu'il est vide et il se remplira si la plateforme prend au Bénin.
+    {"url": "https://www.novojob.com/benin/rss",               "type": "emploi",     "scope": "local"},
+    # Jobs Bénin : pas de flux RSS, mais la liste est rendue par le SERVEUR et les URL d'offres
+    # suivent /offres/<slug>/. Contenu vérifié : emplois, stages ET formations, tous au Bénin.
+    {"url": "https://jobsbenin.org/offres/",                   "type": "emploi",     "scope": "local",
+     "kind": "html", "motif": r"/offres/[a-z0-9][a-z0-9-]{12,}/?$"},
 ]
+# NON AJOUTÉS, et pour une raison mesurée : emploisbenin.bj et jobbenin.com construisent leur
+# liste d'offres en JavaScript. Leur HTML ne contient aucun lien d'offre, donc aucun lecteur
+# côté serveur ne peut les voir. Les ajouter reviendrait à déclarer deux sources qui ne
+# renvoient jamais rien. Ils restent atteignables par la recherche web (Tavily), qui indexe
+# les pages rendues.
 
 # ── IRCC Entrée express : rondes d'invitations en TEMPS RÉEL (open data officiel, cache 6 h) ──
 IRCC_ROUNDS_URL = os.getenv("IRCC_ROUNDS_URL",
@@ -11166,11 +11184,48 @@ async def fetch_rss(url: str) -> list:
         logger.warning(f"RSS {url}: {e}")
         return []
 
+async def fetch_html_listing(url: str, motif: str) -> list:
+    """Lit une page de LISTE et en extrait les offres, pour les sites sans flux RSS.
+
+    La plupart des sites d'emploi ouest-africains n'ont pas de RSS. Ceux dont la liste est
+    rendue par le serveur restent lisibles : on prend les liens qui correspondent au motif
+    d'URL d'une offre, et le texte du lien comme titre. Les sites dont la liste est construite
+    par JavaScript ne sont PAS lisibles ainsi — on ne les ajoute pas en prétendant le contraire.
+    """
+    try:
+        r = await http().get(url, headers={"User-Agent": _BROWSER_UA}, timeout=20.0, follow_redirects=True)
+        if r.status_code != 200:
+            return []
+        base = re.match(r"https?://[^/]+", url)
+        base = base.group(0) if base else ""
+        vus, out = set(), []
+        for m in re.finditer(r'<a[^>]+href="([^"#?]+)"[^>]*>(.*?)</a>', r.text, re.S | re.I):
+            lien, texte = m.group(1), m.group(2)
+            if not re.search(motif, lien):
+                continue
+            lien = lien if lien.startswith("http") else base + lien
+            titre = _htmlmod.unescape(re.sub(r"<[^>]+>", " ", texte))
+            titre = re.sub(r"\s+", " ", titre).strip()
+            # Un lien de catégorie ou de pagination n'a pas de titre d'offre : on l'écarte.
+            if len(titre) < 15 or lien in vus:
+                continue
+            vus.add(lien)
+            out.append({"titre": titre[:180], "url": lien, "resume": "", "date": ""})
+            if len(out) >= 30:
+                break
+        return out
+    except Exception as e:
+        logger.warning(f"HTML {url}: {e}")
+        return []
+
+
 async def ingest_feeds() -> int:
     total = 0
     for url in SOURCE_FEEDS:
         meta = _SOURCE_META.get(url, {})
-        for it in await fetch_rss(url):
+        items = (await fetch_html_listing(url, meta["motif"]) if meta.get("kind") == "html"
+                 else await fetch_rss(url))
+        for it in items:
             it.setdefault("type", meta.get("type", "bourse"))   # type/scope hérités de la source
             it.setdefault("scope", meta.get("scope", "both"))
             if opp_store.add_source(it):

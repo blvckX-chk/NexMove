@@ -2,6 +2,22 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.16 — Des sources d'opportunités au Bénin, enfin
+**L'angle mort du produit** : les 16 sources de veille étaient **toutes internationales**. Quelqu'un qui cherchait du travail à Cotonou recevait des bourses pour l'Europe. C'est exactement ce qu'un testeur a constaté le 25/11 — trois postes de développeur Python proposés à quelqu'un qui avait écrit « tout ce qui peut me faire voyager ».
+
+Les quatre sites demandés ont été **vérifiés un par un avant ajout**, et le résultat n'est pas celui qu'on aurait supposé :
+
+| Site | Verdict | Détail |
+|---|---|---|
+| **jobsbenin.org** | ✅ ajouté | pas de flux RSS, mais la liste est rendue par le serveur. 10 opportunités extraites au premier essai : formation en coiffure, commerciaux terrain, 50 bourses de scolarité ISAO, service civique France Volontaires. Exactement le mélange qui manquait. |
+| **novojob.com/benin** | ✅ ajouté | vrai flux RSS par pays — mais **0 offre au Bénin** ce jour-là (Sénégal 3, Côte d'Ivoire 20 ; la page Bénin est vide elle aussi). Ajouté quand même : il ne coûte rien tant qu'il est vide, et se remplira si la plateforme prend au Bénin. |
+| **emploisbenin.bj** | ❌ impossible | la liste est construite en **JavaScript** : le HTML ne contient aucun lien d'offre. |
+| **jobbenin.com** | ❌ impossible | idem — seules les catégories et la pagination sont dans le HTML. |
+
+- **Nouveau lecteur `fetch_html_listing`** : lit une page de liste et en extrait les offres via un motif d'URL, pour les sites sans flux. Écarte catégories, pagination et doublons ; même forme d'item que `fetch_rss`, sinon le stockage casserait. Testé sur une page d'exemple, sans réseau — la CI reste déterministe.
+- **Les deux sites en JavaScript ne sont pas déclarés**, et un test l'interdit : une source qui ne renvoie jamais rien est pire qu'une source absente. Ils restent atteignables par la recherche web, qui indexe les pages rendues.
+- **Les sources locales ne sont pas écartées pour un objectif international**, volontairement : jobsbenin.org publie aussi du service civique en France et des stages à l'étranger. Les filtrer ferait perdre de vraies opportunités de mobilité.
+
 ## v4.15 — Le nom d'une vraie utilisatrice dans le dépôt public, et l'arnaque enfin nommée
 - **Vie privée, le plus grave** : le bot disait à **tous** ses utilisateurs « Une erreur ? Écris-la simplement, ex. « mon nom c'est *prénom nom* » » — avec le nom d'une **vraie utilisatrice**. Le dépôt est public, et le nom y était depuis la **v3.59** : personne ne l'avait vu parce que personne ne cherchait. Retiré de partout (code, tests, journal). Les exemples n'utilisent plus de nom de personne du tout : « ton nom exact » dit la même chose sans risque. Un test interdit désormais la *forme* — un prénom et un nom accolés dans un exemple — sans avoir à lister qui que ce soit.
 - **Arnaque : le trou le plus grave du produit, et il était béant.** Dans ce marché, l'escroquerie à l'avance de frais est partout (« paie 150 000 F et je te garantis le visa », « mon contact à l'ambassade »). Le bot n'avait **aucune** détection. Un conseiller qui parle de départ à l'étranger et se tait là échoue au moment où il sert le plus. Détection déterministe, jamais confiée au modèle, prioritaire sur tous les flux guidés — y compris les voies illégales (faux papiers, passage par la Libye ou la mer). Le message énonce **la** règle qui protège, nomme les guichets officiels, puis propose la voie légale. Les frais légitimes (Campus France, TLS/VFS, scolarité, loyer, caution) ne déclenchent rien : crier au loup les rendrait suspects. **18 cas réels vérifiés, 0 faux positif.**
