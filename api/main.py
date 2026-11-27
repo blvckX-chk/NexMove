@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.20.0"
+VERSION         = "4.21.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -6985,63 +6985,96 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         if sous in ("retirer", "retire", "supprimer") and len(parts) > 2:
             bid = re.sub(r"[^0-9]", "", parts[2])
             ok = opp_store.banniere_retirer(int(bid)) if bid else False
-            msg = (f"🗑️ Bannière #{bid} retirée. La vitrine passe à la suivante au prochain chargement."
+            msg = (f"🗑️ Bannière #{bid} retirée de la rotation."
                    if ok else f"Aucune bannière #{bid or '?'} à retirer. `/banniere` liste les ids.")
-        elif sous in ("ajouter", "ajout") and len(parts) > 2:
-            # Saisie manuelle : pays | titre | url | AAAA-MM-JJ. Utile parce que le
-            # Propriétaire peut vérifier une source mieux qu'un cron.
-            ch = [c.strip() for c in parts[2].split("|")]
-            if len(ch) != 4:
-                msg = ("🎏 *Ajouter une bannière*\n"
-                       "`/banniere ajouter Pays | Nom du programme | URL | AAAA-MM-JJ`\n\n"
-                       "_Exemple :_\n"
-                       "`/banniere ajouter Canada | Bourses d'excellence Vanier | "
-                       "https://exemple.ca/vanier | 2027-02-15`\n\n"
-                       "La date est la *date limite de candidature*. Le bandeau disparaît "
-                       "tout seul après.")
+        elif sous in ("valider", "publier") and len(parts) > 2:
+            bid = re.sub(r"[^0-9]", "", parts[2])
+            ok = opp_store.banniere_valider(int(bid)) if bid else False
+            msg = (f"✅ Bannière #{bid} publiée : elle entre dans la rotation de la vitrine "
+                   "(cache de 30 minutes au plus)."
+                   if ok else f"Aucune bannière #{bid or '?'} à valider. `/banniere` liste les ids.")
+        elif sous in ("rafraichir", "rafraîchir", "chercher", "refresh"):
+            # Lance maintenant ce que fait le cron, et montre le résultat. Sans ça, une
+            # file vide ne disait pas si le cron avait tourné, échoué ou rien trouvé.
+            r = await _banniere_rafraichir()
+            if r.get("note") == "file pleine":
+                msg = f"🎏 File pleine ({r['file']}). Rien cherché : retire ou laisse expirer."
+            elif r["ajoutees"]:
+                msg = (f"🎏 *{r['ajoutees']} programme(s) trouvé(s)* "
+                       f"({', '.join(r['cherches'])}) :\n"
+                       + "\n".join(f"• {d}" for d in r["details"])
+                       + ("\n\n_Pas encore publiés : vérifie chaque date sur la page de "
+                          "l'organisme, puis `/banniere valider <id>`._" if r.get("a_valider") else ""))
             else:
-                pays, titre, url, fin = ch
-                phrase = _banniere_phrase(pays, titre, fin)
+                msg = (f"🎏 Recherche faite sur *{', '.join(r['cherches']) or 'aucun pays'}* : "
+                       "rien de vérifiable trouvé.\n\n"
+                       "C'est un résultat normal en fin d'année : beaucoup d'appels 2027 ne sont "
+                       "pas encore publiés. Le prochain passage cherchera d'autres pays.")
+        elif sous in ("ajouter", "ajout") and len(parts) > 2:
+            # Saisie manuelle : pays | titre | url | date limite [| date d'ouverture].
+            # Le Propriétaire vérifie une source mieux qu'un cron : ce qu'il ajoute est
+            # publié directement.
+            ch = [c.strip() for c in parts[2].split("|")]
+            if len(ch) not in (4, 5):
+                msg = ("🎏 *Ajouter une bannière*\n"
+                       "`/banniere ajouter Pays | Nom du programme | URL | AAAA-MM-JJ`\n"
+                       "Pour un programme *à venir*, ajoute la date d'ouverture :\n"
+                       "`/banniere ajouter Pays | Nom | URL | date limite | date d'ouverture`\n\n"
+                       "_Exemple :_\n"
+                       "`/banniere ajouter Turquie | Türkiye Bursları 2027 | "
+                       "https://... | 2027-02-20 | 2027-01-10`\n\n"
+                       "Relève les dates sur la page de l'organisme lui-même, pas sur un site "
+                       "qui recense des bourses. Le bandeau disparaît tout seul après la date "
+                       "limite.")
+            else:
+                pays, titre, url, fin = ch[:4]
+                ouv = ch[4] if len(ch) == 5 else ""
+                phrase = _banniere_phrase(pays, titre, fin, ouv)
                 if not phrase:
-                    msg = ("❌ Refusé : il faut un pays, un titre et une date limite lisible "
-                           "au format *AAAA-MM-JJ*.")
+                    msg = ("❌ Refusé : il faut un pays, un titre et des dates lisibles au format "
+                           "*AAAA-MM-JJ* — et l'ouverture, si tu en mets une, avant la clôture.")
                 elif fin < hui:
                     msg = f"❌ Refusé : le {_date_fr_courte(fin)} est déjà passé."
                 elif not url.startswith(("http://", "https://")):
                     msg = "❌ Refusé : il faut l'URL de la source (elle sera citée publiquement)."
                 else:
-                    bid = opp_store.banniere_add(pays, titre, phrase, url, hui, fin, origine="admin")
-                    msg = (f"✅ Bannière #{bid} en file.\n\n_Aperçu :_\n{phrase}"
+                    bid = opp_store.banniere_add(pays, titre, phrase, url, hui, fin,
+                                                 origine="admin", ouverture=ouv, statut="publiee")
+                    msg = (f"✅ Bannière #{bid} publiée.\n\n_Aperçu :_\n{phrase}"
                            if bid else "⚠️ Cette URL est déjà dans la file.")
         else:
             liste = opp_store.banniere_liste()
             if not liste:
                 msg = ("🎏 *Bannières* — la file est vide.\n\n"
-                       "La vitrine n'affiche donc aucun bandeau, ce qui est correct : mieux vaut "
-                       "rien qu'une échéance périmée.\n\n"
-                       "`/banniere ajouter …` pour en mettre une à la main, ou attends le cron "
-                       "(`nex-cron.sh banniere`).")
+                       "La vitrine affiche alors seulement son relevé officiel intégré "
+                       "(Campus France, Parcoursup). C'est correct : mieux vaut peu qu'une "
+                       "échéance périmée.\n\n"
+                       "`/banniere rafraichir` lance une recherche maintenant.\n"
+                       "`/banniere ajouter …` pour en mettre une à la main.")
             else:
                 lignes = []
                 for b in liste:
                     if b["fin"] < hui:
                         etat = "⌛ expirée"
-                    elif b["vedette"]:
-                        etat = "⭐ à la une"
-                    elif b["debut"] > hui:
-                        etat = "🕒 à venir"
+                    elif b["statut"] != "publiee":
+                        etat = "🔎 à valider"
+                    elif b["ouverture"] and b["ouverture"] > hui:
+                        etat = "🕒 annoncée"
                     else:
-                        etat = "📋 en file"
+                        etat = "🔄 en rotation"
+                    fen = (f"du {_date_fr_courte(b['ouverture'])} au {_date_fr_courte(b['fin'])}"
+                           if b["ouverture"] else f"jusqu'au {_date_fr_courte(b['fin'])}")
                     lignes.append(f"`#{b['id']}` {etat} · *{b['pays']}* · {b['titre'][:50]}\n"
-                                  f"     jusqu'au {_date_fr_courte(b['fin'])} · {b['origine']}")
-                pays_distincts = len({b["pays"] for b in liste if b["fin"] >= hui})
+                                  f"     {fen} · {b['origine']}")
+                pays_distincts = len({b["pays"] for b in liste
+                                      if b["fin"] >= hui and b["statut"] == "publiee"})
                 msg = ("🎏 *Bannières de la vitrine*\n━━━━━━━━━━━━━━━━━━\n\n"
                        + "\n".join(lignes)
-                       + f"\n\n{pays_distincts} pays en file. Celle à la une y reste jusqu'à son "
-                         "échéance, puis la suivante prend la place — en changeant de pays quand "
-                         "c'est possible.\n\n"
-                         "`/banniere ajouter Pays | Titre | URL | AAAA-MM-JJ`\n"
-                         "`/banniere retirer <id>`")
+                       + f"\n\n{pays_distincts} pays publiés. Les programmes ouverts défilent "
+                         "d'abord, échéance la plus proche en tête, puis ceux annoncés ; les "
+                         "pays alternent. Chacun sort seul à sa date limite.\n\n"
+                         "`/banniere valider <id>` · `/banniere retirer <id>`\n"
+                         "`/banniere rafraichir` · `/banniere ajouter …`")
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
@@ -12625,26 +12658,29 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
                           channel=(session or {}).get("channel", "telegram"))
     return {**res, "chat_id": request.chat_id}
 
-# ── Bannières de la vitrine : des programmes actifs, de pays différents ──────────
+# ── Bannières de la vitrine : programmes ouverts et à venir, de pays différents ──────
 #
-# Pendant une campagne passive — décision du Propriétaire du 26/11/2026 : pas de
-# communication active tant que l'outil n'a rien prouvé — le bandeau de la vitrine
-# EST la seule surface d'acquisition. C'est la seule chose qui travaille sans qu'on
-# parle. D'où le soin qu'on y met.
+# Le bandeau est la première chose qu'un visiteur lit. Il fait défiler les programmes
+# OUVERTS (échéance la plus proche d'abord) puis ceux À VENIR — « annoncer ceux qui
+# viennent pour se préparer tôt », demande du Propriétaire du 27/11/2026 — en alternant
+# les pays. Chaque programme reste dans la rotation jusqu'à sa date limite, puis en sort
+# seul. La vitrine complète avec son propre relevé officiel (liste CAMPAGNES).
 #
-# Trois principes, dans cet ordre d'importance :
+# Quatre principes, dans cet ordre d'importance :
 #
-# 1. **Le modèle n'écrit jamais la phrase affichée.** Il extrait quatre champs (pays,
-#    titre, url, date limite) et la phrase est assemblée par le code. La date montrée
-#    au visiteur est donc par construction celle qui est en base. Faire rédiger le
-#    bandeau au modèle reviendrait à publier de la prose non vérifiée sur une page
-#    publique, avec une date dedans.
-# 2. **Une URL qui n'était pas dans les résultats de recherche est rejetée.** C'est la
-#    garde anti-invention la plus efficace qu'on ait : un modèle qui invente une source
-#    invente une URL qui ne figure nulle part.
-# 3. **Pas de date limite lisible, pas de bannière.** Un programme sans échéance ne peut
-#    pas expirer tout seul, donc il n'a rien à faire dans un mécanisme dont l'expiration
-#    est la raison d'être.
+# 1. **Le modèle n'écrit jamais la phrase affichée.** Il extrait des champs (pays,
+#    titre, url, date limite, date d'ouverture) et la phrase est assemblée par le code.
+#    La date montrée au visiteur est donc par construction celle qui est en base.
+# 2. **Une URL absente des résultats de recherche est rejetée.** Un modèle qui invente
+#    une source invente une URL qui ne figure nulle part.
+# 3. **Pas de date limite lisible, pas de bannière.** Un programme qui ne peut pas expirer
+#    seul n'a rien à faire dans un mécanisme dont l'expiration est la raison d'être.
+# 4. **Ce que le cron trouve attend une validation humaine avant d'être public.** Le
+#    27/11/2026, les agrégateurs annonçaient la première soumission Campus France au 15
+#    et au 20 novembre ; la page officielle disait le 1er décembre. Les principes 1 à 3
+#    garantissent qu'une date vient d'une vraie page — pas que cette page dit vrai. La
+#    recherche reste automatique ; la publication demande un geste : `/banniere valider`.
+#    Désactivable (BANNIERE_VALIDATION=0), mais ce serait parier sur les agrégateurs.
 _BANNIERE_PAYS = (
     "France", "Canada", "Allemagne", "Belgique", "Maroc", "Tunisie", "Turquie",
     "Chine", "Maurice", "Rwanda", "Hongrie", "Japon", "Corée du Sud", "Inde",
@@ -12652,6 +12688,7 @@ _BANNIERE_PAYS = (
 )
 BANNIERE_FILE_MAX = int(os.getenv("BANNIERE_FILE_MAX", "8"))
 BANNIERE_MARGE_JOURS = int(os.getenv("BANNIERE_MARGE_JOURS", "10"))
+BANNIERE_VALIDATION = _env_bool("BANNIERE_VALIDATION", True)
 
 
 def _date_fr_courte(iso: str) -> str:
@@ -12663,8 +12700,12 @@ def _date_fr_courte(iso: str) -> str:
         return ""
 
 
-def _banniere_phrase(pays: str, titre: str, fin_iso: str) -> str:
+def _banniere_phrase(pays: str, titre: str, fin_iso: str, ouverture_iso: str = "") -> str:
     """La phrase du bandeau, assemblée ici et nulle part ailleurs.
+
+    Avec une date d'ouverture, la phrase annonce la fenêtre complète — « du … au … » —
+    ce qui reste vrai avant comme après l'ouverture : la même entrée sert d'abord
+    d'annonce (« prépare-toi »), puis de rappel, sans avoir à être réécrite.
 
     Le HTML de la vitrine l'affiche telle quelle, donc on n'y met aucune balise : le
     titre vient d'une page web et pourrait contenir n'importe quoi."""
@@ -12673,17 +12714,24 @@ def _banniere_phrase(pays: str, titre: str, fin_iso: str) -> str:
     quand = _date_fr_courte(fin_iso)
     if not (t and p and quand):
         return ""
+    if ouverture_iso:
+        ouv = _date_fr_courte(ouverture_iso)
+        if not ouv or str(ouverture_iso)[:10] >= str(fin_iso)[:10]:
+            return ""          # ouverture illisible ou après la clôture : on ne publie rien
+        return (f"{p} · {t} — candidatures du {ouv} au {quand}. "
+                "Prépare ton dossier dès maintenant.")
     return f"{p} · {t} — candidatures jusqu'au {quand}. NexMove t'aide à monter le dossier."
 
 
 async def _banniere_decouvrir(pays: str, today: date) -> list:
-    """Cherche des programmes ACTIFS pour un pays. Renvoie des entrées prêtes à insérer.
+    """Cherche des programmes ouverts ou annoncés pour un pays. Renvoie des entrées
+    prêtes à insérer — à valider, jamais publiées directement (principe 4).
 
     Rien ne sort d'ici qui n'ait une date limite future et une URL vue dans les
     résultats de recherche."""
     res = await tavily_search(
-        f"bourse programme études {pays} candidatures ouvertes étudiants internationaux "
-        f"Afrique date limite {_annee_scolaire()}", 8)
+        f"bourse programme études {pays} candidatures étudiants internationaux Afrique "
+        f"date limite ouverture {_annee_scolaire()}", 8)
     if not res:
         return []
     urls_vues = {str(r.get("url") or "").strip() for r in res if r.get("url")}
@@ -12694,19 +12742,23 @@ async def _banniere_decouvrir(pays: str, today: date) -> list:
         "Tu extrais des programmes de bourse ou de mobilité ÉTUDIANTE depuis des résultats "
         "de recherche. Tu n'ajoutes RIEN qui ne soit écrit dans les extraits fournis.\n"
         "Rends un JSON {\"programmes\": [{\"pays\": \"...\", \"titre\": \"...\", "
-        "\"url\": \"...\", \"deadline_iso\": \"AAAA-MM-JJ\"}]}.\n"
+        "\"url\": \"...\", \"deadline_iso\": \"AAAA-MM-JJ\", \"opening_iso\": \"AAAA-MM-JJ ou vide\"}]}.\n"
         "RÈGLES STRICTES :\n"
         "- `deadline_iso` doit être une date limite de CANDIDATURE explicitement écrite dans "
         "l'extrait. Si aucune date n'est écrite, ou si elle est vague (« bientôt », "
         "« automne »), N'INCLUS PAS le programme. N'invente jamais de date.\n"
+        "- `opening_iso` : la date d'OUVERTURE des candidatures si elle est explicitement "
+        "écrite, sinon chaîne vide. Ne la déduis jamais d'un calendrier « habituel ».\n"
         "- `url` doit être recopiée À L'IDENTIQUE depuis les extraits. Jamais reconstruite.\n"
         "- `titre` : le nom du programme, court, sans slogan ni superlatif.\n"
-        "- Écarte les pages d'agrégateurs qui listent dix bourses sans en nommer une seule.\n"
+        "- Préfère la page de l'organisme lui-même (ministère, université, ambassade) à un "
+        "site qui recense des bourses.\n"
+        "- Écarte toute annonce qui demande des frais pour obtenir une bourse ou un emploi.\n"
         "- Mieux vaut une liste vide qu'un programme approximatif.")
     try:
         r = await call_groq(system, f"PAYS VISÉ : {pays}\nDATE DU JOUR : {today.isoformat()}\n"
                                     f"EXTRAITS :\n{extraits}",
-                            temperature=0.0, max_tokens=700, json_mode=True, tier="smart")
+                            temperature=0.0, max_tokens=800, json_mode=True, tier="smart")
     except Exception as e:
         logger.error(f"[banniere] extraction {pays}: {e}")
         return []
@@ -12714,6 +12766,7 @@ async def _banniere_decouvrir(pays: str, today: date) -> list:
     for p in (r or {}).get("programmes", [])[:4]:
         url = str(p.get("url") or "").strip()
         fin = str(p.get("deadline_iso") or "").strip()[:10]
+        ouv = str(p.get("opening_iso") or "").strip()[:10]
         titre = str(p.get("titre") or "").strip()
         if url not in urls_vues:
             logger.info(f"[banniere] {pays}: URL hors résultats, rejetée ({url[:60]})")
@@ -12722,78 +12775,111 @@ async def _banniere_decouvrir(pays: str, today: date) -> list:
             d_fin = date.fromisoformat(fin)
         except Exception:
             continue
+        if ouv:
+            try:
+                date.fromisoformat(ouv)
+            except Exception:
+                ouv = ""                   # ouverture illisible : on garde sans, jamais devinée
         # Une échéance trop proche ne laisse pas le temps de monter un dossier : la
         # montrer ferait plus de mal que de bien.
         if (d_fin - today).days < BANNIERE_MARGE_JOURS:
             continue
-        phrase = _banniere_phrase(pays, titre, fin)
+        phrase = _banniere_phrase(pays, titre, fin, ouv)
         if not phrase:
             continue
         sortie.append({"pays": pays, "titre": titre, "texte": phrase, "url": url,
-                       "debut": today.isoformat(), "fin": fin})
+                       "debut": today.isoformat(), "fin": fin, "ouverture": ouv})
     return sortie
+
+
+async def _banniere_rafraichir() -> dict:
+    """Complète la file avec des programmes de pays ABSENTS de la file.
+
+    Partagé par le cron (`POST /api/banniere/refresh`) et par `/banniere rafraichir` en
+    admin : le second existe parce que le premier renvoie seulement un code HTTP au
+    crontab, et qu'une file vide ne disait pas si le cron avait tourné, échoué ou
+    simplement rien trouvé. C'est exactement la question qu'on s'est posée le 27/11."""
+    today = datetime.now(timezone.utc).date()
+    hui = today.isoformat()
+    purgees = opp_store.banniere_purge(hui)
+    file_actuelle = [b for b in opp_store.banniere_liste() if b["fin"] >= hui]
+    if len(file_actuelle) >= BANNIERE_FILE_MAX:
+        return {"ok": True, "file": len(file_actuelle), "ajoutees": 0, "purgees": purgees,
+                "cherches": [], "details": [], "note": "file pleine"}
+    deja = set(opp_store.banniere_pays_en_file(hui))
+    candidats = [p for p in _BANNIERE_PAYS if p not in deja]
+    # Rotation par jour de l'année plutôt qu'au hasard : deux passages le même jour
+    # cherchent les mêmes pays (le second ne coûte rien de plus), les jours suivants en
+    # explorent d'autres, et un test peut prédire le résultat.
+    if candidats:
+        k = today.timetuple().tm_yday % len(candidats)
+        candidats = candidats[k:] + candidats[:k]
+    cherches = candidats[:3]                 # 3 pays par passage : on étale la dépense
+    statut = "a_valider" if BANNIERE_VALIDATION else "publiee"
+    ajoutees, details = 0, []
+    for pays in cherches:
+        try:
+            for entree in await _banniere_decouvrir(pays, today):
+                bid = opp_store.banniere_add(entree["pays"], entree["titre"], entree["texte"],
+                                             entree["url"], entree["debut"], entree["fin"],
+                                             origine="cron", ouverture=entree.get("ouverture", ""),
+                                             statut=statut)
+                if bid:
+                    ajoutees += 1
+                    quand = (f"{entree['ouverture']} → {entree['fin']}" if entree.get("ouverture")
+                             else f"→ {entree['fin']}")
+                    details.append(f"#{bid} {entree['pays']} · {entree['titre']} ({quand})\n"
+                                   f"   {entree['url']}")
+                    break                    # un programme par pays et par passage
+        except Exception as e:
+            logger.error(f"[banniere] {pays}: {e}")
+    if ajoutees:
+        if statut == "a_valider":
+            await _alert_admin(
+                "🎏 *Bannières* · programmes trouvés, *pas encore publiés* :\n"
+                + "\n".join(f"• {d}" for d in details)
+                + "\n\nOuvre chaque lien et vérifie la date sur la page de l'organisme "
+                  "lui-même. Puis `/banniere valider <id>` pour publier, ou "
+                  "`/banniere retirer <id>`.")
+        else:
+            await _alert_admin("🎏 *Bannières* · publiés sans validation :\n"
+                               + "\n".join(f"• {d}" for d in details))
+    logger.info(f"[banniere] file={len(file_actuelle)} cherches={cherches} "
+                f"ajoutees={ajoutees} purgees={purgees}")
+    return {"ok": True, "file": len(file_actuelle) + ajoutees, "ajoutees": ajoutees,
+            "purgees": purgees, "cherches": cherches, "details": details,
+            "a_valider": statut == "a_valider"}
 
 
 @app.get("/api/banniere")
 async def api_banniere(response: Response):
-    """Le bandeau à afficher aujourd'hui. Public : la vitrine est une page statique.
+    """Les programmes à faire défiler aujourd'hui. Public : la vitrine est statique.
 
-    Renvoie {} quand aucun programme n'est ouvert — la vitrine n'affiche alors aucun
-    bandeau, ce qui est le comportement voulu. Pas de bandeau vaut mieux qu'un faux."""
+    `items` est la liste à faire tourner. Les champs à la racine reprennent le premier
+    élément, pour la vitrine de la v4.20 qui n'attendait qu'un seul programme : l'API
+    et la vitrine ne sont pas déployées au même moment, il faut que les deux ordres de
+    déploiement fonctionnent. Renvoie {} quand rien n'est ouvert ni annoncé."""
     response.headers["Cache-Control"] = "public, max-age=1800"
     today = datetime.now(timezone.utc).date().isoformat()
     try:
-        v = opp_store.banniere_vedette(today)
+        actives = opp_store.banniere_actives(today)
     except Exception as e:
         logger.error(f"[banniere] lecture: {e}")
         return {}
-    if not v:
+    if not actives:
         return {}
-    return {"pays": v["pays"], "texte": v["texte"], "url": v["url"],
-            "debut": v["debut"], "fin": v["fin"]}
+    items = [{"id": b["id"], "pays": b["pays"], "texte": b["texte"], "url": b["url"],
+              "debut": b["debut"], "fin": b["fin"], "ouverture": b["ouverture"],
+              "etat": b["etat"]} for b in actives]
+    premier = items[0]
+    return {"items": items, "pays": premier["pays"], "texte": premier["texte"],
+            "url": premier["url"], "debut": premier["debut"], "fin": premier["fin"]}
 
 
 @app.post("/api/banniere/refresh")
 async def api_banniere_refresh(_auth: bool = Depends(verify_api_key)):
-    """Cron : complète la file avec des programmes actifs de pays ABSENTS de la file.
-
-    Ne touche pas à la vedette en cours : elle garde sa place jusqu'à expiration. Ce
-    cron prépare la suite, il ne redistribue pas les cartes."""
-    today = datetime.now(timezone.utc).date()
-    purgees = opp_store.banniere_purge(today.isoformat())
-    file_actuelle = [b for b in opp_store.banniere_liste() if b["fin"] >= today.isoformat()]
-    if len(file_actuelle) >= BANNIERE_FILE_MAX:
-        return {"ok": True, "file": len(file_actuelle), "ajoutees": 0, "purgees": purgees,
-                "note": "file pleine"}
-    deja = set(opp_store.banniere_pays_en_file(today.isoformat()))
-    candidats = [p for p in _BANNIERE_PAYS if p not in deja]
-    # Rotation par jour de l'année plutôt qu'au hasard : deux passages le même jour
-    # cherchent les mêmes pays (donc le second ne coûte rien de plus), les jours
-    # suivants en explorent d'autres, et un test peut prédire le résultat.
-    if candidats:
-        k = today.timetuple().tm_yday % len(candidats)
-        candidats = candidats[k:] + candidats[:k]
-    ajoutees, details = 0, []
-    for pays in candidats[:3]:          # 3 pays par passage : on étale la dépense
-        try:
-            for entree in await _banniere_decouvrir(pays, today):
-                if opp_store.banniere_add(entree["pays"], entree["titre"], entree["texte"],
-                                          entree["url"], entree["debut"], entree["fin"]):
-                    ajoutees += 1
-                    details.append(f"{entree['pays']} · {entree['titre']} (→ {entree['fin']})")
-                    break               # un programme par pays et par passage
-        except Exception as e:
-            logger.error(f"[banniere] {pays}: {e}")
-    if ajoutees:
-        # L'admin est prévenu de ce qui est désormais publiable sur la vitrine : une
-        # page publique ne doit pas changer de contenu sans que personne ne le sache.
-        await _alert_admin("🎏 *Bannières* · nouveaux programmes en file :\n"
-                           + "\n".join(f"• {d}" for d in details)
-                           + f"\n\nFile : {len(file_actuelle) + ajoutees} · `/banniere` pour voir, "
-                             "`/banniere retirer <id>` pour enlever.")
-    logger.info(f"[banniere] file={len(file_actuelle)} ajoutees={ajoutees} purgees={purgees}")
-    return {"ok": True, "file": len(file_actuelle) + ajoutees, "ajoutees": ajoutees,
-            "purgees": purgees, "details": details}
+    """Cron : complète la file. Voir `_banniere_rafraichir`."""
+    return await _banniere_rafraichir()
 
 
 @app.post("/api/collect")

@@ -303,6 +303,17 @@
     width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:10px}
   .annonce-close:hover{opacity:1;background:rgba(255,255,255,.14)}
   .annonce.is-hidden{display:none}
+  /* Rotation : un fondu court, jamais un défilement de texte — on lit une phrase, on
+     ne la poursuit pas. 44 px pour le bouton : seuil d'accessibilité tactile. */
+  #annonceTxt,#annoncePill{transition:opacity .28s cubic-bezier(.22,1,.36,1)}
+  #annonceTxt.sort,#annoncePill.sort{opacity:0}
+  .annonce-suivant{background:rgba(255,255,255,.14);border:0;color:#fff;font-size:1.3rem;line-height:1;
+    width:44px;height:44px;border-radius:10px;cursor:pointer;display:inline-flex;align-items:center;
+    justify-content:center;flex:0 0 auto}
+  .annonce-suivant[hidden]{display:none}
+  .annonce-suivant:hover{background:rgba(255,255,255,.24)}
+  .annonce-suivant:focus-visible,.annonce-close:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  @media(prefers-reduced-motion:reduce){#annonceTxt,#annoncePill{transition:none}}
   /* Cibles tactiles (audit 2026-11-23) : 17 éléments cliquables faisaient moins de 44 px de haut
      sur mobile. On élargit la zone de clic sans toucher à la mise en page visuelle. */
   @media(max-width:860px){
@@ -361,11 +372,12 @@
   <!-- Bandeau de campagne — vide et masqué dans le HTML, rempli par script depuis la liste
        CAMPAGNES (en bas de page). Mieux vaut aucun bandeau qu'une échéance périmée : c'est
        pour ça qu'il ne contient aucun texte en dur. -->
-  <div class="annonce is-hidden" id="annonce" hidden>
+  <div class="annonce is-hidden" id="annonce" hidden role="region" aria-label="Programmes ouverts et à venir">
     <div class="wrap">
       <span class="pill-new" id="annoncePill"></span>
-      <span id="annonceTxt"></span>
+      <span id="annonceTxt" aria-live="off"></span>
       <a class="js-start" id="annonceCta" href="https://t.me/nex_move_bot">Démarrer gratuitement →</a>
+      <button class="annonce-suivant" id="annonceSuivant" type="button" aria-label="Programme suivant" title="Programme suivant" hidden>›</button>
       <button class="annonce-close" id="annonceClose" type="button" aria-label="Masquer ce bandeau" title="Masquer">×</button>
     </div>
   </div>
@@ -840,44 +852,56 @@
     });
     var y = document.getElementById('y'); if(y) y.textContent = new Date().getFullYear();
 
-    /* ── Bandeau de campagne, piloté par les dates ─────────────────────────────
-       Le bandeau précédent était écrit en dur et ne portait aucune date : il a
-       annoncé « prépare ton dossier Campus France » pendant des semaines, sans
-       moyen de savoir si la campagne était encore ouverte. Une échéance affichée
-       après sa date ne vieillit pas mal, elle fait rater une candidature.
+    /* ── Bandeau : programmes ouverts et à venir, en rotation ─────────────────
+       Historique, parce qu'il explique la forme :
+       - v4.18 : le bandeau était écrit en dur et sans date ; il a invité pendant des
+         semaines à « préparer son dossier Campus France » sans que rien ne sache si la
+         campagne était ouverte. Remplacé par des fenêtres datées.
+       - v4.19 : une file côté serveur, mais un seul programme affiché à la fois.
+       - v4.21 : demande du 27/11/2026 — « la bannière ne défile pas avec les programmes
+         actifs de différents pays » et « annoncer ceux qui viennent pour se préparer
+         tôt ». D'où la ROTATION : chaque programme reste jusqu'à sa date limite, puis
+         sort seul ; ce qui est ouvert passe d'abord, puis ce qui est annoncé ; les pays
+         alternent.
 
-       Désormais chaque campagne porte sa fenêtre. Parmi celles qui sont ouvertes
-       aujourd'hui on affiche celle dont l'échéance est la PLUS PROCHE ; quand
-       aucune ne correspond, il n'y a pas de bandeau. Ce qui retire une échéance
-       passée est donc le mécanisme, pas un rappel dans un agenda.
+       Trois types :
+       - « ouvert »     : candidatures possibles ; compte à rebours sous dix jours ;
+       - « bientot »    : date d'ouverture OFFICIELLE connue ; on annonce pour qu'on se
+                          prépare — la fenêtre d'annonce s'arrête la veille de l'ouverture ;
+       - « surveiller » : appel attendu mais pas encore publié. Ces entrées n'annoncent
+                          AUCUNE date (un test le vérifie) et expirent à une date de
+                          révision : si l'appel n'est toujours pas sorti, elles disparaissent
+                          au lieu de devenir fausses.
 
-       « La plus proche » et non « la première de la liste » : les fenêtres se
-       chevauchent (les entretiens pédagogiques courent jusqu'au 15 mars, les
-       vœux Parcoursup se ferment le 11), et un classement par ordre d'écriture
-       aurait caché la date couperet derrière la période qui dure. La règle ne
-       dépend donc pas de l'ordre dans lequel les lignes sont écrites.
+       Dates relevées sur les pages officielles de Campus France Bénin (« Calendrier de la
+       procédure de candidatures classiques 2026-2027 », mise à jour le 20/11/2026 ;
+       « Ouverture de Parcoursup 2027 », 19/11/2026). Les agrégateurs tiers donnaient le 15
+       et le 20 novembre pour Campus France ; la page officielle dit le 1er décembre.
 
-       Dates relevées sur les pages officielles de Campus France Bénin
-       (« Calendrier de la procédure de candidatures classiques 2026-2027 », mise
-       à jour le 20/11/2026, et « Ouverture de Parcoursup 2027 », 19/11/2026),
-       consultées le 26/11/2026. Aucune date n'est de mémoire : les agrégateurs
-       tiers donnaient le 15 et le 20 novembre, la page officielle dit le 1er
-       décembre — c'est elle qui fait foi.
+       Au 27/11/2026, aucun programme HORS FRANCE n'a pu être vérifié sur une source
+       officielle comme ouvert aux candidats béninois avec au moins dix jours devant lui :
+       les appels 2027 étaient clos (MEXT, Fulbright), pas encore publiés (Türkiye Bursları,
+       Stipendium Hungaricum), ou derrière une agence nationale aux dates non publiques
+       (Maurice). La variété des pays viendra de l'API à mesure que les appels sortent.
 
-       tests/test_banniere.py échoue quand la dernière fenêtre est dépassée : le
-       jour où la liste s'épuise, c'est la CI qui le dit, pas le silence. */
+       tests/test_banniere.py échoue quand il reste moins de 21 jours de campagnes : le jour
+       où la liste s'épuise, c'est la CI qui le dit, pas le silence. */
     var CAMPAGNES = [
-      { id:'cf-soumission-1', du:'2026-11-01', au:'2026-12-01',
+      { id:'cf-soumission-1', pays:'France', du:'2026-11-01', au:'2026-12-01',
         txt:'<strong>Campus France</strong> · première soumission du dossier jusqu\'au <strong>1<sup>er</sup> décembre</strong>. Lettre, projet d\'études, entretien : NexMove te prépare.' },
-      { id:'cf-soumission-2', du:'2026-12-02', au:'2026-12-15',
+      { id:'cf-soumission-2', pays:'France', du:'2026-12-02', au:'2026-12-15',
         txt:'<strong>Campus France</strong> · tu peux encore corriger et resoumettre ton dossier jusqu\'au <strong>15 décembre</strong>.' },
-      { id:'cf-entretien', du:'2026-12-16', au:'2027-03-15',
+      { id:'cf-entretien', pays:'France', du:'2026-12-16', au:'2027-03-15',
         txt:'<strong>Entretiens pédagogiques Campus France</strong> jusqu\'au 15 mars. Prépare le tien avec NexMove.',
         pill:'En cours' },
-      { id:'parcoursup-voeux', du:'2027-01-18', au:'2027-03-11',
+      { id:'parcoursup-annonce', pays:'France', type:'bientot', ouvre:'2027-01-18', du:'2026-12-16', au:'2027-01-17',
+        txt:'<strong>Parcoursup 2027</strong> ouvre le <strong>18 janvier</strong>. Prépare dès maintenant tes vœux, ta lettre et tes bulletins.' },
+      { id:'parcoursup-voeux', pays:'France', du:'2027-01-18', au:'2027-03-11',
         txt:'<strong>Parcoursup 2027</strong> · formule tes vœux jusqu\'au <strong>11 mars</strong>. NexMove t\'aide à les choisir et à rédiger.' },
-      { id:'parcoursup-confirmation', du:'2027-03-12', au:'2027-04-01',
-        txt:'<strong>Parcoursup 2027</strong> · confirme tes vœux et complète ton dossier avant le <strong>1<sup>er</sup> avril</strong>.' }
+      { id:'parcoursup-confirmation', pays:'France', du:'2027-03-12', au:'2027-04-01',
+        txt:'<strong>Parcoursup 2027</strong> · confirme tes vœux et complète ton dossier avant le <strong>1<sup>er</sup> avril</strong>.' },
+      { id:'tb-surveiller', pays:'Turquie', type:'surveiller', du:'2026-11-27', au:'2027-01-05',
+        txt:'<strong>Türkiye Bursları 2027</strong> · l\'appel officiel n\'est pas encore publié. Les années précédentes, il ouvrait en janvier : prépare passeport, relevés de notes et lettre dès maintenant.' }
     ];
 
     /* Date locale du visiteur en AAAA-MM-JJ. Construite champ par champ et non via
@@ -888,78 +912,201 @@
       return d.getFullYear() + '-' + (m.length < 2 ? '0' + m : m) + '-' + (j.length < 2 ? '0' + j : j);
     }
 
-    /* Pure, et c'est volontaire : tests/test_banniere.py l'appelle sur une
-       vingtaine de dates, dont les veilles et lendemains de chaque bascule.
-       Comparaison de chaînes AAAA-MM-JJ : à format fixe, l'ordre alphabétique
-       est l'ordre chronologique, et aucun fuseau ne s'en mêle. */
-    function choisirCampagne(liste, iso){
-      var choix = null;
-      for(var i = 0; i < liste.length; i++){
-        var c = liste[i];
-        if(c.du <= iso && iso <= c.au && (choix === null || c.au < choix.au)) choix = c;
-      }
-      return choix;
-    }
-
     function joursRestants(iso, fin){
       var a = new Date(iso + 'T00:00:00Z'), b = new Date(fin + 'T00:00:00Z');
       return Math.round((b - a) / 86400000);
     }
 
+    var RANG = {ouvert: 0, bientot: 1, surveiller: 2};
+
+    function typeDe(c){
+      return c.type || 'ouvert';
+    }
+
+    /* Clé de tri dans un même type : l'échéance pour un programme ouvert, l'ouverture
+       pour une annonce. Comparaison de chaînes AAAA-MM-JJ : à format fixe, l'ordre
+       alphabétique est l'ordre chronologique, et aucun fuseau ne s'en mêle. */
+    function cleTri(c){
+      return typeDe(c) === 'bientot' ? (c.ouvre || c.au) : c.au;
+    }
+
+    /* Évite deux pays identiques de suite sans casser la priorité : à chaque pas, le
+       premier restant dont le pays diffère du précédent, sinon le premier tout court. La
+       variété est une préférence, pas une condition. */
+    function entrelacer(items){
+      var out = [], restants = items.slice();
+      while(restants.length){
+        var dernier = out.length ? out[out.length - 1].pays : null, k = 0;
+        for(var i = 0; i < restants.length; i++){ if(restants[i].pays !== dernier){ k = i; break; } }
+        out.push(restants.splice(k, 1)[0]);
+      }
+      return out;
+    }
+
+    /* Pure, et c'est volontaire : tests/test_banniere.py l'appelle sur une vingtaine de
+       dates, dont les veilles et lendemains de chaque bascule. */
+    function campagnesActives(liste, iso){
+      var a = [];
+      for(var i = 0; i < liste.length; i++){
+        var c = liste[i];
+        if(c.du <= iso && iso <= c.au) a.push(c);
+      }
+      a.sort(function(x, y){
+        var r = RANG[typeDe(x)] - RANG[typeDe(y)];
+        if(r) return r;
+        var kx = cleTri(x), ky = cleTri(y);
+        return kx < ky ? -1 : (kx > ky ? 1 : 0);
+      });
+      return entrelacer(a);
+    }
+
+    /* Le premier programme affiché : l'échéance ouverte la plus proche quand il y en a.
+       « La plus proche » et non « la première écrite » : les fenêtres se chevauchent, et
+       un classement par ordre d'écriture cacherait la date couperet derrière la période
+       qui dure. */
+    function choisirCampagne(liste, iso){
+      var a = campagnesActives(liste, iso);
+      return a.length ? a[0] : null;
+    }
+
     var annonce = document.getElementById('annonce');
     if(annonce){
       var hui = isoLocal(new Date());
-      var campActive = null;
+      var txt = document.getElementById('annonceTxt');
+      var pil = document.getElementById('annoncePill');
+      var suiv = document.getElementById('annonceSuivant');
+      var liste = [], idx = 0, minuterie = null, enPause = false;
+      var calme = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-      /* Pastille : « Ouvert », ou un compte à rebours quand l'échéance approche.
-         Dix jours, parce qu'en dessous l'urgence est réelle et au-dessus elle est fausse. */
-      function pastille(finIso, defaut){
-        var n = joursRestants(hui, finIso);
+      /* Pastille : dit le statut sans le répéter dans la phrase. Dix jours pour le compte
+         à rebours : en dessous l'urgence est réelle, au-dessus elle serait fabriquée. */
+      function pastille(c){
+        var t = typeDe(c);
+        if(t === 'surveiller') return 'À surveiller';
+        if(t === 'bientot'){
+          var o = joursRestants(hui, c.ouvre || c.au);
+          if(o <= 1) return 'Ouvre demain';
+          if(o <= 30) return 'Ouvre dans ' + o + ' jours';
+          return 'Bientôt';
+        }
+        var n = joursRestants(hui, c.au);
         if(n <= 0) return 'Dernier jour';
         if(n <= 10) return 'Plus que ' + n + (n > 1 ? ' jours' : ' jour');
-        return defaut || 'Ouvert';
+        return c.pill || 'Ouvert';
       }
 
-      function afficher(id, finIso, defautPill, texte, estHtml){
-        // Avoir fermé un bandeau ne doit pas cacher le suivant : la mémoire du masquage
-        // porte sur CETTE campagne, pas sur le bandeau en général.
-        try{ if(localStorage.getItem('nex-annonce-vu') === id) return false; }catch(e){}
-        document.getElementById('annoncePill').textContent = pastille(finIso, defautPill);
-        var cible = document.getElementById('annonceTxt');
+      function rendre(c){
+        pil.textContent = pastille(c);
         // Le texte venant de l'API est assemblé côté serveur depuis un titre de page web :
-        // il entre par textContent, jamais par innerHTML.
-        if(estHtml){ cible.innerHTML = texte; } else { cible.textContent = texte; }
+        // il entre par textContent, jamais par innerHTML. Seul le relevé écrit ici, dans
+        // ce fichier, a le droit de porter des balises.
+        if(c.html === false){ txt.textContent = c.txt; } else { txt.innerHTML = c.txt; }
+      }
+
+      function montrer(i, parUtilisateur){
+        if(!liste.length) return;
+        idx = (i + liste.length) % liste.length;
+        var c = liste[idx];
+        // Annoncé aux lecteurs d'écran seulement quand c'est la personne qui a demandé la
+        // suite ; une annonce toutes les sept secondes serait insupportable.
+        txt.setAttribute('aria-live', parUtilisateur ? 'polite' : 'off');
+        if(calme){ rendre(c); return; }
+        txt.classList.add('sort'); pil.classList.add('sort');
+        setTimeout(function(){ rendre(c); txt.classList.remove('sort'); pil.classList.remove('sort'); }, 280);
+      }
+
+      function planifier(){
+        if(minuterie){ clearInterval(minuterie); minuterie = null; }
+        // Pas de rotation automatique si le visiteur a demandé moins de mouvement : le
+        // bouton « suivant » reste là pour qui veut voir la suite.
+        if(calme || liste.length < 2) return;
+        minuterie = setInterval(function(){
+          if(!enPause && document.visibilityState !== 'hidden') montrer(idx + 1, false);
+        }, 7000);
+      }
+
+      /* Ce que le visiteur a déjà fermé. Ancien format (v4.18-v4.20) : un seul id en clair ;
+         on le relit pour ne pas lui remontrer d'office ce qu'il avait écarté. */
+      function dejaVus(){
+        var brut = null;
+        try{ brut = localStorage.getItem('nex-annonce-vu'); }catch(e){ return []; }
+        if(!brut) return [];
+        try{ var v = JSON.parse(brut); return Array.isArray(v) ? v : [String(v)]; }catch(e){ return [brut]; }
+      }
+
+      var installeA = 0;
+      function installer(nouvelle){
+        // Qui a fermé le bandeau ne le revoit que si un programme NOUVEAU apparaît : sa
+        // fermeture portait sur ce qu'il avait vu, pas sur la suite.
+        var vus = dejaVus(), neuf = false;
+        for(var i = 0; i < nouvelle.length; i++){ if(vus.indexOf(nouvelle[i].id) < 0){ neuf = true; break; } }
+        if(!nouvelle.length || !neuf) return;
+        var courant = liste.length ? liste[idx].id : null;
+        /* Si la liste change dans la première seconde et demie — l'API répond pendant que
+           la page s'affiche — on repart en tête : personne n'a encore lu, et la tête est
+           l'échéance la plus urgente. Plus tard, on reprend là où en était le visiteur
+           pour ne pas lui retirer la phrase qu'il est en train de lire. Première version :
+           on reprenait toujours là où on était, et un programme plus urgent arrivé par
+           l'API passait en quatrième position. */
+        var tot = !installeA || (Date.now() - installeA) < 1500;
+        liste = nouvelle; idx = 0;
+        if(courant && !tot){
+          for(var k = 0; k < liste.length; k++){ if(liste[k].id === courant){ idx = k; break; } }
+        }
+        if(!installeA) installeA = Date.now();
+        rendre(liste[idx]);
         annonce.hidden = false;
         annonce.classList.remove('is-hidden');
-        campActive = id;
-        return true;
+        suiv.hidden = liste.length < 2;
+        planifier();
       }
 
-      /* Deux sources, dans cet ordre de confiance :
-         1. l'API (`/api/banniere`) — la file de programmes de pays différents, tenue par
-            le cron et par l'admin. C'est elle qui fait foi quand elle répond ;
-         2. la liste CAMPAGNES ci-dessus — repli hors ligne, relevé officiel Campus France.
-         Le repli s'affiche TOUT DE SUITE, sans attendre le réseau : une page qui attend
-         une requête pour montrer son bandeau ne le montre pas sur une connexion lente.
-         Si l'API répond ensuite autre chose, elle remplace. */
-      var repli = choisirCampagne(CAMPAGNES, hui);
-      if(repli) afficher(repli.id, repli.au, repli.pill, repli.txt, true);
+      /* 1. Le relevé officiel ci-dessus s'affiche TOUT DE SUITE, sans attendre le réseau :
+            une page qui attend une requête pour montrer son bandeau ne le montre pas sur
+            une connexion lente. */
+      installer(campagnesActives(CAMPAGNES, hui).slice(0, 6));
 
+      /* 2. L'API ajoute ce que le cron a trouvé ET qu'un humain a validé, et ce que l'admin
+            a saisi. Elle accepte les deux formats : `items` (v4.21) ou un seul programme à
+            la racine (v4.19-v4.20) — l'API et la vitrine ne sont pas déployées ensemble. */
       try{
         fetch('https://api-nexmove.blvckunlimited.space/api/banniere', {mode: 'cors'})
           .then(function(r){ return r.ok ? r.json() : null; })
           .then(function(b){
-            if(!b || !b.texte || !b.fin) return;      // {} = aucun programme ouvert
-            if(b.debut > hui || b.fin < hui) return;  // ceinture : on revérifie la fenêtre ici
-            afficher('api:' + b.fin + ':' + (b.pays || ''), b.fin, 'Ouvert', b.texte, false);
+            if(!b) return;
+            var bruts = (b.items && b.items.length) ? b.items : (b.texte ? [b] : []);
+            var api = [];
+            for(var i = 0; i < bruts.length; i++){
+              var x = bruts[i];
+              if(!x || !x.texte || !x.fin || !x.debut) continue;
+              if(x.debut > hui || x.fin < hui) continue;   // ceinture : fenêtre revérifiée ici
+              var doublon = false;
+              for(var j = 0; j < CAMPAGNES.length; j++){
+                if(CAMPAGNES[j].pays === x.pays && CAMPAGNES[j].au === x.fin){ doublon = true; break; }
+              }
+              if(doublon) continue;
+              api.push({ id: 'api:' + (x.id || (x.fin + ':' + (x.pays || ''))), pays: x.pays || '',
+                         du: x.debut, au: x.fin, ouvre: x.ouverture || '',
+                         type: x.etat === 'bientot' ? 'bientot' : 'ouvert', txt: x.texte, html: false });
+            }
+            if(api.length) installer(campagnesActives(CAMPAGNES.concat(api), hui).slice(0, 6));
           })
-          .catch(function(){ /* API injoignable : le repli reste affiché, c'est voulu */ });
+          .catch(function(){ /* API injoignable : le relevé reste affiché, c'est voulu */ });
       }catch(e){}
+
+      suiv.addEventListener('click', function(){ montrer(idx + 1, true); planifier(); });
+      annonce.addEventListener('mouseenter', function(){ enPause = true; });
+      annonce.addEventListener('mouseleave', function(){ enPause = false; });
+      annonce.addEventListener('focusin', function(){ enPause = true; });
+      annonce.addEventListener('focusout', function(){ enPause = false; });
 
       var ac = document.getElementById('annonceClose');
       if(ac){ ac.addEventListener('click', function(){
         annonce.classList.add('is-hidden');
-        try{ if(campActive) localStorage.setItem('nex-annonce-vu', campActive); }catch(e){}
+        if(minuterie){ clearInterval(minuterie); minuterie = null; }
+        var vus = dejaVus();
+        for(var i = 0; i < liste.length; i++){ if(vus.indexOf(liste[i].id) < 0) vus.push(liste[i].id); }
+        try{ localStorage.setItem('nex-annonce-vu', JSON.stringify(vus.slice(-40))); }catch(e){}
       }); }
     }
 
