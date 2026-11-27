@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.20.0** · 26 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.21.0** · 26 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -47,7 +47,7 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **1054**, exécutés en ~20 s (`python3 -m pytest tests -q`) |
+| Tests | **1080**, exécutés en ~21 s (`python3 -m pytest tests -q`) |
 | Fichiers de test | 26, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, bandeau daté, bannières multi-pays, page de présentation, offre de lancement, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
@@ -65,7 +65,7 @@ API      api-nexmove.blvckunlimited.space
 | Surveiller | Message Telegram au démarrage (alerte si un secret manque) · `/ia` en admin et `/api/admin/llm` : qui répond, latence, bascules |
 | Mesurer la compréhension | `/misses` (taux + messages sans route) · `/misses jeu` (au format du jeu d'évaluation) · `/misses reset` (fenêtre propre) |
 | Suivre le terrain | `/rapport` ou `/rapport semaine` → fichier `.md` envoyé sur Telegram. Automatique via `scripts/nex-cron.sh rapport` (crontab, voir l'en-tête du script). |
-| Piloter les bannières | `/banniere` (file + état) · `/banniere ajouter Pays \| Titre \| URL \| AAAA-MM-JJ` · `/banniere retirer <id>`. Alimentation automatique : `scripts/nex-cron.sh banniere`. |
+| Piloter les bannières | `/banniere` (file + état) · `/banniere valider <id>` · `/banniere rafraichir` (cherche maintenant et dit ce qui a été cherché) · `/banniere ajouter Pays \| Titre \| URL \| AAAA-MM-JJ [\| ouverture]` · `/banniere retirer <id>`. Alimentation automatique : `scripts/nex-cron.sh banniere`, à valider avant publication. |
 | Recruter des testeurs | `/gencodes testeur 60 10` · le testeur tape `/mission` pour savoir quoi essayer |
 | En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
 
@@ -107,42 +107,56 @@ se relèvent sur **benin.campusfrance.org** — et seulement là : en novembre 2
 agrégateurs tiers annonçaient le 15 et le 20 novembre, la page officielle disait le 1er
 décembre.
 
-## Bannières de la vitrine (v4.19)
-La campagne de décembre est **passive** : décision du Propriétaire du 26/11/2026, et le
-raisonnement est juste — on ne demande pas à quelqu'un de confier un dossier Campus France à
-un outil qui n'a encore rien prouvé. Conséquence directe : **le bandeau devient la seule
-surface d'acquisition**, la seule chose qui travaille quand on ne communique pas.
+## Bannières de la vitrine (v4.21)
+Le bandeau est la première chose qu'un visiteur lit. Il **fait défiler** les programmes ouverts
+et à venir, de pays différents : chaque programme reste dans la rotation jusqu'à sa date limite,
+puis en sort seul (règle du Propriétaire du 26/11/2026), et les programmes qui arrivent sont
+annoncés pour qu'on se prépare tôt (demande du 27/11/2026).
 
-D'où une file de programmes datés, **de pays différents**. Celui à la une y reste **jusqu'à son
-expiration**, puis le suivant prend la place — en changeant de pays quand c'est possible.
+Rappel de la décision de campagne, souvent mal résumée : la campagne démarre à sa date de
+décembre, mais **on ne communique pas sur l'échéance Campus France** tant que l'outil n'a pas été
+présenté. Ce n'est pas une campagne « passive » — une première rédaction de cette page le disait,
+à tort.
 
 | Pièce | Rôle |
 |---|---|
-| Table `bannieres` | la file : pays, titre, phrase affichée, URL source, fenêtre, drapeau `vedette` |
-| `GET /api/banniere` | public, sans clé : le bandeau du jour, ou `{}` quand aucun programme n'est ouvert |
-| `POST /api/banniere/refresh` | cron : complète la file avec des programmes de pays **absents** de la file |
-| `/banniere` (admin) | voir la file, en ajouter une à la main, en retirer une |
-| `CAMPAGNES` dans `web/index.html` | repli hors ligne, relevé officiel Campus France / Parcoursup |
+| `CAMPAGNES` dans `web/index.html` | relevé officiel intégré à la vitrine, affiché tout de suite, sans attendre le réseau |
+| Table `bannieres` | la file côté serveur : pays, phrase, URL source, fenêtre, date d'ouverture, statut |
+| `GET /api/banniere` | public : `items` (la rotation) + le premier programme à la racine, pour la vitrine v4.20 |
+| `POST /api/banniere/refresh` | cron (`nex-cron.sh banniere`) : cherche dans des pays **absents** de la file |
+| `/banniere` (admin) | voir, `valider`, `retirer`, `ajouter` (avec date d'ouverture facultative), `rafraichir` |
 
-**Trois règles non négociables**, dans cet ordre :
+**Trois types d'entrées sur la vitrine** : *ouvert* (compte à rebours sous dix jours), *bientôt*
+(date d'ouverture **officielle** connue ; l'annonce s'arrête la veille de l'ouverture), *à
+surveiller* (appel attendu mais pas publié — ces entrées n'affichent **aucune date**, un test le
+vérifie, et expirent à une date de révision au lieu de devenir fausses).
 
-1. **Le modèle n'écrit jamais la phrase affichée.** Il extrait quatre champs — pays, titre,
-   URL, date limite — et la phrase est assemblée par `_banniere_phrase()`. La date montrée au
-   visiteur est donc *par construction* celle qui est en base. Faire rédiger le bandeau au
-   modèle reviendrait à publier de la prose non vérifiée, avec une date dedans, sur une page
-   publique.
-2. **Une URL absente des résultats de recherche est rejetée.** C'est la garde anti-invention la
-   plus efficace du système : un modèle qui invente une source invente une URL qui ne figure
-   nulle part.
-3. **Pas de date limite lisible, pas de bannière.** Un programme qui ne peut pas expirer seul
-   n'a rien à faire dans un mécanisme dont l'expiration est la raison d'être. Une échéance à
-   moins de dix jours est également écartée : la montrer ne laisse pas le temps de monter un
-   dossier.
+**Ordre** : l'échéance ouverte la plus proche d'abord, puis les annonces, puis ce qui est à
+surveiller ; les pays alternent sans casser la tête de liste. Si l'API répond pendant
+l'affichage, la rotation repart en tête ; plus tard, elle reprend là où en était le visiteur.
 
-**Ordre d'affichage côté vitrine** : le repli s'affiche tout de suite, sans attendre le réseau
-(une page qui attend une requête pour montrer son bandeau ne le montre pas sur une connexion
-lente) ; si l'API répond ensuite, elle remplace. L'API injoignable n'enlève donc rien, et une
-fenêtre périmée venue de l'API est refusée une seconde fois dans le navigateur.
+**Quatre règles non négociables**, dans cet ordre :
+
+1. **Le modèle n'écrit jamais la phrase affichée.** Il extrait des champs ; la phrase est
+   assemblée par `_banniere_phrase()`. La date montrée est donc celle qui est en base.
+2. **Une URL absente des résultats de recherche est rejetée.**
+3. **Pas de date limite lisible, pas de bannière.** Échéance à moins de dix jours : écartée.
+4. **Ce que trouve le cron n'est pas public avant validation humaine** (`/banniere valider`).
+   Les règles 1 à 3 garantissent qu'une date vient d'une vraie page, pas que cette page dit vrai :
+   le 27/11/2026, les agrégateurs donnaient la première soumission Campus France au 15 et au
+   20 novembre, la page officielle disait le 1er décembre. Désactivable (`BANNIERE_VALIDATION=0`),
+   mais ce serait parier sur les agrégateurs.
+
+**Pourquoi peu de pays pour l'instant.** Au 27/11/2026, aucun programme hors France n'a pu être
+vérifié sur une source officielle comme ouvert aux candidats béninois avec au moins dix jours
+devant lui : appels 2027 clos (MEXT, Fulbright), pas encore publiés (Türkiye Bursları, Stipendium
+Hungaricum), derrière une agence nationale aux dates non publiques (Maurice), ou site officiel
+injoignable (E-JUST). La variété viendra à mesure que les appels sortent — `/banniere rafraichir`
+dit ce qui a été cherché, y compris quand rien n'est trouvé.
+
+**Accessibilité** : pause au survol et au focus, bouton « suivant » de 44 px, aucune rotation
+automatique si le visiteur a demandé moins de mouvement, rotation non annoncée aux lecteurs
+d'écran sauf quand la personne demande la suite. Le texte de l'API entre par `textContent`.
 
 ## Garde-fous déterministes (jamais confiés au modèle)
 Trois situations où une réponse improvisée coûterait trop cher. Toutes détectées par

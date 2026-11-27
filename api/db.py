@@ -393,16 +393,24 @@ class OppStore:
 
     # ---- bannières de la vitrine ----
     #
-    # Une file de programmes datés, de pays différents. Celui « à la une » y reste
-    # JUSQU'À SON EXPIRATION, puis le suivant prend la place — décision du Propriétaire
-    # du 26/11/2026. D'où le drapeau `vedette` en base plutôt qu'un calcul à la volée :
-    # sans mémoire, un programme ajouté entre-temps avec une échéance plus proche
-    # volerait la une à celui en cours, et la vitrine changerait de sujet sans raison
-    # visible pour quelqu'un qui revient.
+    # Une file de programmes datés, de pays différents, affichés EN ROTATION sur la
+    # vitrine. Chaque programme reste dans la rotation jusqu'à sa date limite, puis en
+    # sort seul — c'est la règle « à la une jusqu'à expiration » du Propriétaire
+    # (26/11/2026), appliquée à plusieurs programmes à la fois plutôt qu'à un seul.
     #
-    # Règle d'or : rien n'entre ici sans une `fin` (date limite réelle) et une `url`
-    # (source vérifiable). Un bandeau est une affirmation publique ; une date approximative
-    # y fait plus de dégâts qu'une absence de bandeau.
+    # Première version (v4.19) : une seule « vedette » collante. Elle ne pouvait pas
+    # répondre à la demande du 27/11 — voir défiler plusieurs pays et annoncer ce qui
+    # arrive pour se préparer tôt. D'où la rotation et les entrées « à venir ».
+    #
+    # Deux états de publication :
+    #   - `publiee`   : visible sur la vitrine ;
+    #   - `a_valider` : trouvée par le cron, invisible tant qu'un humain n'a pas validé.
+    # Pourquoi : le 27/11/2026, les agrégateurs annonçaient la première soumission
+    # Campus France au 15 et au 20 novembre, la page officielle disait le 1er décembre.
+    # Un cron qui publie ce qu'il lit dans des résultats de recherche aurait affiché ces
+    # fausses dates en public.
+    #
+    # Règle d'or inchangée : rien n'entre sans `fin` (date limite réelle) ni `url`.
     def _ensure_bannieres(self):
         con = sqlite3.connect(self._path, timeout=10)
         con.execute("""CREATE TABLE IF NOT EXISTS bannieres (
@@ -411,22 +419,33 @@ class OppStore:
             url TEXT NOT NULL UNIQUE, debut TEXT NOT NULL, fin TEXT NOT NULL,
             vedette INTEGER DEFAULT 0, retiree INTEGER DEFAULT 0,
             origine TEXT DEFAULT 'cron', created_at TEXT)""")
+        # Colonnes ajoutées en v4.21 — sur une base existante, l'ALTER échoue si elles
+        # sont déjà là, ce qui est le cas normal après la première migration.
+        for ddl in ("ALTER TABLE bannieres ADD COLUMN ouverture TEXT DEFAULT ''",
+                    "ALTER TABLE bannieres ADD COLUMN statut TEXT DEFAULT 'publiee'"):
+            try:
+                con.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
         con.commit(); con.close()
 
     def banniere_add(self, pays: str, titre: str, texte: str, url: str,
-                     debut: str, fin: str, origine: str = "cron") -> int:
+                     debut: str, fin: str, origine: str = "cron",
+                     ouverture: str = "", statut: str = "publiee") -> int:
         """Ajoute un programme à la file. Renvoie son id, ou 0 si l'URL est déjà connue
-        (l'unicité par URL évite qu'un cron quotidien empile dix fois le même programme)."""
+        (l'unicité par URL évite qu'un cron empile dix fois le même programme)."""
         if not (pays and titre and texte and url and debut and fin):
             return 0
+        if statut not in ("publiee", "a_valider"):
+            statut = "a_valider"           # dans le doute, on ne publie pas
         con = sqlite3.connect(self._path, timeout=10)
         try:
             cur = con.execute(
-                "INSERT INTO bannieres(pays,titre,texte,url,debut,fin,origine,created_at) "
-                "VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO bannieres(pays,titre,texte,url,debut,fin,origine,created_at,"
+                "ouverture,statut) VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (str(pays)[:60], str(titre)[:200], str(texte)[:400], str(url)[:500],
                  str(debut)[:10], str(fin)[:10], str(origine)[:20],
-                 datetime.now(timezone.utc).isoformat()))
+                 datetime.now(timezone.utc).isoformat(), str(ouverture or "")[:10], statut))
             con.commit()
             return int(cur.lastrowid or 0)
         except sqlite3.IntegrityError:
@@ -436,8 +455,8 @@ class OppStore:
 
     def banniere_liste(self, inclure_retirees: bool = False) -> list:
         con = sqlite3.connect(self._path, timeout=10)
-        q = ("SELECT id,pays,titre,texte,url,debut,fin,vedette,retiree,origine "
-             "FROM bannieres")
+        q = ("SELECT id,pays,titre,texte,url,debut,fin,vedette,retiree,origine,"
+             "COALESCE(ouverture,''),COALESCE(statut,'publiee') FROM bannieres")
         if not inclure_retirees:
             q += " WHERE retiree = 0"
         q += " ORDER BY fin ASC"
@@ -445,48 +464,62 @@ class OppStore:
         con.close()
         return [{"id": r[0], "pays": r[1], "titre": r[2], "texte": r[3], "url": r[4],
                  "debut": r[5], "fin": r[6], "vedette": bool(r[7]), "retiree": bool(r[8]),
-                 "origine": r[9]} for r in rows]
+                 "origine": r[9], "ouverture": r[10], "statut": r[11]} for r in rows]
+
+    @staticmethod
+    def _entrelacer(items: list) -> list:
+        """Ordonne en évitant deux pays identiques de suite, sans casser la priorité.
+
+        Glouton : à chaque pas, on prend le premier élément restant dont le pays diffère
+        du précédent ; s'il n'y en a pas, le premier tout court. La variété est une
+        préférence, pas une condition — un bandeau du même pays vaut mieux que rien."""
+        out, restants = [], list(items)
+        while restants:
+            dernier = out[-1]["pays"] if out else None
+            idx = next((i for i, r in enumerate(restants) if r["pays"] != dernier), 0)
+            out.append(restants.pop(idx))
+        return out
+
+    def banniere_actives(self, aujourdhui: str, limite: int = 6,
+                         horizon_jours: int = 60) -> list:
+        """Les programmes à faire défiler aujourd'hui, dans l'ordre d'affichage.
+
+        D'abord les programmes OUVERTS, échéance la plus proche en tête ; puis ceux À
+        VENIR dans les `horizon_jours`, ouverture la plus proche en tête. Pays alternés.
+        Seuls les programmes `publiee` sortent d'ici : un programme à valider n'est
+        jamais public, quel que soit le chemin qui l'a fait entrer."""
+        try:
+            j = datetime.fromisoformat(str(aujourdhui)[:10]).date()
+        except Exception:
+            return []
+        horizon = (j + timedelta(days=int(horizon_jours))).isoformat()
+        hui = j.isoformat()
+        out_ouverts, out_venir = [], []
+        for b in self.banniere_liste():
+            if b["statut"] != "publiee" or b["fin"] < hui or b["debut"] > hui:
+                continue
+            ouv = b["ouverture"]
+            if ouv and ouv > hui:
+                if ouv <= horizon:
+                    out_venir.append({**b, "etat": "bientot"})
+            else:
+                out_ouverts.append({**b, "etat": "ouvert"})
+        out_ouverts.sort(key=lambda b: b["fin"])
+        out_venir.sort(key=lambda b: b["ouverture"])
+        return self._entrelacer(out_ouverts + out_venir)[:max(1, int(limite))]
 
     def banniere_vedette(self, aujourdhui: str) -> dict:
-        """Le programme à afficher aujourd'hui, ou {} s'il n'y en a aucun.
+        """Compatibilité : le premier programme de la rotation, ou {}."""
+        a = self.banniere_actives(aujourdhui, limite=1)
+        return a[0] if a else {}
 
-        La vedette en cours est conservée tant que sa fenêtre est ouverte. Quand elle
-        expire, on prend parmi les ouvertes celle dont l'échéance est la plus proche, en
-        **évitant le pays de la vedette sortante** quand un autre pays est disponible :
-        le Propriétaire veut des programmes de pays différents, et deux bandeaux français
-        de suite donneraient l'impression d'un outil qui ne connaît que la France.
-        """
+    def banniere_valider(self, bid: int) -> bool:
+        """Rend public un programme trouvé par le cron. Geste humain obligatoire."""
         con = sqlite3.connect(self._path, timeout=10)
-        try:
-            cur = con.execute(
-                "SELECT id,pays,titre,texte,url,debut,fin FROM bannieres "
-                "WHERE retiree = 0 AND vedette = 1 AND debut <= ? AND fin >= ? LIMIT 1",
-                (aujourdhui, aujourdhui))
-            row = cur.fetchone()
-            if row:
-                return {"id": row[0], "pays": row[1], "titre": row[2], "texte": row[3],
-                        "url": row[4], "debut": row[5], "fin": row[6]}
-            # La vedette a expiré (ou il n'y en avait pas) : on passe à la suivante.
-            sortant = con.execute(
-                "SELECT pays FROM bannieres WHERE vedette = 1 LIMIT 1").fetchone()
-            pays_sortant = (sortant[0] if sortant else "") or ""
-            ouvertes = con.execute(
-                "SELECT id,pays,titre,texte,url,debut,fin FROM bannieres "
-                "WHERE retiree = 0 AND debut <= ? AND fin >= ? ORDER BY fin ASC",
-                (aujourdhui, aujourdhui)).fetchall()
-            if not ouvertes:
-                con.execute("UPDATE bannieres SET vedette = 0 WHERE vedette = 1")
-                con.commit()
-                return {}
-            autre_pays = [r for r in ouvertes if (r[1] or "") != pays_sortant]
-            choix = (autre_pays or ouvertes)[0]
-            con.execute("UPDATE bannieres SET vedette = 0 WHERE vedette = 1")
-            con.execute("UPDATE bannieres SET vedette = 1 WHERE id = ?", (choix[0],))
-            con.commit()
-            return {"id": choix[0], "pays": choix[1], "titre": choix[2], "texte": choix[3],
-                    "url": choix[4], "debut": choix[5], "fin": choix[6]}
-        finally:
-            con.close()
+        cur = con.execute("UPDATE bannieres SET statut = 'publiee' "
+                          "WHERE id = ? AND retiree = 0", (int(bid),))
+        con.commit(); con.close()
+        return bool(cur.rowcount)
 
     def banniere_retirer(self, bid: int) -> bool:
         """Retire sans supprimer : on garde la trace de ce qui a été affiché publiquement."""
@@ -496,8 +529,9 @@ class OppStore:
         return bool(cur.rowcount)
 
     def banniere_pays_en_file(self, aujourdhui: str) -> list:
-        """Les pays déjà présents dans la file et non expirés — pour que le cron cherche
-        AILLEURS plutôt que d'empiler cinq programmes du même pays."""
+        """Les pays déjà présents dans la file (publiés OU en attente) et non expirés —
+        pour que le cron cherche AILLEURS plutôt que d'empiler le même pays, et ne
+        repropose pas un pays qui attend déjà une validation."""
         con = sqlite3.connect(self._path, timeout=10)
         rows = con.execute("SELECT DISTINCT pays FROM bannieres "
                            "WHERE retiree = 0 AND fin >= ?", (aujourdhui,)).fetchall()
@@ -505,8 +539,8 @@ class OppStore:
         return [r[0] for r in rows if r[0]]
 
     def banniere_purge(self, avant: str) -> int:
-        """Marque retirées les bannières expirées depuis longtemps (hygiène, pas affichage :
-        l'expiration est déjà gérée par la fenêtre)."""
+        """Marque retirées les bannières expirées (hygiène, pas affichage : l'expiration
+        est déjà gérée par la fenêtre)."""
         con = sqlite3.connect(self._path, timeout=10)
         cur = con.execute("UPDATE bannieres SET retiree = 1, vedette = 0 "
                           "WHERE retiree = 0 AND fin < ?", (str(avant)[:10],))

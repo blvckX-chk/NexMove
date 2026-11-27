@@ -2,8 +2,29 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.21 — La bannière défile, annonce ce qui arrive, et ne publie plus rien sans validation
+**Le constat de départ, vérifié en production.** `/api/banniere` répondait `{}` : la file était vide. La vitrine retombait sur son relevé Campus France, une seule ligne, et rien ne tournait. Deux demandes du Propriétaire du 27/11/2026 : voir défiler des programmes de pays différents, et **annoncer ceux qui arrivent pour se préparer tôt**. Une vedette unique ne pouvait faire ni l'un ni l'autre.
+
+- **Rotation.** Le bandeau fait défiler les programmes actifs : l'échéance ouverte la plus proche d'abord, puis les annonces, puis ce qui est à surveiller, en alternant les pays. Chaque programme reste jusqu'à sa date limite puis sort seul — la règle du 26/11, « à la une jusqu'à expiration », appliquée à plusieurs programmes à la fois.
+- **Trois types d'entrées.** *Ouvert* ; *bientôt* (date d'ouverture officielle connue, l'annonce s'arrête la veille de l'ouverture) ; *à surveiller* (appel attendu mais pas publié). Ces dernières n'affichent **aucune date** — un test le vérifie — et expirent à une date de révision au lieu de devenir fausses. Ajoutés au relevé : l'annonce de l'ouverture de Parcoursup le 18 janvier, et Türkiye Bursları 2027 « à surveiller », formulé sans date : l'appel officiel n'est pas publié.
+- **Accessibilité de la rotation** : pause au survol et au focus, bouton « suivant » de 44 px, aucune rotation automatique si le visiteur a demandé moins de mouvement, rotation non annoncée aux lecteurs d'écran sauf quand la personne demande la suite.
+
+**Un défaut de la v4.19 découvert en cherchant des programmes à afficher.** Le cron acceptait toute URL présente dans les résultats de recherche — donc des pages d'agrégateurs, exactement celles qui donnaient la première soumission Campus France au 15 et au 20 novembre quand la page officielle disait le 1er décembre. Les garde-fous garantissaient qu'une date venait d'une vraie page, pas que cette page disait vrai. **Ce que trouve le cron entre désormais « à valider »** et n'est jamais public avant `/banniere valider <id>`. La recherche reste automatique ; la publication demande un geste. Ce que l'admin saisit lui-même est publié directement.
+
+**Pourquoi la rotation reste presque française pour l'instant.** Au 27/11/2026, aucun programme hors France n'a pu être vérifié sur une source officielle comme ouvert aux candidats béninois avec au moins dix jours devant lui : MEXT et Fulbright clos, Türkiye Bursları et Stipendium Hungaricum pas encore publiés, Maurice derrière une agence nationale aux dates non publiques, site d'E-JUST injoignable (503). Le programme canadien PCBF est terminé depuis 2025 — et l'annonce de « 1 500 bourses et emplois au Canada » avec frais de dossier qui ressort à côté porte tous les signes d'une arnaque. La variété viendra à mesure que les appels sortent.
+
+**`/banniere rafraichir`** lance la recherche à la demande et dit **ce qui a été cherché**, y compris quand rien n'est trouvé. Le cron ne renvoie qu'un code HTTP au crontab : une file vide ne disait pas s'il avait tourné, échoué ou rien trouvé — exactement la question qu'on s'est posée.
+
+**Un défaut trouvé au navigateur.** Quand l'API répondait, la rotation reprenait là où elle en était, pour éviter un saut visuel. Mais l'API répond pendant que la page s'affiche, avant que quiconque ait lu : le saut évité n'existait pas, et un programme marocain plus urgent que Campus France passait en **quatrième** position. La rotation repart en tête si la liste change dans la première seconde et demie.
+
+**Compatibilité des deux ordres de déploiement.** L'API renvoie `items` et, à la racine, le premier programme pour la vitrine v4.20 ; la vitrine accepte les deux formats. La base existante est migrée sans perte (colonnes `ouverture` et `statut`, bannières déjà présentes conservées publiques).
+
+**Correction d'une mauvaise lecture**, propagée par erreur dans les entrées v4.19 et v4.20, dans `ETAT-ACTUEL.md` et dans les commentaires : la campagne de décembre n'est pas « passive ». Elle démarre à sa date ; ce qui est écarté, c'est de communiquer sur l'échéance Campus France tant que l'outil n'a pas été présenté.
+
+Vérifié au navigateur, horloge contrôlée, sur dix scénarios : rotation sans API, pause au survol, bouton suivant, mouvement réduit, API au nouveau et à l'ancien format, injection HTML, fermeture mémorisée puis réapparition sur un programme nouveau, ancien format de mémorisation respecté, 390 px sans débordement.
+
 ## v4.20 — « Comment ça marche » : montrer avant de demander confiance
-**Le raisonnement du Propriétaire, et il est juste.** On ne demande pas à quelqu'un de confier un dossier Campus France à un outil qui n'a encore rien prouvé. Aucune personne n'est passée par NexMove sans accompagnement direct ; la campagne de décembre est passive. Il manquait donc l'étape d'avant : **de quoi regarder l'outil travailler sans rien engager**.
+**Le raisonnement du Propriétaire, et il est juste.** On ne demande pas à quelqu'un de confier un dossier Campus France à un outil qui n'a encore rien prouvé. Aucune personne n'est passée par NexMove sans accompagnement direct ; la campagne de décembre ne doit donc pas s'ouvrir sur « confie-nous ton dossier ». Il manquait l'étape d'avant : **de quoi regarder l'outil travailler sans rien engager**.
 
 Nouvelle page `web/comment-ca-marche.html`, liée depuis le hero et le pied de page de l'accueil, et dans le sitemap.
 
@@ -18,9 +39,11 @@ Nouvelle page `web/comment-ca-marche.html`, liée depuis le hero et le pied de p
 Vérifié au navigateur en 1280 px et 390 px, clair et sombre : aucun débordement horizontal, les sept sections visibles, les dix-huit mots de la bascule allumés, la date injectée depuis `data-fin`.
 
 ## v4.19 — Bannières multi-pays, rotation par cron
-**Le contexte, qui explique tout le reste.** La campagne de décembre est **passive** : décision du Propriétaire du 26/11/2026. Le raisonnement est juste — on ne demande pas à quelqu'un de confier un dossier Campus France à un outil qui n'a encore rien prouvé, et aucune personne n'est passée par NexMove jusqu'ici sans accompagnement direct. Pas de communication active, donc. Ceux qui arrivent sur le site voient les bandeaux et s'en servent s'ils veulent.
+**Le contexte.** Décision du Propriétaire du 26/11/2026 : la campagne démarre à sa date de décembre, mais **on ne communique pas sur l'échéance Campus France** tant que l'outil n'a pas été présenté — on ne demande pas à quelqu'un de confier un dossier à un outil qui n'a encore rien prouvé, et aucune personne n'est passée par NexMove jusqu'ici sans accompagnement direct. Ceux qui arrivent sur le site voient les bandeaux et s'en servent s'ils veulent.
 
-**Conséquence directe : le bandeau devient la seule surface d'acquisition.** La seule chose qui travaille quand on ne parle pas. Un bandeau faux coûterait alors deux fois — il rate une candidature, et il brûle le peu de confiance qu'on cherche à construire.
+> *Corrigé en v4.21.* Cette entrée disait d'abord « la campagne de décembre est **passive** ». C'était une mauvaise lecture de la décision : ce qui est écarté, c'est de communiquer sur la procédure Campus France sans présentation préalable, pas de communiquer du tout.
+
+**Pourquoi le bandeau compte autant.** C'est la première chose qu'un visiteur lit. Un bandeau faux coûterait deux fois — il rate une candidature, et il brûle le peu de confiance qu'on cherche à construire.
 
 D'où une file de programmes datés, de **pays différents**. Celui à la une y reste **jusqu'à son expiration**, puis le suivant prend la place.
 

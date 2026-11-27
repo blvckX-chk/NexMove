@@ -2,8 +2,8 @@
 
 Pourquoi cette page existe. Le Propriétaire l'a dit le 27/11/2026, et c'est le bon
 raisonnement : on ne demande pas à quelqu'un de confier un dossier Campus France à un outil
-qui n'a encore rien prouvé. La campagne de décembre est passive ; cette page et le bandeau
-sont donc les seules surfaces qui travaillent. Elle doit convaincre sans mentir.
+qui n'a encore rien prouvé. La campagne de décembre commence donc par présenter l'outil, et
+cette page est ce qu'elle montre. Elle doit convaincre sans mentir.
 
 Ce que ces tests verrouillent :
 
