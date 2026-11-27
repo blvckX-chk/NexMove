@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Comment ça marche : trois vraies conversations avec NexMove · NexMove</title>
+<meta name="description" content="Ce qui se passe quand tu écris à NexMove, montré sur trois cas réels : quand tu ne sais pas par où commencer, quand tu envoies ton CV, et quand on te demande de l'argent.">
+<meta name="robots" content="index,follow,max-image-preview:large">
+<meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1629" media="(prefers-color-scheme: dark)">
+<link rel="canonical" href="https://nexmove.blvckunlimited.space/comment-ca-marche.html">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.png" sizes="32x32" type="image/png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Comment ça marche : trois vraies conversations avec NexMove">
+<meta property="og:description" content="Avant de confier ton dossier à un outil, regarde-le travailler. Trois conversations, de bout en bout.">
+<meta property="og:url" content="https://nexmove.blvckunlimited.space/comment-ca-marche.html">
+<meta property="og:site_name" content="NexMove">
+<meta property="og:locale" content="fr_FR">
+<meta property="og:image" content="https://nexmove.blvckunlimited.space/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://nexmove.blvckunlimited.space/og.png">
+<script>(function(){try{var t=localStorage.getItem('nex-theme');if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders:wght@700;800&family=Instrument+Sans:wght@400;500;600;700&family=Geist+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="blog.css">
+<style>
+  /* Conversations montrées. Propre à cette page : inutile d'alourdir blog.css,
+     partagé par toutes les autres. */
+  .scene{margin:48px 0 0}
+  .scene-num{font-family:'Geist Mono',ui-monospace,monospace;font-weight:700;font-size:.72rem;
+    letter-spacing:.14em;text-transform:uppercase;color:var(--gris)}
+  .scene h2{margin:.35rem 0 .2rem;text-wrap:balance}
+  .scene > p{color:var(--gris);margin:0 0 20px;max-width:62ch;text-wrap:pretty}
+  .chat{background:var(--bg2);border:1px solid var(--bord);border-radius:var(--rayon);
+    padding:16px;display:flex;flex-direction:column;gap:12px}
+  .chat p{margin:0;max-width:85%;padding:12px 14px;line-height:1.5;
+    /* Rayon imbriqué : 16px de conteneur moins 16px d'écart intérieur -> on reste carré
+       côté coin accolé, arrondi ailleurs. */
+    border-radius:12px}
+  .moi{align-self:flex-end;background:var(--bleu);color:#fff;border-bottom-right-radius:4px}
+  .lui{align-self:flex-start;background:var(--carte);border:1px solid var(--bord);
+    border-bottom-left-radius:4px}
+  .lui strong{color:var(--txt)}
+  .qui{position:absolute;left:-9999px}
+  .piece{align-self:flex-end;display:flex;align-items:center;gap:8px;background:var(--carte);
+    border:1px solid var(--bord2);border-radius:12px;padding:10px 14px;
+    font-family:'Geist Mono',ui-monospace,monospace;font-size:.82rem;color:var(--gris)}
+  .apres{margin:14px 0 0;padding-left:14px;border-left:3px solid var(--or);color:var(--gris);
+    max-width:62ch;text-wrap:pretty}
+  .apres strong{color:var(--txt)}
+
+  /* Section de bascule : les mots s'allument un par un à l'arrivée. */
+  .promesse{margin:88px 0;text-align:center}
+  .promesse p{font-family:'Big Shoulders',system-ui,sans-serif;font-weight:800;
+    font-size:clamp(1.9rem,6vw,3.1rem);line-height:1.08;letter-spacing:-.01em;
+    max-width:680px;margin:0 auto;text-transform:uppercase;text-wrap:balance}
+  .promesse .mot{color:var(--txt);transition:opacity .5s cubic-bezier(.22,1,.36,1)}
+
+  .duo{display:grid;gap:16px;margin:20px 0 0}
+  @media(min-width:720px){.duo{grid-template-columns:1fr 1fr}}
+  .bloc{background:var(--carte);border:1px solid var(--bord);border-radius:var(--rayon);padding:18px}
+  .bloc h3{margin:0 0 10px;font-size:1.02rem}
+  .bloc ul{margin:0;padding-left:20px}
+  .bloc li{margin:0 0 8px;color:var(--gris)}
+  .bloc li strong{color:var(--txt)}
+  .oui{border-top:1px solid var(--bord)}
+  .non{border-top:1px solid var(--bord)}
+
+  .faq{margin:48px 0 0}
+  .faq details{background:var(--carte);border:1px solid var(--bord);border-radius:var(--rayon);
+    padding:0;margin:0 0 10px}
+  .faq summary{cursor:pointer;padding:16px 18px;font-weight:600;list-style:none;
+    /* 44px au minimum : seuil tactile. */
+    min-height:44px;display:flex;align-items:center}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::after{content:'+';margin-left:auto;color:var(--gris);font-weight:700;font-size:1.3rem;
+    line-height:1}
+  .faq details[open] summary::after{content:'−'}
+  .faq details p{margin:0;padding:0 18px 16px;color:var(--gris);text-wrap:pretty}
+  .faq details p strong{color:var(--txt)}
+
+  /* Rien n'est masqué par défaut. Le masquage n'existe que sous html.anim, classe posée
+     par le script UNIQUEMENT s'il est capable de la retirer ensuite. Première version :
+     .reveal portait opacity:0 d'emblée — cinq sections sur sept restaient invisibles quand
+     l'observateur ne se déclenchait pas. Sur une page dont le seul but est la confiance,
+     c'est le dernier endroit où parier sur l'exécution d'un script. */
+  .anim .reveal{opacity:0;transform:translateY(32px);
+    transition:opacity .7s cubic-bezier(.22,1,.36,1),transform .7s cubic-bezier(.22,1,.36,1)}
+  .anim .reveal.vu{opacity:1;transform:none}
+  .anim .promesse .mot{opacity:.3}
+  .anim .promesse .mot.on{opacity:1}
+  @media(prefers-reduced-motion:reduce){
+    .anim .reveal{opacity:1;transform:none;transition:none}
+    .anim .promesse .mot{opacity:1;transition:none}
+  }
+</style>
+<script type="application/ld+json">{"@context":"https://schema.org","@type":"FAQPage","inLanguage":"fr","url":"https://nexmove.blvckunlimited.space/comment-ca-marche.html","mainEntity":[{"@type":"Question","name":"Est-ce que je dois payer pour commencer ?","acceptedAnswer":{"@type":"Answer","text":"Non. Il n'y a pas de carte bancaire à entrer, et il n'y en a jamais eu. Pendant la période de lancement, tout est ouvert sans quota pour qui accepte d'être testeur. Après, une partie reste gratuite chaque jour et des formules existent pour aller au-delà."}},{"@type":"Question","name":"Qui lit mes messages et mon CV ?","acceptedAnswer":{"@type":"Answer","text":"Ton profil, ton historique et tes documents sont stockés sur un serveur privé loué dans l'Union européenne. Le texte de ta demande est envoyé à des fournisseurs d'intelligence artificielle pour construire la réponse, sans ton nom, ton numéro ni ton identifiant de messagerie : ils reçoivent un texte, pas une personne. Rien n'est revendu."}},{"@type":"Question","name":"Je peux tout effacer ?","acceptedAnswer":{"@type":"Answer","text":"Oui. La commande /supprimer efface réellement tes données du serveur : profil, historique, documents, opportunités enregistrées. Ce n'est pas une mise en sommeil."}},{"@type":"Question","name":"Est-ce que NexMove garantit une admission, un visa ou un emploi ?","acceptedAnswer":{"@type":"Answer","text":"Non, et personne ne peut le garantir. Un outil ou une personne qui te garantit un visa te ment. NexMove t'aide à monter un dossier solide et à ne pas rater une échéance ; la décision appartient à l'école, à l'employeur ou au consulat."}},{"@type":"Question","name":"D'où viennent les opportunités proposées ?","acceptedAnswer":{"@type":"Answer","text":"De sources réelles : flux et pages d'offres de sites d'emploi et de bourses, locaux et internationaux, plus une recherche web sur des sources vérifiables. Chaque opportunité porte son lien, pour que tu puisses vérifier toi-même. Une offre dont la date limite est passée est écartée."}},{"@type":"Question","name":"Est-ce que ça marche si je n'ai pas de CV ?","acceptedAnswer":{"@type":"Answer","text":"Oui. La commande /creercv pose cinq questions courtes — nom, diplôme, expériences, compétences, langues — puis génère ton CV. Il n'y a pas d'aperçu section par section : les questions, puis le document."}},{"@type":"Question","name":"Qui est derrière NexMove ?","acceptedAnswer":{"@type":"Answer","text":"L'équipe blvckUnlimited, à Cotonou au Bénin. L'outil est construit ici, pour des gens d'ici. La page de contact permet de joindre l'équipe directement."}}]}</script>
+</head>
+<body>
+<div class="motif" aria-hidden="true"></div>
+<header><div class="wrap nav">
+  <a class="brand" href="index.html"><span class="logo"><svg viewBox="0 0 1471 1362" aria-hidden="true"><path fill="#FFFFFF" fill-rule="evenodd" d="M446,65 L33,474 L32,1325 L248,1325 L248,570 L451,371 L943,864 L946,1170 L938,1173 L455,697 L453,997 L786,1330 L1155,1329 L1159,765 Z"/><path fill="#E0A020" fill-rule="evenodd" d="M953,36 L955,196 L1163,205 L951,427 L955,445 L1051,539 L1068,536 L1270,343 L1282,485 L1437,484 L1433,32 Z"/></svg></span> NexMove</a>
+  <a class="back" href="index.html">← Retour à l'accueil</a>
+</div></header>
+<div class="kente" aria-hidden="true"></div>
+
+<main><div class="wrap">
+  <nav class="crumb"><a href="index.html">Accueil</a> › Comment ça marche</nav>
+  <div class="kicker">Avant de te lancer</div>
+  <h1>Regarde-le travailler, puis décide</h1>
+  <p class="lead">Confier son dossier d'études ou son CV à un outil qu'on ne connaît pas, ça ne se demande pas à la légère. Alors voici trois conversations, de bout en bout, sans coupure : ce que la personne écrit, ce que NexMove répond.</p>
+  <p class="note">Les trois situations ci-dessous sont celles qui reviennent le plus souvent. Les messages sont réécrits pour ne reprendre les mots de personne, mais les réponses de NexMove sont bien les siennes.</p>
+
+  <!-- ── Scène 1 ─────────────────────────────────────────────────────────── -->
+  <section class="scene reveal">
+    <div class="scene-num">Scène 1</div>
+    <h2>« Je ne sais pas par où commencer »</h2>
+    <p>C'est le message le plus fréquent, et c'est aussi le piège : la réponse facile serait de déverser une liste de pays, de bourses et de démarches. Personne n'y comprendrait rien.</p>
+    <div class="chat">
+      <p class="moi"><span class="qui">Toi&nbsp;:</span>bonsoir. je veux partir à l'étranger mais je sais pas par où commencer 😓</p>
+      <p class="lui"><span class="qui">NexMove&nbsp;:</span>Bonsoir 👋 On va démêler ça ensemble, et ça commence par une seule question.<br><br>Tu veux partir pour <strong>étudier</strong> ou pour <strong>travailler</strong>&nbsp;? Les deux chemins n'ont rien à voir — ni les dossiers, ni les délais, ni le budget.</p>
+      <p class="moi"><span class="qui">Toi&nbsp;:</span>étudier. mais ma famille a pas les moyens pour la france</p>
+      <p class="lui"><span class="qui">NexMove&nbsp;:</span>D'accord, et merci de le dire tout de suite — ça change les priorités, pas la possibilité.<br><br>La France n'est pas la seule porte, et ce n'est pas forcément la moins chère. Des pays prennent des étudiants internationaux avec des frais de scolarité très bas, parfois avec une bourse qui couvre le logement.<br><br>Dis-moi ton <strong>dernier diplôme</strong> et le <strong>domaine</strong> qui t'intéresse, et je cherche ce qui est réellement ouvert en ce moment.</p>
+    </div>
+    <p class="apres"><strong>Ce qu'il faut remarquer&nbsp;:</strong> une seule question à la fois, et la contrainte d'argent est accueillie au lieu d'être contournée. Un conseiller qui ignore le budget fait perdre une année.</p>
+  </section>
+
+  <!-- ── Scène 2 ─────────────────────────────────────────────────────────── -->
+  <section class="scene reveal">
+    <div class="scene-num">Scène 2</div>
+    <h2>« Voici mon CV »</h2>
+    <p>Beaucoup de candidatures ne sont jamais lues par un humain : un logiciel de tri les écarte avant. C'est la première chose que NexMove regarde.</p>
+    <div class="chat">
+      <p class="piece">📄 mon_cv.pdf · 2 pages</p>
+      <p class="lui"><span class="qui">NexMove&nbsp;:</span>Je l'ai lu. Trois choses, de la plus importante à la moins&nbsp;:<br><br>1. <strong>Pas de section « Compétences »</strong>. Les logiciels de tri cherchent des mots-clés à cet endroit précis. Sans elle, ton CV peut être écarté avant d'être lu.<br>2. Tes expériences disent ce que tu faisais, pas ce que tu as <strong>obtenu</strong>. « Gestion du stock » devient « Réduit les ruptures de stock de moitié en six mois ».<br>3. Deux pages pour ton profil, c'est une de trop. Ce qui compte est en page&nbsp;2.<br><br>Je te le reconstruis avec ces corrections&nbsp;? Et dis-moi ce que tu cherches, je lance une recherche en parallèle.</p>
+      <p class="moi"><span class="qui">Toi&nbsp;:</span>oui vas y. je cherche dans la logistique, ici ou ailleurs</p>
+      <p class="lui"><span class="qui">NexMove&nbsp;:</span>C'est parti. Je te renvoie le CV corrigé, puis les opportunités en logistique — locales et à l'étranger — avec, pour chacune, <strong>son lien</strong> et pourquoi elle te correspond.<br><br>Je n'affiche rien dont la date limite est passée.</p>
+    </div>
+    <p class="apres"><strong>Ce qu'il faut remarquer&nbsp;:</strong> chaque opportunité arrive avec son lien, pour que tu vérifies toi-même. Et aucune n'est inventée — elles viennent de sites d'offres réels.</p>
+  </section>
+
+  <!-- ── Scène 3 ─────────────────────────────────────────────────────────── -->
+  <section class="scene reveal">
+    <div class="scene-num">Scène 3</div>
+    <h2>« On me demande de l'argent pour mon visa »</h2>
+    <p>Celle-là, c'est la raison pour laquelle cet outil existe. Cette réponse n'est pas improvisée par une intelligence artificielle&nbsp;: c'est une règle écrite en dur, qui se déclenche toujours, quel que soit le reste de la conversation.</p>
+    <div class="chat">
+      <p class="moi"><span class="qui">Toi&nbsp;:</span>un gars connait quelqu'un à l'ambassade, il dit qu'il garantit mon visa pour 250 000. je lui envoie ?</p>
+      <p class="lui"><span class="qui">NexMove&nbsp;:</span>⚠️ <strong>Attends, là il faut que je te dise quelque chose.</strong><br><br>Ce que tu décris ressemble à une arnaque, et elles sont nombreuses ici. La règle est simple et elle ne souffre aucune exception&nbsp;:<br><br>🔒 <strong>Un vrai employeur, une vraie école, une vraie ambassade ne te demandent JAMAIS d'argent pour t'obtenir un emploi, un visa ou une admission.</strong><br><br>Les seuls frais qui existent vraiment se paient <strong>au guichet officiel</strong> (Campus France, TLS/VFS/Capago, l'université elle-même), avec un reçu à ton nom. Jamais à un intermédiaire, jamais par Mobile Money à un particulier.<br><br>Les signes qui ne trompent pas&nbsp;: on te <strong>garantit</strong> le résultat · on te presse · on te demande de payer avant tout document · ton interlocuteur n'a ni adresse ni structure vérifiable.<br><br>👉 Dis-moi ce que tu cherches vraiment, et je te montre le chemin officiel.</p>
+    </div>
+    <p class="apres"><strong>Ce qu'il faut remarquer&nbsp;:</strong> NexMove ne gagne rien à te dire ça. Les frais légitimes, eux, ne déclenchent aucune alerte&nbsp;: crier au loup à chaque paiement rendrait l'avertissement inutile le jour où il compte.</p>
+  </section>
+
+  <!-- ── Bascule ─────────────────────────────────────────────────────────── -->
+  <section class="promesse" aria-label="Notre engagement">
+    <p id="promesseTxt">Un outil qui te dit non quand il faut vaut mieux qu'un outil qui te dit toujours oui.</p>
+  </section>
+
+  <!-- ── Honnêteté ───────────────────────────────────────────────────────── -->
+  <section class="scene reveal">
+    <div class="scene-num">Les limites</div>
+    <h2>Ce qu'il fait, et ce qu'il ne fait pas</h2>
+    <p>Un outil qui promet tout ne tient rien. Voici la frontière, dite une fois pour toutes.</p>
+    <div class="duo">
+      <div class="bloc oui">
+        <h3>✅ Ce qu'il fait vraiment</h3>
+        <ul>
+          <li><strong>Lire ton CV</strong> et dire ce qui le fait écarter</li>
+          <li><strong>Écrire</strong> CV, lettre de motivation, projet d'études</li>
+          <li><strong>Chercher</strong> des offres, bourses et formations sur des sources réelles, avec leur lien</li>
+          <li><strong>Guider pas à pas</strong> sur Campus France, le visa, l'immigration au Canada</li>
+          <li><strong>Préparer un entretien</strong>, en te posant les questions et en corrigeant tes réponses</li>
+          <li><strong>Te prévenir</strong> avant une date limite</li>
+        </ul>
+      </div>
+      <div class="bloc non">
+        <h3>🚫 Ce qu'il ne fait pas</h3>
+        <ul>
+          <li><strong>Garantir</strong> une admission, un visa ou un emploi. Personne ne peut</li>
+          <li><strong>Candidater à ta place</strong> : c'est toi qui déposes</li>
+          <li><strong>Payer tes frais</strong> ni servir d'intermédiaire pour un paiement</li>
+          <li><strong>Inventer</strong> une bourse, une école ou une date. S'il ne sait pas, il le dit</li>
+          <li><strong>Remplacer un humain</strong> quand ça va mal : il oriente vers une vraie personne</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Données ─────────────────────────────────────────────────────────── -->
+  <section class="scene reveal">
+    <div class="scene-num">Tes données</div>
+    <h2>Ce qu'on fait de ce que tu envoies</h2>
+    <p>Tu nous confies un CV, parfois une situation familiale. La moindre des choses est de dire où ça va.</p>
+    <div class="bloc">
+      <ul>
+        <li><strong>Stockage dans l'Union européenne.</strong> Ton profil, ton historique et tes documents vivent sur un serveur privé loué, en Europe</li>
+        <li><strong>Les modèles d'IA reçoivent un texte, pas une personne.</strong> Ni ton nom, ni ton numéro, ni ton identifiant de messagerie ne partent avec ta demande</li>
+        <li><strong>Rien n'est revendu</strong>, à personne, et il n'y a pas de publicité</li>
+        <li><strong><code>/supprimer</code> efface réellement</strong> profil, historique, documents et opportunités enregistrées. Ce n'est pas une mise en sommeil</li>
+        <li><strong>Ce qu'on ne sait pas, on le dit&nbsp;:</strong> combien de temps les fournisseurs d'IA conservent le texte de ta demande ne dépend pas de nous, et nous ne le savons pas</li>
+      </ul>
+    </div>
+    <p class="apres">Le détail complet est sur la <a href="confidentialite.html">page confidentialité</a>, écrite pour être lue.</p>
+  </section>
+
+  <!-- ── Offre datée : ce bloc s'efface tout seul après sa date ──────────── -->
+  <div class="cta reveal" id="offre" data-fin="2027-03-01">
+    <div class="kente" aria-hidden="true" style="width:72px;height:6px;margin:0 auto 16px;border-radius:999px"></div>
+    <h2>Essaie, et dis-nous ce qui ne marche pas</h2>
+    <p id="offreTxt"><span id="offreQuand">En ce moment</span>, tout est ouvert sans quota pour qui accepte d'être testeur. La contrepartie est minuscule&nbsp;: quand quelque chose coince ou qu'une réponse tombe à côté, tu le dis. Deux mots suffisent. Pas de formulaire, pas d'engagement.</p>
+    <a class="btn" href="https://t.me/nex_move_bot">Commencer sur Telegram</a>
+  </div>
+
+  <!-- ── FAQ ─────────────────────────────────────────────────────────────── -->
+  <section class="faq reveal">
+    <div class="scene-num">Questions</div>
+    <h2>Ce qu'on nous demande le plus</h2>
+    <details><summary>Est-ce que je dois payer pour commencer&nbsp;?</summary>
+      <p>Non. Il n'y a pas de carte bancaire à entrer, et il n'y en a jamais eu. Pendant la période de lancement, tout est ouvert sans quota pour qui accepte d'être testeur. Après, une partie reste gratuite chaque jour, et des formules existent pour aller au-delà.</p></details>
+    <details><summary>Qui lit mes messages et mon CV&nbsp;?</summary>
+      <p>Ton profil, ton historique et tes documents sont stockés sur un serveur privé loué dans l'Union européenne. Le texte de ta demande est envoyé à des fournisseurs d'intelligence artificielle pour construire la réponse, <strong>sans ton nom, ton numéro ni ton identifiant de messagerie</strong>&nbsp;: ils reçoivent un texte, pas une personne. Rien n'est revendu.</p></details>
+    <details><summary>Je peux tout effacer&nbsp;?</summary>
+      <p>Oui. La commande <code>/supprimer</code> efface réellement tes données du serveur&nbsp;: profil, historique, documents, opportunités enregistrées. <strong>Ce n'est pas une mise en sommeil.</strong></p></details>
+    <details><summary>Est-ce que NexMove garantit une admission, un visa ou un emploi&nbsp;?</summary>
+      <p>Non, et personne ne peut le garantir. <strong>Un outil ou une personne qui te garantit un visa te ment.</strong> NexMove t'aide à monter un dossier solide et à ne pas rater une échéance&nbsp;; la décision appartient à l'école, à l'employeur ou au consulat.</p></details>
+    <details><summary>D'où viennent les opportunités proposées&nbsp;?</summary>
+      <p>De sources réelles&nbsp;: flux et pages d'offres de sites d'emploi et de bourses, locaux et internationaux, plus une recherche web sur des sources vérifiables. <strong>Chaque opportunité porte son lien</strong>, pour que tu puisses vérifier toi-même. Une offre dont la date limite est passée est écartée.</p></details>
+    <details><summary>Est-ce que ça marche si je n'ai pas de CV&nbsp;?</summary>
+      <p>Oui. La commande <code>/creercv</code> pose cinq questions courtes — nom, diplôme, expériences, compétences, langues — puis génère ton CV. Il n'y a pas d'aperçu section par section&nbsp;: les questions, puis le document.</p></details>
+    <details><summary>Qui est derrière NexMove&nbsp;?</summary>
+      <p>L'équipe <strong>blvckUnlimited</strong>, à Cotonou au Bénin. L'outil est construit ici, pour des gens d'ici. La page d'accueil permet de joindre l'équipe directement.</p></details>
+  </section>
+
+  <div class="related">
+    <h2>Pour aller plus loin</h2>
+    <a href="orientation.html"><span>Test d'orientation</span> — six questions, jouable ici même, sans inscription</a>
+    <a href="guides.html"><span>Guides</span> — Campus France, CV ATS, bourses</a>
+    <a href="confidentialite.html"><span>Confidentialité</span> — ce qu'on garde, où, et comment l'effacer</a>
+  </div>
+</div></main>
+
+<footer><div class="wrap">
+  <a href="index.html">Accueil</a><a href="guides.html">Guides</a><a href="comment-ca-marche.html">Comment ça marche</a><a href="confidentialite.html">Confidentialité</a>
+  <p>© <span id="y">2026</span> NexMove</p>
+</div></footer>
+
+<script>
+  var racine = document.documentElement;
+  var y = document.getElementById('y'); if (y) y.textContent = new Date().getFullYear();
+
+  /* On n'anime que si on sait défaire l'animation : observateur disponible et mouvement
+     accepté. Sinon la page s'affiche simplement, ce qui est déjà très bien. */
+  var peutAnimer = ('IntersectionObserver' in window) && !(window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  if (peutAnimer) racine.className += ' anim';
+
+  /* Date locale en AAAA-MM-JJ, construite champ par champ : toISOString() renvoie la date
+     UTC, et au Bénin (UTC+1) un bloc daté expirerait une heure trop tôt chaque soir. */
+  function isoLocal(d){
+    var m = String(d.getMonth() + 1), j = String(d.getDate());
+    return d.getFullYear() + '-' + (m.length < 2 ? '0' + m : m) + '-' + (j.length < 2 ? '0' + j : j);
+  }
+
+  /* L'offre de lancement porte sa date de fin et se retire toute seule. Une page qui parle
+     de confiance ne peut pas annoncer une offre terminée : ce serait exactement le défaut
+     qu'on a corrigé ailleurs sur ce site. La date doit rester égale à LANCEMENT_FIN côté
+     serveur ; un test le vérifie. */
+  var MOIS = ['janvier','février','mars','avril','mai','juin','juillet','août',
+              'septembre','octobre','novembre','décembre'];
+  var offre = document.getElementById('offre');
+  if (offre) {
+    var fin = offre.getAttribute('data-fin') || '';
+    if (fin && isoLocal(new Date()) > fin) {
+      document.getElementById('offreTxt').textContent =
+        "Une partie de NexMove est gratuite chaque jour, sans carte bancaire. Pour aller au-delà, "
+        + "des formules et des packs de crédits existent : tape /offres dans le bot.";
+    } else if (fin) {
+      /* La date vient de data-fin et de nulle part ailleurs : une seule source, donc
+         aucune dérive possible entre la phrase affichée et la date qui fait expirer le
+         bloc. Sans JavaScript, la phrase reste juste — elle dit « En ce moment ». */
+      var d = fin.split('-');
+      var q = document.getElementById('offreQuand');
+      if (q && d.length === 3) {
+        var jour = parseInt(d[2], 10);
+        q.textContent = 'Jusqu\'au ' + (jour === 1 ? '1er' : jour) + ' '
+                      + MOIS[parseInt(d[1], 10) - 1] + ' ' + d[0];
+      }
+    }
+  }
+
+  /* Arrivées au défilement : une seule fois, jamais rejouées en remontant. */
+  var cibles = document.querySelectorAll('.reveal');
+  function toutMontrer(){
+    for (var i = 0; i < cibles.length; i++) cibles[i].classList.add('vu');
+  }
+  if (!peutAnimer) {
+    toutMontrer();
+  } else {
+    var obs = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting) { e.target.classList.add('vu'); obs.unobserve(e.target); }
+      });
+    }, {rootMargin: '0px 0px -10% 0px', threshold: 0});
+    for (var k = 0; k < cibles.length; k++) obs.observe(cibles[k]);
+    /* Filet : si quoi que ce soit empêche l'observateur de se déclencher, tout s'affiche
+       au bout de deux secondes. Une animation ratée doit coûter une animation, pas le texte. */
+    setTimeout(toutMontrer, 2000);
+  }
+
+  /* Les mots de la bascule s'allument un par un, dans l'ordre de lecture. */
+  var pr = document.getElementById('promesseTxt');
+  if (pr && peutAnimer) {
+    var mots = pr.textContent.split(' ');
+    pr.textContent = '';
+    mots.forEach(function(m, i){
+      var s = document.createElement('span');
+      s.className = 'mot'; s.textContent = m + (i < mots.length - 1 ? ' ' : '');
+      pr.appendChild(s);
+    });
+    var spans = pr.querySelectorAll('.mot');
+    var o2 = new IntersectionObserver(function(entries){
+      if (!entries[0].isIntersecting) return;
+      o2.unobserve(pr);
+      spans.forEach(function(s, i){
+        setTimeout(function(){ s.classList.add('on'); }, Math.min(i * 70, 1600));
+      });
+    }, {threshold: 0.2});
+    o2.observe(pr);
+    // Même filet : la phrase ne doit jamais rester à 30 % d'opacité.
+    setTimeout(function(){
+      for (var i = 0; i < spans.length; i++) spans[i].classList.add('on');
+    }, 1800);
+  }
+</script>
+</body>
+</html>

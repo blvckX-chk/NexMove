@@ -2,6 +2,21 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.20 — « Comment ça marche » : montrer avant de demander confiance
+**Le raisonnement du Propriétaire, et il est juste.** On ne demande pas à quelqu'un de confier un dossier Campus France à un outil qui n'a encore rien prouvé. Aucune personne n'est passée par NexMove sans accompagnement direct ; la campagne de décembre est passive. Il manquait donc l'étape d'avant : **de quoi regarder l'outil travailler sans rien engager**.
+
+Nouvelle page `web/comment-ca-marche.html`, liée depuis le hero et le pied de page de l'accueil, et dans le sitemap.
+
+- **Trois conversations montrées de bout en bout**, chacune prouvant autre chose. « Je ne sais pas par où commencer » : une seule question à la fois, et la contrainte d'argent accueillie au lieu d'être contournée. « Voici mon CV » : ce qui le fait écarter, et chaque opportunité avec son lien. **« On me demande de l'argent pour mon visa »** : la règle anti-arnaque, citée mot pour mot comme le bot l'énonce — c'est l'argument de confiance le plus fort dont le produit dispose, et un test vérifie que la page ne dérive pas de ce que le bot répond vraiment.
+- **Les messages ne reprennent les mots de personne.** Ils sont réécrits dans le même registre : la règle « jamais le nom d'un vrai utilisateur » couvre aussi ses phrases sur une page publique.
+- **Une section « ce qu'il ne fait pas »**, aussi longue que celle des promesses : garantir un visa, candidater à ta place, inventer une bourse. Un outil qui promet tout ne tient rien.
+- **La date de l'offre ne peut pas dériver.** Le bloc porte `data-fin`, un test vérifie que cette date reste égale à `LANCEMENT_FIN` côté serveur, la phrase affichée est construite depuis cet attribut, et le bloc se remplace tout seul après la date. Annoncer une offre terminée sur une page qui parle d'honnêteté serait le pire endroit pour ce défaut.
+- **Le balisage FAQ est comparé au texte visible** par un test : un balisage qui promet autre chose que la page trompe le lecteur autant que le moteur de recherche.
+
+**Un défaut trouvé au navigateur, pas à la relecture** : la première version masquait les sections par défaut (`opacity:0`) en comptant sur l'observateur de défilement pour les révéler. **Cinq sections sur sept restaient invisibles.** Le masquage n'existe désormais que sous une classe posée par le script lui-même, avec un filet qui montre tout au bout de deux secondes. Une animation ratée doit coûter une animation, pas le texte — et sur une page dont le seul but est la confiance, c'était le dernier endroit où parier sur l'exécution d'un script.
+
+Vérifié au navigateur en 1280 px et 390 px, clair et sombre : aucun débordement horizontal, les sept sections visibles, les dix-huit mots de la bascule allumés, la date injectée depuis `data-fin`.
+
 ## v4.19 — Bannières multi-pays, rotation par cron
 **Le contexte, qui explique tout le reste.** La campagne de décembre est **passive** : décision du Propriétaire du 26/11/2026. Le raisonnement est juste — on ne demande pas à quelqu'un de confier un dossier Campus France à un outil qui n'a encore rien prouvé, et aucune personne n'est passée par NexMove jusqu'ici sans accompagnement direct. Pas de communication active, donc. Ceux qui arrivent sur le site voient les bandeaux et s'en servent s'ils veulent.
 
