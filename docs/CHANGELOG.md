@@ -2,6 +2,18 @@
 
 Récapitulatif lisible de tout ce qui a été fait (le détail exact est dans l'historique Git).
 
+## v4.22 — Mesurer la campagne avant de la lancer · affiches de décembre
+**Un manque trouvé en préparant la campagne.** `/start src_…` et `/srcstats` existent depuis longtemps — mais **aucun lien de la vitrine ne portait de code de source**. Après décembre, on n'aurait pas pu dire combien de personnes étaient venues par le site, ni par quel bouton, et donc pas décider de ce qu'il faut refaire en janvier. Mesurer après coup ce qu'on n'a pas marqué avant est impossible.
+
+- **Chaque lien vers le bot porte un code**, sur toutes les pages, et **un code par emplacement** sur l'accueil : le hero et la fin de page affichent le même bouton, ils doivent pouvoir être comparés. Neuf emplacements, plus la page « Comment ça marche » et la 404. Convention : `src_<cible>_<canal>` ; pour les posts, `src_<mois>_<canal>_<jjmm>` (ex. `src_dec_fb_0312`), un code par publication.
+- Un test interdit tout lien vers le bot sans code, vérifie que chaque code est accepté par Telegram (sinon le paramètre est ignoré en silence), et que le bot enregistre bien la source — en gardant la première, celle qui a fait venir la personne.
+
+**Affiches de décembre, produites avec le système de marque** (`brand/tools/render.sh`), pas avec un outil externe : mêmes gabarits, mêmes polices, et la règle du README — aucun chiffre, témoignage ni rareté inventés.
+
+- **Le post Testeurs était devenu faux** et a été remplacé. Il annonçait « places limitées » — le programme est ouvert à tous jusqu'au 1er mars 2027, c'était une rareté fabriquée — et promettait « un code Premium offert » alors que `/testeur` ouvre tout immédiatement. Nouveau titre : « Tout est ouvert jusqu'au 1er mars », date et année écrites.
+- **Deux nouveaux posts** : « Regarde-le travailler » (renvoie vers la page de présentation) et « Un visa ne s'achète pas » — la règle anti-arnaque du bot, faite pour circuler dans les groupes WhatsApp. C'est l'argument de confiance le plus fort dont le produit dispose.
+- Exports PNG (1080×1350) et PDF à texte vectoriel, importables et modifiables dans Canva (`brand/exports/canva/`).
+
 ## v4.21 — La bannière défile, annonce ce qui arrive, et ne publie plus rien sans validation
 **Le constat de départ, vérifié en production.** `/api/banniere` répondait `{}` : la file était vide. La vitrine retombait sur son relevé Campus France, une seule ligne, et rien ne tournait. Deux demandes du Propriétaire du 27/11/2026 : voir défiler des programmes de pays différents, et **annoncer ceux qui arrivent pour se préparer tôt**. Une vedette unique ne pouvait faire ni l'un ni l'autre.
 

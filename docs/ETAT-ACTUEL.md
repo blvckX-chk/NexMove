@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.21.0** · 26 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.22.0** · 26 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -47,8 +47,8 @@ API      api-nexmove.blvckunlimited.space
 ## Qualité
 | | |
 |---|---|
-| Tests | **1080**, exécutés en ~21 s (`python3 -m pytest tests -q`) |
-| Fichiers de test | 26, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, bandeau daté, bannières multi-pays, page de présentation, offre de lancement, RGPD, sauvegarde, déploiement, pages légales…) |
+| Tests | **1088**, exécutés en ~20 s (`python3 -m pytest tests -q`) |
+| Fichiers de test | 27, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, bandeau daté, bannières multi-pays, page de présentation, mesure de campagne, offre de lancement, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
@@ -66,6 +66,7 @@ API      api-nexmove.blvckunlimited.space
 | Mesurer la compréhension | `/misses` (taux + messages sans route) · `/misses jeu` (au format du jeu d'évaluation) · `/misses reset` (fenêtre propre) |
 | Suivre le terrain | `/rapport` ou `/rapport semaine` → fichier `.md` envoyé sur Telegram. Automatique via `scripts/nex-cron.sh rapport` (crontab, voir l'en-tête du script). |
 | Piloter les bannières | `/banniere` (file + état) · `/banniere valider <id>` · `/banniere rafraichir` (cherche maintenant et dit ce qui a été cherché) · `/banniere ajouter Pays \| Titre \| URL \| AAAA-MM-JJ [\| ouverture]` · `/banniere retirer <id>`. Alimentation automatique : `scripts/nex-cron.sh banniere`, à valider avant publication. |
+| Mesurer la campagne | `/srcstats` : arrivées par source. **Chaque lien vers le bot porte un code** `?start=src_<cible>_<canal>` — vitrine : un code par bouton (`src_tous_webhero`, `src_tous_webfin`, `src_tous_webbandeau`…) ; posts : `src_<mois>_<canal>_<jjmm>` (ex. `src_dec_fb_0312`). La première source vue est conservée. |
 | Recruter des testeurs | `/gencodes testeur 60 10` · le testeur tape `/mission` pour savoir quoi essayer |
 | En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
 
