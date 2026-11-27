@@ -1,6 +1,6 @@
 # NexMove — état actuel du système
 
-> **Statut : À JOUR** · version applicative **v4.18.0** · 26 novembre 2026
+> **Statut : À JOUR** · version applicative **v4.19.0** · 26 novembre 2026
 >
 > **C'est le seul document de référence sur ce qu'est le système aujourd'hui.** Les autres
 > fichiers de `docs/` sont soit des guides d'une tâche précise, soit des **documents
@@ -40,14 +40,14 @@ API      api-nexmove.blvckunlimited.space
 |---|---|
 | Modules Python | 6 dans `api/` : `main.py`, `db.py`, `llm.py`, `channels.py`, `http_client.py`, `orientation.py` |
 | Taille | ~14 000 lignes au total, dont **~11 700 dans `main.py`** (monolithe assumé, extraction progressive) |
-| Base de données | SQLite, un fichier, mode WAL — 19 tables |
+| Base de données | SQLite, un fichier, mode WAL — 21 tables |
 | Fournisseurs IA | Cerebras → Groq → Gemini → OpenRouter → Tchavi, **en cascade** : si l'un tombe, le suivant prend le relais |
 
 ## Qualité
 | | |
 |---|---|
-| Tests | **1003**, exécutés en ~19 s (`python3 -m pytest tests -q`) |
-| Fichiers de test | 24, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, bandeau daté, offre de lancement, RGPD, sauvegarde, déploiement, pages légales…) |
+| Tests | **1033**, exécutés en ~16 s (`python3 -m pytest tests -q`) |
+| Fichiers de test | 25, par domaine (unités, scénarios, orientation, test web, admin, routage, suite de conversation, testeurs, cas réels, vie privée, sources locales, apprentissage, bandeau daté, bannières multi-pays, offre de lancement, RGPD, sauvegarde, déploiement, pages légales…) |
 | CI (`.github/workflows/ci.yml`) | 4 jobs : **`test`**, **`docker-smoke`** (l'image démarre), **`deploy-path`** (le chemin de déploiement réel fonctionne), **`audit`** (failles connues des dépendances) |
 | Protection de `main` | Les jobs `test`, `docker-smoke` et `deploy-path` sont **obligatoires** : une PR en échec ne peut pas être fusionnée. Suppression de branche et force-push bloqués. |
 | Vitrine | `deploy-vitrine.yml` = publication de **secours** manuelle ; la publication normale est faite par le build Cloudflare sur `main`. |
@@ -64,6 +64,7 @@ API      api-nexmove.blvckunlimited.space
 | Surveiller | Message Telegram au démarrage (alerte si un secret manque) · `/ia` en admin et `/api/admin/llm` : qui répond, latence, bascules |
 | Mesurer la compréhension | `/misses` (taux + messages sans route) · `/misses jeu` (au format du jeu d'évaluation) · `/misses reset` (fenêtre propre) |
 | Suivre le terrain | `/rapport` ou `/rapport semaine` → fichier `.md` envoyé sur Telegram. Automatique via `scripts/nex-cron.sh rapport` (crontab, voir l'en-tête du script). |
+| Piloter les bannières | `/banniere` (file + état) · `/banniere ajouter Pays \| Titre \| URL \| AAAA-MM-JJ` · `/banniere retirer <id>`. Alimentation automatique : `scripts/nex-cron.sh banniere`. |
 | Recruter des testeurs | `/gencodes testeur 60 10` · le testeur tape `/mission` pour savoir quoi essayer |
 | En cas de panne | [RUNBOOK.md](RUNBOOK.md) |
 
@@ -104,6 +105,43 @@ mécanisme qu'on oublie ; ici c'est la CI qui prévient, avec trois semaines d'a
 se relèvent sur **benin.campusfrance.org** — et seulement là : en novembre 2026 les
 agrégateurs tiers annonçaient le 15 et le 20 novembre, la page officielle disait le 1er
 décembre.
+
+## Bannières de la vitrine (v4.19)
+La campagne de décembre est **passive** : décision du Propriétaire du 26/11/2026, et le
+raisonnement est juste — on ne demande pas à quelqu'un de confier un dossier Campus France à
+un outil qui n'a encore rien prouvé. Conséquence directe : **le bandeau devient la seule
+surface d'acquisition**, la seule chose qui travaille quand on ne communique pas.
+
+D'où une file de programmes datés, **de pays différents**. Celui à la une y reste **jusqu'à son
+expiration**, puis le suivant prend la place — en changeant de pays quand c'est possible.
+
+| Pièce | Rôle |
+|---|---|
+| Table `bannieres` | la file : pays, titre, phrase affichée, URL source, fenêtre, drapeau `vedette` |
+| `GET /api/banniere` | public, sans clé : le bandeau du jour, ou `{}` quand aucun programme n'est ouvert |
+| `POST /api/banniere/refresh` | cron : complète la file avec des programmes de pays **absents** de la file |
+| `/banniere` (admin) | voir la file, en ajouter une à la main, en retirer une |
+| `CAMPAGNES` dans `web/index.html` | repli hors ligne, relevé officiel Campus France / Parcoursup |
+
+**Trois règles non négociables**, dans cet ordre :
+
+1. **Le modèle n'écrit jamais la phrase affichée.** Il extrait quatre champs — pays, titre,
+   URL, date limite — et la phrase est assemblée par `_banniere_phrase()`. La date montrée au
+   visiteur est donc *par construction* celle qui est en base. Faire rédiger le bandeau au
+   modèle reviendrait à publier de la prose non vérifiée, avec une date dedans, sur une page
+   publique.
+2. **Une URL absente des résultats de recherche est rejetée.** C'est la garde anti-invention la
+   plus efficace du système : un modèle qui invente une source invente une URL qui ne figure
+   nulle part.
+3. **Pas de date limite lisible, pas de bannière.** Un programme qui ne peut pas expirer seul
+   n'a rien à faire dans un mécanisme dont l'expiration est la raison d'être. Une échéance à
+   moins de dix jours est également écartée : la montrer ne laisse pas le temps de monter un
+   dossier.
+
+**Ordre d'affichage côté vitrine** : le repli s'affiche tout de suite, sans attendre le réseau
+(une page qui attend une requête pour montrer son bandeau ne le montre pas sur une connexion
+lente) ; si l'API répond ensuite, elle remplace. L'API injoignable n'enlève donc rien, et une
+fenêtre périmée venue de l'API est refusée une seconde fois dans le navigateur.
 
 ## Garde-fous déterministes (jamais confiés au modèle)
 Trois situations où une réponse improvisée coûterait trop cher. Toutes détectées par

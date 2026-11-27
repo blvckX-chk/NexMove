@@ -103,7 +103,7 @@ TELEGRAM_TOKEN  = _read_telegram_token()
 TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "")
 TAVILY_API_KEY  = os.getenv("TAVILY_API_KEY", "")
-VERSION         = "4.18.0"
+VERSION         = "4.19.0"
 WHATSAPP_TOKEN      = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_ID   = os.getenv("WHATSAPP_PHONE_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "nexmove_verify")
@@ -948,7 +948,7 @@ _CMD_SUGGESTIONS = (
     "/budget", "/dossier", "/postuler", "/creercv", "/cv", "/simulation", "/chances",
     "/outils", "/traduire", "/compresser", "/fusionner", "/enpdf", "/extraire",
     "/premium", "/moncode", "/parrainage", "/retour", "/supprimer", "/version", "/id",
-    "/testeur", "/mission",
+    "/testeur", "/mission", "/banniere",
     "/admin", "/stats", "/codes", "/gencodes", "/annonces", "/misses", "/ia",
 )
 
@@ -6974,6 +6974,77 @@ JSON: {{"formations":[{{"titre":"","organisme":"","type":"MOOC|certification|dip
         _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
         return msg, session
 
+    if low.startswith("/banniere") or low.startswith("/bandeau"):
+        if not _is_admin(session):
+            msg = _refus_admin(session)
+            _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+            return msg, session
+        parts = t.split(maxsplit=2)
+        sous = parts[1].lower() if len(parts) > 1 else ""
+        hui = datetime.now(timezone.utc).date().isoformat()
+        if sous in ("retirer", "retire", "supprimer") and len(parts) > 2:
+            bid = re.sub(r"[^0-9]", "", parts[2])
+            ok = opp_store.banniere_retirer(int(bid)) if bid else False
+            msg = (f"🗑️ Bannière #{bid} retirée. La vitrine passe à la suivante au prochain chargement."
+                   if ok else f"Aucune bannière #{bid or '?'} à retirer. `/banniere` liste les ids.")
+        elif sous in ("ajouter", "ajout") and len(parts) > 2:
+            # Saisie manuelle : pays | titre | url | AAAA-MM-JJ. Utile parce que le
+            # Propriétaire peut vérifier une source mieux qu'un cron.
+            ch = [c.strip() for c in parts[2].split("|")]
+            if len(ch) != 4:
+                msg = ("🎏 *Ajouter une bannière*\n"
+                       "`/banniere ajouter Pays | Nom du programme | URL | AAAA-MM-JJ`\n\n"
+                       "_Exemple :_\n"
+                       "`/banniere ajouter Canada | Bourses d'excellence Vanier | "
+                       "https://exemple.ca/vanier | 2027-02-15`\n\n"
+                       "La date est la *date limite de candidature*. Le bandeau disparaît "
+                       "tout seul après.")
+            else:
+                pays, titre, url, fin = ch
+                phrase = _banniere_phrase(pays, titre, fin)
+                if not phrase:
+                    msg = ("❌ Refusé : il faut un pays, un titre et une date limite lisible "
+                           "au format *AAAA-MM-JJ*.")
+                elif fin < hui:
+                    msg = f"❌ Refusé : le {_date_fr_courte(fin)} est déjà passé."
+                elif not url.startswith(("http://", "https://")):
+                    msg = "❌ Refusé : il faut l'URL de la source (elle sera citée publiquement)."
+                else:
+                    bid = opp_store.banniere_add(pays, titre, phrase, url, hui, fin, origine="admin")
+                    msg = (f"✅ Bannière #{bid} en file.\n\n_Aperçu :_\n{phrase}"
+                           if bid else "⚠️ Cette URL est déjà dans la file.")
+        else:
+            liste = opp_store.banniere_liste()
+            if not liste:
+                msg = ("🎏 *Bannières* — la file est vide.\n\n"
+                       "La vitrine n'affiche donc aucun bandeau, ce qui est correct : mieux vaut "
+                       "rien qu'une échéance périmée.\n\n"
+                       "`/banniere ajouter …` pour en mettre une à la main, ou attends le cron "
+                       "(`nex-cron.sh banniere`).")
+            else:
+                lignes = []
+                for b in liste:
+                    if b["fin"] < hui:
+                        etat = "⌛ expirée"
+                    elif b["vedette"]:
+                        etat = "⭐ à la une"
+                    elif b["debut"] > hui:
+                        etat = "🕒 à venir"
+                    else:
+                        etat = "📋 en file"
+                    lignes.append(f"`#{b['id']}` {etat} · *{b['pays']}* · {b['titre'][:50]}\n"
+                                  f"     jusqu'au {_date_fr_courte(b['fin'])} · {b['origine']}")
+                pays_distincts = len({b["pays"] for b in liste if b["fin"] >= hui})
+                msg = ("🎏 *Bannières de la vitrine*\n━━━━━━━━━━━━━━━━━━\n\n"
+                       + "\n".join(lignes)
+                       + f"\n\n{pays_distincts} pays en file. Celle à la une y reste jusqu'à son "
+                         "échéance, puis la suivante prend la place — en changeant de pays quand "
+                         "c'est possible.\n\n"
+                         "`/banniere ajouter Pays | Titre | URL | AAAA-MM-JJ`\n"
+                         "`/banniere retirer <id>`")
+        _push(session, "user", t); _push(session, "assistant", msg); session["derniere_activite"] = now
+        return msg, session
+
     if low.startswith("/gencodes"):
         if not _is_admin(session):
             msg = _refus_admin(session)
@@ -12553,6 +12624,177 @@ async def osint_mobilite(request: MobilityRequest, _auth: bool = Depends(verify_
                           tier=_user_tier(session) if session else "free",
                           channel=(session or {}).get("channel", "telegram"))
     return {**res, "chat_id": request.chat_id}
+
+# ── Bannières de la vitrine : des programmes actifs, de pays différents ──────────
+#
+# Pendant une campagne passive — décision du Propriétaire du 26/11/2026 : pas de
+# communication active tant que l'outil n'a rien prouvé — le bandeau de la vitrine
+# EST la seule surface d'acquisition. C'est la seule chose qui travaille sans qu'on
+# parle. D'où le soin qu'on y met.
+#
+# Trois principes, dans cet ordre d'importance :
+#
+# 1. **Le modèle n'écrit jamais la phrase affichée.** Il extrait quatre champs (pays,
+#    titre, url, date limite) et la phrase est assemblée par le code. La date montrée
+#    au visiteur est donc par construction celle qui est en base. Faire rédiger le
+#    bandeau au modèle reviendrait à publier de la prose non vérifiée sur une page
+#    publique, avec une date dedans.
+# 2. **Une URL qui n'était pas dans les résultats de recherche est rejetée.** C'est la
+#    garde anti-invention la plus efficace qu'on ait : un modèle qui invente une source
+#    invente une URL qui ne figure nulle part.
+# 3. **Pas de date limite lisible, pas de bannière.** Un programme sans échéance ne peut
+#    pas expirer tout seul, donc il n'a rien à faire dans un mécanisme dont l'expiration
+#    est la raison d'être.
+_BANNIERE_PAYS = (
+    "France", "Canada", "Allemagne", "Belgique", "Maroc", "Tunisie", "Turquie",
+    "Chine", "Maurice", "Rwanda", "Hongrie", "Japon", "Corée du Sud", "Inde",
+    "Égypte", "Italie", "Espagne", "Algérie", "Sénégal", "Afrique du Sud",
+)
+BANNIERE_FILE_MAX = int(os.getenv("BANNIERE_FILE_MAX", "8"))
+BANNIERE_MARGE_JOURS = int(os.getenv("BANNIERE_MARGE_JOURS", "10"))
+
+
+def _date_fr_courte(iso: str) -> str:
+    """« 2027-03-11 » → « 11 mars 2027 ». Chaîne vide si la date est illisible."""
+    try:
+        d = date.fromisoformat(str(iso)[:10])
+        return f"{d.day} {_MOIS_FR[d.month - 1]} {d.year}"
+    except Exception:
+        return ""
+
+
+def _banniere_phrase(pays: str, titre: str, fin_iso: str) -> str:
+    """La phrase du bandeau, assemblée ici et nulle part ailleurs.
+
+    Le HTML de la vitrine l'affiche telle quelle, donc on n'y met aucune balise : le
+    titre vient d'une page web et pourrait contenir n'importe quoi."""
+    t = _htmlmod.escape(str(titre or "").strip())[:120]
+    p = _htmlmod.escape(str(pays or "").strip())[:40]
+    quand = _date_fr_courte(fin_iso)
+    if not (t and p and quand):
+        return ""
+    return f"{p} · {t} — candidatures jusqu'au {quand}. NexMove t'aide à monter le dossier."
+
+
+async def _banniere_decouvrir(pays: str, today: date) -> list:
+    """Cherche des programmes ACTIFS pour un pays. Renvoie des entrées prêtes à insérer.
+
+    Rien ne sort d'ici qui n'ait une date limite future et une URL vue dans les
+    résultats de recherche."""
+    res = await tavily_search(
+        f"bourse programme études {pays} candidatures ouvertes étudiants internationaux "
+        f"Afrique date limite {_annee_scolaire()}", 8)
+    if not res:
+        return []
+    urls_vues = {str(r.get("url") or "").strip() for r in res if r.get("url")}
+    extraits = "\n".join(
+        f"- {r.get('title','')} | {r.get('url','')} | {(r.get('content') or '')[:400]}"
+        for r in res[:8])
+    system = (
+        "Tu extrais des programmes de bourse ou de mobilité ÉTUDIANTE depuis des résultats "
+        "de recherche. Tu n'ajoutes RIEN qui ne soit écrit dans les extraits fournis.\n"
+        "Rends un JSON {\"programmes\": [{\"pays\": \"...\", \"titre\": \"...\", "
+        "\"url\": \"...\", \"deadline_iso\": \"AAAA-MM-JJ\"}]}.\n"
+        "RÈGLES STRICTES :\n"
+        "- `deadline_iso` doit être une date limite de CANDIDATURE explicitement écrite dans "
+        "l'extrait. Si aucune date n'est écrite, ou si elle est vague (« bientôt », "
+        "« automne »), N'INCLUS PAS le programme. N'invente jamais de date.\n"
+        "- `url` doit être recopiée À L'IDENTIQUE depuis les extraits. Jamais reconstruite.\n"
+        "- `titre` : le nom du programme, court, sans slogan ni superlatif.\n"
+        "- Écarte les pages d'agrégateurs qui listent dix bourses sans en nommer une seule.\n"
+        "- Mieux vaut une liste vide qu'un programme approximatif.")
+    try:
+        r = await call_groq(system, f"PAYS VISÉ : {pays}\nDATE DU JOUR : {today.isoformat()}\n"
+                                    f"EXTRAITS :\n{extraits}",
+                            temperature=0.0, max_tokens=700, json_mode=True, tier="smart")
+    except Exception as e:
+        logger.error(f"[banniere] extraction {pays}: {e}")
+        return []
+    sortie = []
+    for p in (r or {}).get("programmes", [])[:4]:
+        url = str(p.get("url") or "").strip()
+        fin = str(p.get("deadline_iso") or "").strip()[:10]
+        titre = str(p.get("titre") or "").strip()
+        if url not in urls_vues:
+            logger.info(f"[banniere] {pays}: URL hors résultats, rejetée ({url[:60]})")
+            continue
+        try:
+            d_fin = date.fromisoformat(fin)
+        except Exception:
+            continue
+        # Une échéance trop proche ne laisse pas le temps de monter un dossier : la
+        # montrer ferait plus de mal que de bien.
+        if (d_fin - today).days < BANNIERE_MARGE_JOURS:
+            continue
+        phrase = _banniere_phrase(pays, titre, fin)
+        if not phrase:
+            continue
+        sortie.append({"pays": pays, "titre": titre, "texte": phrase, "url": url,
+                       "debut": today.isoformat(), "fin": fin})
+    return sortie
+
+
+@app.get("/api/banniere")
+async def api_banniere(response: Response):
+    """Le bandeau à afficher aujourd'hui. Public : la vitrine est une page statique.
+
+    Renvoie {} quand aucun programme n'est ouvert — la vitrine n'affiche alors aucun
+    bandeau, ce qui est le comportement voulu. Pas de bandeau vaut mieux qu'un faux."""
+    response.headers["Cache-Control"] = "public, max-age=1800"
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        v = opp_store.banniere_vedette(today)
+    except Exception as e:
+        logger.error(f"[banniere] lecture: {e}")
+        return {}
+    if not v:
+        return {}
+    return {"pays": v["pays"], "texte": v["texte"], "url": v["url"],
+            "debut": v["debut"], "fin": v["fin"]}
+
+
+@app.post("/api/banniere/refresh")
+async def api_banniere_refresh(_auth: bool = Depends(verify_api_key)):
+    """Cron : complète la file avec des programmes actifs de pays ABSENTS de la file.
+
+    Ne touche pas à la vedette en cours : elle garde sa place jusqu'à expiration. Ce
+    cron prépare la suite, il ne redistribue pas les cartes."""
+    today = datetime.now(timezone.utc).date()
+    purgees = opp_store.banniere_purge(today.isoformat())
+    file_actuelle = [b for b in opp_store.banniere_liste() if b["fin"] >= today.isoformat()]
+    if len(file_actuelle) >= BANNIERE_FILE_MAX:
+        return {"ok": True, "file": len(file_actuelle), "ajoutees": 0, "purgees": purgees,
+                "note": "file pleine"}
+    deja = set(opp_store.banniere_pays_en_file(today.isoformat()))
+    candidats = [p for p in _BANNIERE_PAYS if p not in deja]
+    # Rotation par jour de l'année plutôt qu'au hasard : deux passages le même jour
+    # cherchent les mêmes pays (donc le second ne coûte rien de plus), les jours
+    # suivants en explorent d'autres, et un test peut prédire le résultat.
+    if candidats:
+        k = today.timetuple().tm_yday % len(candidats)
+        candidats = candidats[k:] + candidats[:k]
+    ajoutees, details = 0, []
+    for pays in candidats[:3]:          # 3 pays par passage : on étale la dépense
+        try:
+            for entree in await _banniere_decouvrir(pays, today):
+                if opp_store.banniere_add(entree["pays"], entree["titre"], entree["texte"],
+                                          entree["url"], entree["debut"], entree["fin"]):
+                    ajoutees += 1
+                    details.append(f"{entree['pays']} · {entree['titre']} (→ {entree['fin']})")
+                    break               # un programme par pays et par passage
+        except Exception as e:
+            logger.error(f"[banniere] {pays}: {e}")
+    if ajoutees:
+        # L'admin est prévenu de ce qui est désormais publiable sur la vitrine : une
+        # page publique ne doit pas changer de contenu sans que personne ne le sache.
+        await _alert_admin("🎏 *Bannières* · nouveaux programmes en file :\n"
+                           + "\n".join(f"• {d}" for d in details)
+                           + f"\n\nFile : {len(file_actuelle) + ajoutees} · `/banniere` pour voir, "
+                             "`/banniere retirer <id>` pour enlever.")
+    logger.info(f"[banniere] file={len(file_actuelle)} ajoutees={ajoutees} purgees={purgees}")
+    return {"ok": True, "file": len(file_actuelle) + ajoutees, "ajoutees": ajoutees,
+            "purgees": purgees, "details": details}
+
 
 @app.post("/api/collect")
 async def collect(_auth: bool = Depends(verify_api_key)):
